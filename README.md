@@ -58,7 +58,7 @@ Technical terms are handled in two steps, not one.
    the work.** Even when the recogniser produces something that only sounds
    similar, the translation step can recover the correct term.
 
-The glossary files are in `docs/glossary/`. **You pick which ones to use for
+The glossary files are in `etc/glossary/`. **You pick which ones to use for
 each meeting**, and you can combine several: `KAGRA_basic` + `Interferometer`,
 for example. Different KAGRA subsystems use different words, and a single large
 table would fill the recogniser's keyword budget with words the meeting does not
@@ -90,7 +90,7 @@ Share the viewer page instead.
 | [docs/manual.md](docs/manual.md) | Manual: install, run a meeting, the glossary, options, troubleshooting |
 | [docs/manual.ja.md](docs/manual.ja.md) | The same manual in Japanese |
 | [docs/test-procedure.md](docs/test-procedure.md) | Staged test for bringing up a new caption PC, and the checklist for the day |
-| [docs/glossary/](docs/glossary/) | The term tables, one file per subject |
+| [etc/glossary/](etc/glossary/) | The term tables, one file per subject |
 
 ## Layout
 
@@ -100,7 +100,7 @@ run.py                 start-up and command line options
 src/live_caption/      the application
 scripts/               one-off measurement and check scripts
 docs/                  manual, test procedure
-docs/glossary/         term tables, one file per subject
+etc/glossary/          term tables, one file per subject
 data/recordings/       audio used for comparing recognisers (not in git)
 local/                 working files (not in git)
 ```

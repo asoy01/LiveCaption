@@ -1,13 +1,13 @@
 """用語対訳表の読み込み。
 
-**表は複数ある。** `docs/glossary/` に置いた `.tsv` を、会議に合わせて選んで重ねる。
+**表は複数ある。** `etc/glossary/` に置いた `.tsv` を、会議に合わせて選んで重ねる。
 例: `KAGRA_basic` + `Interferometer`。選択は操作画面から変えられる。
 
 分けるのは、サブシステムによって語彙が違うためである。1つの大きな表を
 全部の会議で使うと、関係の無い語が認識の `keywords` を食い、上限
 （`config.ASR_KEYWORD_LIMIT`）で本当に要る語が落ちる。
 
-書式は `docs/glossary/*.tsv`:
+書式は `etc/glossary/*.tsv`:
 
     日本語(正しい表記) <TAB> English <TAB> よくある誤認識(カンマ区切り)
 
@@ -46,7 +46,7 @@ def path_of(name: str) -> Path:
 
 
 def available() -> list[dict]:
-    """`docs/glossary/` にある表の一覧。名前順。
+    """`etc/glossary/` にある表の一覧。名前順。
 
     語数まで返す。**どれを選ぶと何語になるかが見えないと、選べない。**
     """

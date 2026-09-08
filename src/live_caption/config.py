@@ -171,10 +171,11 @@ TRANSCRIPT_DIR = downloads_dir()
 TRANSCRIPT_PREFIX = "live-caption_"
 
 # --- その他 -----------------------------------------------------------------
-# 用語対訳表は docs/glossary/ に置いた .tsv である。**会議ごとに組み合わせを変える。**
+# 用語対訳表は etc/glossary/ に置いた .tsv である。**会議ごとに組み合わせを変える。**
+# docs/ ではない。**これは読み物ではなく、アプリが読むデータである。**
 # サブシステムによって語彙が違うので、1つの大きな表を全部の会議で使うと、
 # 関係の無い語が認識の keywords を食い、上限で本当に要る語が落ちる。
-GLOSSARY_DIR = PROJECT_ROOT / "docs" / "glossary"
+GLOSSARY_DIR = PROJECT_ROOT / "etc" / "glossary"
 # 何も選ばれていないときに読むもの（拡張子は付けない）。
 GLOSSARY_DEFAULT: tuple[str, ...] = ("KAGRA_basic",)
 # 前回の選択。操作画面で選び直すたびに書く。次の起動もこれで始まる。

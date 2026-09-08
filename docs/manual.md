@@ -289,12 +289,14 @@ The timestamp is the time the recognition became final.
 
 ## 6. The glossary
 
-The tables in `docs/glossary/` decide how well the technical terms come out.
+The tables in `etc/glossary/` decide how well the technical terms come out.
 **These files are the main thing you maintain.**
 
 ### Pick the tables for the meeting
 
-**There is one file per subject, and you choose which ones to use.**
+**There is one file per subject, and you choose which ones to use.** They live
+in `etc/glossary/`, not in `docs/`: they are data the app reads, not something
+to read yourself.
 
 | File | Terms | When to use it |
 |---|---|---|
@@ -314,7 +316,8 @@ The list scrolls inside its own box, so it never pushes the rest of the settings
 off the screen however many tables you have. Once there are 8 or more tables, a
 search box appears above the list. **A table you have ticked stays visible even
 when the search hides the others**, so you can always see and untick what is in
-use. **全部外す** (clear all) unticks everything at once. If captions are being
+use. **全部選ぶ** (select all) and **全部外す** (clear all) change every table at
+once. Both act on every table, including the ones the search box is hiding. If captions are being
 generated, the recogniser reconnects so that the new keywords reach it.
 
 The row under the boxes shows the total number of terms and how many words go to
@@ -418,7 +421,7 @@ Options:
 | `--loop` | Repeat the file given by `--from-file` |
 | `--delay <level>` | Recognition delay and accuracy. `minimal`, `low`, `medium`, `high`, `xhigh`. Default `low` |
 | `--model <name>` | Translation model. Default `gpt-4.1-mini` |
-| `--glossary <name> ...` | Which tables in `docs/glossary/` to use. Several can be given. Default: the combination you chose last |
+| `--glossary <name> ...` | Which tables in `etc/glossary/` to use. Several can be given. Default: the combination you chose last |
 | `--check-audio [sec]` | Show the input level and exit. Calls no API |
 | `--list-devices` | List the input devices |
 | `--cloudflared <path>` | Where `cloudflared` is. Not needed if it is on PATH or in `local/bin` |
@@ -483,4 +486,4 @@ out. If you missed one, look again instead of sending it a second time.
 
 - [test-procedure.md](test-procedure.md) — the staged test used to bring up a
   new caption PC, and the checklist for the day of the meeting
-- [glossary/](glossary/) — the term tables, one file per subject
+- [../etc/glossary/](../etc/glossary/) — the term tables, one file per subject

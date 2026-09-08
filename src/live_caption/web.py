@@ -330,10 +330,20 @@ CONTROL_BODY = """
     cursor: pointer; padding: 7px 10px; font-size: 13px; color: var(--fg);
     list-style: none; display: flex; align-items: center; gap: 6px;
   }
+  /* **既定の印は3通りの消し方が要る。** どれか1つでも残ると、こちらの三角と
+     二重に出る。Chrome は ::marker、古い WebKit は ::-webkit-details-marker、
+     Safari は list-style を見る。 */
+  .fold > summary::marker { content: ""; }
   .fold > summary::-webkit-details-marker { display: none; }
-  /* 開いているかどうかを、三角で示す。畳んだままだと気づかれない。 */
+  /* 開いているかどうかを三角で示す。畳んだままだと気づかれない。
+     **文字ではなく罫線で描く。** 「▸」はフォントによって大きさも位置もばらつき、
+     絵文字のフォントに落ちることもある。罫線なら、どの環境でも同じ形になる。 */
   .fold > summary::before {
-    content: "\25B8"; color: #6e7681; transition: transform .12s;
+    content: ""; flex: 0 0 auto; width: 0; height: 0; margin-right: 2px;
+    border-left: 5px solid #6e7681;
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+    transition: transform .12s;
   }
   .fold[open] > summary::before { transform: rotate(90deg); }
   .fold > summary:hover { background: #161b22; }
@@ -516,6 +526,7 @@ CONTROL_BODY = """
         </div>
         <div class="list" id="glossBox"></div>
         <div class="row2" style="margin:8px 0 0">
+          <button id="glossAll">全部選ぶ</button>
           <button id="glossNone">全部外す</button>
         </div>
       </div>
@@ -544,7 +555,7 @@ __FEED_JS__
   const glossBox = $("glossBox"), glossState = $("glossState");
   const glossFold = $("glossFold"), glossSummary = $("glossSummary");
   const glossFilter = $("glossFilter"), glossFilterRow = $("glossFilterRow");
-  const glossNone = $("glossNone");
+  const glossAll = $("glossAll"), glossNone = $("glossNone");
   let glossLoaded = false;
   // 表がこれより多いときだけ絞り込みを出す。少ないうちは邪魔なだけである。
   const GLOSS_FILTER_FROM = 8;
@@ -804,7 +815,7 @@ __FEED_JS__
     const sets = g.sets || [];
     glossBox.innerHTML = "";
     if (!sets.length) {
-      glossBox.textContent = "docs/glossary/ に .tsv が無い";
+      glossBox.textContent = "etc/glossary/ に .tsv が無い";
     } else {
       for (const s of sets) {
         const lab = document.createElement("label");
@@ -873,10 +884,17 @@ __FEED_JS__
   }
 
   glossFilter.addEventListener("input", applyGlossFilter);
-  glossNone.addEventListener("click", () => {
-    for (const c of glossBox.querySelectorAll("input:checked")) { c.checked = false; }
-    applyGlossary();
-  });
+  // **どちらも、絞り込みで隠れている表にも効く。** 「全部」と書いてあるのに
+  // 見えている物だけが変わると、何が選ばれているのか分からなくなる。
+  function setAllGloss(on) {
+    let changed = false;
+    for (const c of glossBox.querySelectorAll("input")) {
+      if (c.checked !== on) { c.checked = on; changed = true; }
+    }
+    if (changed) { applyGlossary(); }
+  }
+  glossAll.addEventListener("click", () => setAllGloss(true));
+  glossNone.addEventListener("click", () => setAllGloss(false));
 
   async function loadGlossary() {
     glossLoaded = true;
