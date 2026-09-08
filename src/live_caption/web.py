@@ -318,10 +318,44 @@ CONTROL_BODY = """
   .row2:last-child { margin-bottom: 0; }
   /* 見出しは行を独り占めする。狭い欄で、ラベルと部品を横に並べると折り返しが汚い。 */
   .lbl { flex: 1 0 100%; color: var(--fg); font-size: 13px; }
+  /* 用語集は畳んでおく。**表は増えていく。** 全部を並べると、右の欄が伸びて
+     「アプリの終了」が画面の外へ出る。開いた時も高さを切って中で送らせる。 */
+  /* **赤字は #msg にしか効いていなかった。** 「音が来ていない」も
+     「上限で切り捨てられた」も class="ng" で書かれているのに、色が付いて
+     いなかった。一番見てほしい警告なので、どこでも効くようにする。 */
+  .ok { color: var(--ok); }
+  .ng { color: var(--ng); }
+  .fold { border: 1px solid #30363d; border-radius: 6px; background: #0d1117; }
+  .fold > summary {
+    cursor: pointer; padding: 7px 10px; font-size: 13px; color: var(--fg);
+    list-style: none; display: flex; align-items: center; gap: 6px;
+  }
+  .fold > summary::-webkit-details-marker { display: none; }
+  /* 開いているかどうかを、三角で示す。畳んだままだと気づかれない。 */
+  .fold > summary::before {
+    content: "\25B8"; color: #6e7681; transition: transform .12s;
+  }
+  .fold[open] > summary::before { transform: rotate(90deg); }
+  .fold > summary:hover { background: #161b22; }
+  .fold .body { padding: 0 10px 8px; }
+  /* 高さの上限。**画面の高さで決める。** 行数で決めると、低い画面で溢れる。 */
+  .fold .list { max-height: min(38vh, 300px); overflow-y: auto; }
   /* 用語集のチェックは1行に1つ。名前と語数を並べると横に入りきらない。 */
-  .gloss { flex: 1 0 100%; display: flex; align-items: center; gap: 6px;
-           cursor: pointer; font-size: 13px; }
-  .gloss input { cursor: pointer; }
+  .gloss { display: flex; align-items: center; gap: 6px;
+           cursor: pointer; font-size: 13px; padding: 3px 0; }
+  .gloss input { cursor: pointer; flex: 0 0 auto; }
+  /* 名前と語数は summary の中でも使う。.gloss ではなく .fold に付ける。 */
+  .fold .n { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;
+             white-space: nowrap; }
+  .fold .c { flex: 0 0 auto; color: #6e7681; font-size: 12px; }
+  /* 選んでいる表を目立たせる。畳む前に、何にチェックが入っているかを見る。 */
+  .gloss .n { color: var(--ja); }
+  .gloss.on .n { color: var(--fg); font-weight: 600; }
+  .fold input[type=search] {
+    font: inherit; font-size: 12px; color: var(--fg); width: 100%;
+    background: #11161d; border: 1px solid #30363d; border-radius: 6px;
+    padding: 5px 8px; margin: 2px 0 6px;
+  }
   input[type=password], input[type=text] {
     font: inherit; font-size: 13px; color: var(--fg);
     background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
@@ -474,9 +508,18 @@ CONTROL_BODY = """
 
   <div class="grp">
     <h2>用語集</h2>
-    <div class="row2" id="glossBox">
-      <span id="glossLoading">読み込み中…</span>
-    </div>
+    <details class="fold" id="glossFold">
+      <summary id="glossSummary">読み込み中…</summary>
+      <div class="body">
+        <div id="glossFilterRow" style="display:none">
+          <input type="search" id="glossFilter" placeholder="名前で絞り込む">
+        </div>
+        <div class="list" id="glossBox"></div>
+        <div class="row2" style="margin:8px 0 0">
+          <button id="glossNone">全部外す</button>
+        </div>
+      </div>
+    </details>
     <div class="row2">
       <span id="glossState"></span>
     </div>
@@ -499,7 +542,12 @@ __FEED_JS__
 
   const token = $("token"), save = $("save"), start = $("start"), stop = $("stop");
   const glossBox = $("glossBox"), glossState = $("glossState");
+  const glossFold = $("glossFold"), glossSummary = $("glossSummary");
+  const glossFilter = $("glossFilter"), glossFilterRow = $("glossFilterRow");
+  const glossNone = $("glossNone");
   let glossLoaded = false;
+  // 表がこれより多いときだけ絞り込みを出す。少ないうちは邪魔なだけである。
+  const GLOSS_FILTER_FROM = 8;
   const gstart = $("gstart"), gstop = $("gstop");
   const gpill = $("genPill"), genState = $("genState");
   const devices = $("devices"), devReload = $("devReload");
@@ -753,25 +801,46 @@ __FEED_JS__
   // 全部の会議で使うと、関係の無い語が認識の keywords を食う。
   function showGlossary(g) {
     const sel = new Set(g.selected || []);
+    const sets = g.sets || [];
     glossBox.innerHTML = "";
-    if (!g.sets || !g.sets.length) {
+    if (!sets.length) {
       glossBox.textContent = "docs/glossary/ に .tsv が無い";
     } else {
-      for (const s of g.sets) {
+      for (const s of sets) {
         const lab = document.createElement("label");
-        lab.className = "gloss";
+        lab.className = "gloss" + (sel.has(s.name) ? " on" : "");
+        lab.dataset.name = s.name.toLowerCase();
         const cb = document.createElement("input");
         cb.type = "checkbox"; cb.value = s.name; cb.checked = sel.has(s.name);
         // 選んだ時点で切り替える。「適用」は押させない。
         cb.addEventListener("change", applyGlossary);
-        lab.appendChild(cb);
-        lab.appendChild(document.createTextNode(" " + s.name + "（" + s.terms + " 語）"));
+        const n = document.createElement("span");
+        n.className = "n"; n.textContent = s.name;
+        const c = document.createElement("span");
+        c.className = "c"; c.textContent = s.terms + " 語";
+        lab.append(cb, n, c);
         glossBox.appendChild(lab);
       }
     }
-    const parts = [];
-    parts.push("合計 " + g.terms + " 語");
-    parts.push("認識に渡す語 " + g.keywords + " / " + g.limit);
+    // **絞り込みは、表が増えてから出す。** 数個のうちは邪魔なだけである。
+    glossFilterRow.style.display = sets.length >= GLOSS_FILTER_FROM ? "" : "none";
+    if (sets.length < GLOSS_FILTER_FROM) { glossFilter.value = ""; }
+    applyGlossFilter();
+
+    // **畳んでいる間も、何を使っているかは見えていないといけない。**
+    // 開かないと分からない作りにすると、前回のままなことに気づけない。
+    const names = sets.filter(s => sel.has(s.name)).map(s => s.name);
+    if (!names.length) {
+      glossSummary.innerHTML = '<span class="n ng">選ばれていない</span>';
+    } else {
+      const head = names.slice(0, 2).join(", ")
+        + (names.length > 2 ? "　ほか " + (names.length - 2) : "");
+      glossSummary.innerHTML = '<span class="n"></span><span class="c"></span>';
+      glossSummary.querySelector(".n").textContent = head;
+      glossSummary.querySelector(".c").textContent = g.terms + " 語";
+    }
+
+    const parts = ["認識に渡す語 " + g.keywords + " / " + g.limit];
     glossState.textContent = parts.join("　");
     // **上限で切れた語は認識に届かない。** 黙って落とすと、表に足したのに
     // 効かない、という分かりにくい失敗になる。
@@ -781,6 +850,33 @@ __FEED_JS__
         + " 語が上限で切り捨てられた。選ぶ表を減らすこと</span>";
     }
   }
+
+  function applyGlossFilter() {
+    const q = glossFilter.value.trim().toLowerCase();
+    let shown = 0;
+    for (const lab of glossBox.querySelectorAll(".gloss")) {
+      const hit = !q || lab.dataset.name.includes(q);
+      // **選んでいる表は、絞り込んでも隠さない。** 見えていない物のチェックを
+      // 外せてしまうと、何を外したのか分からなくなる。
+      const on = lab.querySelector("input").checked;
+      lab.style.display = (hit || on) ? "" : "none";
+      if (hit || on) { shown++; }
+    }
+    let none = glossBox.querySelector(".nohit");
+    if (!shown && !none) {
+      none = document.createElement("div");
+      none.className = "nohit hint"; none.textContent = "当てはまる表が無い";
+      glossBox.appendChild(none);
+    } else if (none) {
+      none.style.display = shown ? "none" : "";
+    }
+  }
+
+  glossFilter.addEventListener("input", applyGlossFilter);
+  glossNone.addEventListener("click", () => {
+    for (const c of glossBox.querySelectorAll("input:checked")) { c.checked = false; }
+    applyGlossary();
+  });
 
   async function loadGlossary() {
     glossLoaded = true;

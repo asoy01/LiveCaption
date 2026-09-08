@@ -305,8 +305,16 @@ The tables in `docs/glossary/` decide how well the technical terms come out.
 `KAGRA_basic` alone sends 41 words to the recogniser. With `Interferometer` it
 sends 124. The limit is 200.
 
-On the control page, tick the tables you want under **用語集** (glossary).
-**The change takes effect as soon as you tick a box.** If captions are being
+On the control page, the **用語集** (glossary) row is folded. It shows what is
+in use right now: the names and the total number of terms. Click it to open the
+list, then tick the tables you want. **The change takes effect as soon as you
+tick a box.**
+
+The list scrolls inside its own box, so it never pushes the rest of the settings
+off the screen however many tables you have. Once there are 8 or more tables, a
+search box appears above the list. **A table you have ticked stays visible even
+when the search hides the others**, so you can always see and untick what is in
+use. **全部外す** (clear all) unticks everything at once. If captions are being
 generated, the recogniser reconnects so that the new keywords reach it.
 
 The row under the boxes shows the total number of terms and how many words go to
