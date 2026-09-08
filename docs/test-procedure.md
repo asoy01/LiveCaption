@@ -1,287 +1,323 @@
-# 実機テスト手順
+# Bring-up test procedure
 
-段階を4つに分ける。**各段階は前の段階が終わってから進む。**
-まとめて動かして失敗すると、音声・認識・送信のどこが悪いか分からなくなる。
+This document has four stages. **Finish each stage before you start the next
+one.** If you run everything at once and it fails, you cannot tell whether the
+problem is in the audio, the recognition, or the sending.
 
-段階1と2は会議を開かずにできる。段階3から会議が要る。
+Stages 1 and 2 need no meeting. From stage 3 on, you need a meeting.
+
+For everyday use, read [manual.md](manual.md) instead. This document is for
+bringing up a new caption PC and for the day of an important meeting.
 
 ---
 
-## 前日までの準備（字幕PC側）
+## Preparation, on the caption PC
 
-### 1. VB-CABLE を入れる
+### 1. Install VB-CABLE
 
-[vb-audio.com/Cable/](https://vb-audio.com/Cable/) からダウンロード。
-**インストーラは管理者権限で実行し、終わったら再起動する。**
+Download it from [vb-audio.com/Cable/](https://vb-audio.com/Cable/).
+**Run the installer as administrator, then restart the PC.**
 
-再起動後、Windowsのサウンド設定で次を確認する。
+After the restart, check these two devices in the Windows sound settings.
 
-| デバイス | 形式 |
+| Device | Format |
 |---|---|
-| `CABLE Input`（再生） | **48000 Hz**、16ビット |
-| `CABLE Output`（録音） | **48000 Hz**、16ビット |
+| `CABLE Input` (playback) | **48000 Hz**, 16 bit |
+| `CABLE Output` (recording) | **48000 Hz**, 16 bit |
 
-**両方を48000 Hzに揃えること。** 食い違うと内部で再サンプリングが入り、音が乱れる。
-このアプリは48000 Hzで開いて24000 Hzに落とす作りになっている。
+**Set both to 48000 Hz.** If the two rates differ, Windows resamples the audio
+and the sound breaks up. This app opens the device at 48000 Hz and converts the
+audio to 24000 Hz itself.
 
-### 2. Zoomの設定（字幕PC）
+### 2. Zoom settings on the caption PC
 
-- Zoomアカウントは無料のもので構わない
-- **表示名を `Live Captions (EN)` などにする。** 参加者一覧に出るので、
-  何をしているPCか分かるようにする
-- スピーカー → **`CABLE Input`**
-- マイク → **ミュート**（発言しない）
-- 「ビデオなしの参加者を非表示」にしておくと帯域が浮く
+- A free Zoom account is enough
+- **Set the display name to something like `Live Captions (EN)`.** The name
+  appears in the participant list, so make it clear what this PC is doing
+- Speaker: **`CABLE Input`**
+- Microphone: **muted**. This PC never speaks
+- Turning on "Hide non-video participants" saves bandwidth
 
-### 3. 会議側の設定（ホスト）
+### 3. Meeting settings, done by the host
 
-**Zoomの自動字幕（翻訳字幕）をオフにする。**
+**Turn off Zoom's automatic captions, including translated captions.**
 
-自動字幕と我々の字幕は、**同じ4行の窓を共有する。**
-自動字幕が流れ続けると、我々の行は押し出されて読めなくなる。
+Zoom's automatic captions and our captions share the same four-line window.
+If the automatic captions keep running, our lines are pushed out and cannot be
+read.
 
-ホストのツールバー → 「字幕」→「∧」→ 自動字幕・ライブ文字起こしを止める。
+Host toolbar, then "Captions", then the arrow, then stop the automatic captions
+and the live transcript.
 
-### 4. プロジェクトを置く
+### 4. Put the project on the PC
 
 ```bash
 cd C:\Users\Yoichi\Dropbox\src\projects\LiveCaption
 pixi install
 ```
 
-`.env` に `OPENAI_API_KEY` が入っていることを確認する（`.env` の値が環境変数より優先される）。
+Check that `OPENAI_API_KEY` is set in `.env`. **The value in `.env` wins over the
+environment variable of the same name.**
 
-### 5. 遠隔操作
+### 5. Remote control
 
-MS-S1 MAX を字幕PCにする場合、**TeamViewer で入ること。RDPは使わない。**
-RDPは音声を「リモートオーディオ」にリダイレクトするので、`CABLE Input` への経路が切れる。
+If you use MS-S1 MAX as the caption PC, **connect with TeamViewer. Do not use
+RDP.** RDP redirects the audio to "remote audio", which breaks the path to
+`CABLE Input`.
 
 ---
 
-## 段階1: 音声が届くか（会議なし・API不要）
+## Stage 1. Does the audio arrive? (no meeting, no API)
 
-**ここが通らなければ、この先は全て無駄になる。**
+**If this stage fails, everything after it is wasted effort.**
 
 ```bash
 pixi run devices
 ```
 
-`CABLE Output` が一覧に出ることを確認する。出なければ VB-CABLE のインストールか再起動を疑う。
-**同じ名前が MME・DirectSound・WASAPI に出る。** 番号とホストAPIまで見ること。
-既定では最初に一致したもの（MME）が選ばれる。それでよい。
+Check that `CABLE Output` appears in the list. If it does not, suspect the
+VB-CABLE installation or the restart.
 
-**操作画面からも選べる。** `--web` で起動していれば、「音声の入力」の行に
-一覧が出る。生成中なら音量メーターも振れるので、`--check-audio` の代わりになる。
+**The same name appears three times: once for MME, once for DirectSound, once
+for WASAPI.** Look at the number and the host API, not only the name. By default
+the app takes the first match, which is MME. That is fine.
 
-**会議も音源も無いときは、ループバックで配線だけを確かめられる。**
-`CABLE Input` にサイン波を流しながら `CABLE Output` を開く試験である。
-2026-09-07 に使ったスクリプトが `scripts/cable_loopback.py` にある。
+**You can also pick the device from the control page.** If you started with
+`--web`, the list is on the **音声の入力** (audio input) row. While captions are being
+generated, the level meter moves there too, so you do not need `--check-audio`.
+
+**When you have no meeting and no sound source, you can still test the wiring.**
+This test plays a sine wave into `CABLE Input` and reads it back from
+`CABLE Output`.
 
 ```bash
 pixi run python scripts/cable_loopback.py
 ```
 
-送った振幅がそのまま返れば、VB-CABLE は正常である。
-**配線を疑ったときの最初の一手にすること。**
+If the amplitude comes back, VB-CABLE is working. **Use this first whenever you
+suspect the wiring.**
 
-次に、**Zoom以外の何かで音を鳴らしながら**（YouTube等。Windowsの出力を
-一時的に `CABLE Input` に向ける）:
+Next, play sound from something other than Zoom (a video, for example; point the
+Windows output at `CABLE Input` for a moment):
 
 ```bash
 pixi run caption --check-audio 20
 ```
 
-APIを呼ばないので、鍵も会議も要らない。
+This calls no API, so it needs no key and no meeting.
 
-**見るところ:** メーターが振れること。最後に「音は届いている」と出れば合格。
+**What to look at:** the meter moves, and the last line says the sound is
+arriving.
 
-「ほぼ無音」と出たら、次の3つを順に確認する。
+If it says the input is almost silent, check these three in order.
 
-1. 音を出しているアプリの出力先が `CABLE Input` か
-2. `--device` が `CABLE Output` を拾っているか（既定値がそれ）
-3. 両方が 48000 Hz か
+1. Is the app that plays the sound sending it to `CABLE Input`?
+2. Is `--device` picking up `CABLE Output`? (That is the default.)
+3. Are both devices at 48000 Hz?
 
 ---
 
-## 段階2: 認識と翻訳（会議は要るがトークン不要）
+## Stage 2. Recognition and translation (needs a meeting, no token)
 
-字幕PCをZoom会議に入れ、**Zoomのスピーカーを `CABLE Input`** にする。
-別の端末（ホストPCでもスマホでもよい）から日本語で話す。
+Put the caption PC into a Zoom meeting and **set the Zoom speaker to
+`CABLE Input`**. Speak Japanese from another device: the host PC or a phone.
 
 ```bash
 pixi run caption --dry-run
 ```
 
-`--dry-run` はZoomに送らず、画面に出すだけ。トークンは要らない。
+`--dry-run` sends nothing to Zoom. It only prints to the screen. No token is
+needed.
 
-**見るところ:**
+**What to look at:**
 
-- `[認識]` の行が、話してから数秒で出るか
-- `[字幕]` の行が、その1〜2秒後に出るか
-- 専門用語が正しく出ているか
+- A recognition line appears a few seconds after someone speaks
+- A caption line appears 1 to 2 seconds after that
+- The technical terms come out correctly
 
-**5分ほど流して、用語の誤りをメモする。** ここで見つかった誤認識は
-`docs/glossary.tsv` の第3列に足す。これが本番の品質を決める。
+**Run it for about five minutes and note the terms that came out wrong.** Add
+those misrecognitions to the third column of `docs/glossary.tsv`. This is what
+decides the quality on the day.
 
-**その場でメモを取らなくてよい。** 記録がダウンロードフォルダに残る。
-日本語の認識文と英語の字幕が対になっているので、後から誤認識を拾える。
-`.md` のほうが読みやすい。**意味の通らない語は推測で表に入れず、麻生に聞くこと。**
-
----
-
-## 段階3: 字幕APIが通るか（本体とは別に確認）
-
-字幕PCとは**別に**、ホストとしてテスト会議を開く。
-
-1. ツールバーの「字幕」→「∧」→「手動字幕の設定」→「**APIトークンをコピー**」
-2. 2台目の端末で同じ会議に入り、「字幕を表示」をオンにする
-
-```bash
-pixi run python scripts/zoom_cc_test.py --auto "<コピーしたトークンURL>"
-```
-
-**見るところ:** 2台目の画面に英文が出ること。送信の失敗が0であること。
-
-**受信側を先に確かめること。** 送信側の数字（HTTP 200、失敗0）は、
-**表示されている証明にはならない。** 2026-09-07 の試験では、送信は全て200なのに
-何も見えず、seq を疑って回り道をした。原因は受信側だった。
-
-順番はこうする。
-
-1. **ホスト以外の端末**で「字幕を表示」をオンにする（**ホストの画面には出ない**）
-2. 会議の自動字幕がオフになっていることを確認する
-3. そのうえで送る
-
-**字幕は時間では消えない。** 見逃しても、後から見れば残っている。
-消えるのは新しい行に押し出されたときだけである。
-慌てて何度も送り直すより、落ち着いて画面を見ること。
-
-**注意:** `seq` は会議のセッション全体で単調増加していないといけない。
-同じ会議で2回目を回すときは、`local/seq_state.json` の続きから自動で始まる。
-別の会議を開いたら新しいトークンを取り直すこと。
+**You do not have to take notes during the meeting.** The record is saved in
+your Downloads folder. The Japanese text and the English caption are paired, so
+you can collect the misrecognitions afterwards. The `.md` file is easier to
+read. **If a word makes no sense, ask the speaker. Do not guess.**
 
 ---
 
-## 段階4: 通し（本番と同じ構成）
+## Stage 3. Does the caption API work? (tested on its own)
 
-段階1〜3が全て通ってから行う。
+Open a test meeting as the host, on a machine **other than** the caption PC.
+
+1. Toolbar, "Captions", the arrow, "Manual captions setup",
+   then **"Copy the API token"**
+2. Join the same meeting from a second device and turn on "Show Captions"
 
 ```bash
-pixi run caption --token "<コピーしたトークンURL>"
+pixi run python scripts/zoom_cc_test.py --auto "<the token URL you copied>"
 ```
 
-起動すると、まず捨て字幕が3つ流れる。
-**受信側は、字幕が流れ始めるまで「字幕を表示」を有効にできない。**
-そのため最初の数個は誰にも届かない。これは仕様である。
+**What to look at:** English text appears on the second device, and the failure
+count is zero.
 
-**見るところ:**
+**Check the receiving side first.** The numbers on the sending side (HTTP 200,
+zero failures) **are not proof that anything is displayed.** In the test on
+2026-09-07 every send returned 200 and nothing appeared. We suspected `seq` and
+went down the wrong path. The problem was on the receiving side.
 
-| 項目 | 期待 |
+Do it in this order.
+
+1. Turn on "Show Captions" **on a device that is not the host**.
+   **The host never sees the captions.**
+2. Check that the meeting's automatic captions are off
+3. Then send
+
+**Captions do not disappear on a timer.** If you miss one, look again: it is
+still there. A line goes away only when newer lines push it out. Look at the
+screen calmly instead of sending the same line again.
+
+**Note:** `seq` must increase over the whole meeting session. If you run a
+second time in the same meeting, the app continues from `local/seq_state.json`.
+If you open a different meeting, get a new token.
+
+---
+
+## Stage 4. End to end (the same setup as the real meeting)
+
+Do this only after stages 1 to 3 have all passed.
+
+```bash
+pixi run caption --token "<the token URL you copied>"
+```
+
+At start-up, three warm-up captions are sent.
+**The receiving side cannot turn on "Show Captions" until captions start
+flowing.** So the first few captions reach nobody. That is expected.
+
+**What to look at:**
+
+| Item | Expected |
 |---|---|
-| 画面のログ | `[認識]` と `[字幕]` が流れ続ける |
-| 送信の失敗 | 0 |
-| 音声の取りこぼし | 増えない |
-| 認識の再接続 | 0（増えるなら回線を疑う） |
-| 受信側の見え方 | 読める速さか。流れて消えていないか |
+| The log on screen | Recognition and caption lines keep coming |
+| Send failures | 0 |
+| Dropped audio | Does not increase |
+| Recognition reconnects | 0. If it grows, suspect the network |
+| The receiving side | Readable speed. Lines are not scrolling away |
 
-**ホストのZoom画面には字幕が出ない。** 動いているかの確認は、この画面のログだけである。
+**The host's Zoom window shows no captions.** The log on this screen is your
+only way to tell whether it is working.
 
-終了は Ctrl+C。要約が出る。
+Press Ctrl+C to stop. A summary is printed.
 
-### 会議の記録
+### The meeting record
 
-**既定で残る。** 何も指定しなくてよい。
+**It is saved by default.** You do not have to turn it on.
 
-**置き場はユーザーのダウンロードフォルダ。**
+The files go to **your Downloads folder**.
 
 ```
-ダウンロード/live-caption_2026-09-08_143012.jsonl   1文ごとに追記する（原本）
-ダウンロード/live-caption_2026-09-08_143012.md      読める形。終了時に書く
+Downloads/live-caption_2026-09-08_143012.jsonl   appended one sentence at a time
+Downloads/live-caption_2026-09-08_143012.md      readable form, written at exit
 ```
 
-名前に `live-caption_` が付く。ダウンロードフォルダは他のファイルと混ざるので、
-日付だけでは何のファイルか分からない。置き場を変えるなら `--save-dir`。
+The names start with `live-caption_`. The Downloads folder holds many other
+files, so a date alone would not tell you what the file is. Use `--save-dir` to
+put it somewhere else.
 
-日本語の認識文と、英語の字幕が対になっている。時刻は**認識が確定した時刻**である。
+The Japanese text and the English caption are paired. The timestamp is the time
+the recognition became final.
 
-- 会議中に読みたければ、操作画面の「会議の記録」→「途中まで読む」
-- **`.md` が書かれるのは終了時である。** 電源ごと落ちたときは
-  `pixi run python scripts/transcript_to_md.py` で `.jsonl` から作り直す
-- 残したくない会議では `--no-save` を付けて起動する
-- 1文も出なかったときは、ファイルを残さない
+- To read the record during the meeting, press **途中まで読む** under
+  **会議の記録** on the control page
+- **The `.md` file is written at exit.** If the PC loses power, rebuild it from
+  the `.jsonl` with `pixi run python scripts/transcript_to_md.py`
+- To keep no record, start with `--no-save`
+- If no sentence was produced, no file is written
 
 ---
 
-## ホストでない会議で使う（ブラウザ字幕）
+## Using it in a meeting you do not host (browser captions)
 
-字幕APIのトークンは**ホストか共同ホストしか取れない。** 自分がホストでない
-会議では、ブラウザに字幕を出して、その画面を共有する。
+Only a host or a co-host can create a caption API token. In a meeting you do not
+host, show the captions in a browser and share that window.
 
 ```bash
 pixi run caption --web
 ```
 
-**--web で起動すると、字幕の生成は止まった状態で始まる。** 操作画面の「開始」を
-押すまで、音は取り込まれず、認識も翻訳もしない。会議に入る前に立ち上げてよい。
+**With `--web`, caption generation starts stopped.** No audio is taken in and no
+API is called until you press start on the control page. You can launch the app
+before you join the meeting.
 
-操作画面は左右に分かれている。**左が字幕、右が設定。**
-間の縦線をドラッグすると幅が変わる（ダブルクリックで既定に戻る）。幅は覚えている。
+The control page has two columns. **Captions on the left, settings on the
+right.** Drag the vertical line between them to change the width.
+Double-click it to go back to the default. The width is remembered.
 
-1. 起動すると**操作画面**（`http://localhost:8081`）がブラウザで開く
-2. 「音声の入力」が `CABLE Output` になっているか見る。違えば選んで「適用」
-3. 「字幕の生成」の**開始**を押す。**音量メーターが振れることを確かめる**
-4. 「画面共有で見せる」の**開く**で閲覧画面を出し、**F11 で全画面**にする
-5. Zoomで**そのブラウザの画面を共有**する
+1. Starting the app opens the **control page**
+   (`http://localhost:8081`) in the browser
+2. Check that **音声の入力** (audio input) is `CABLE Output`. If it is not, pick
+   the right one from the list. **The change takes effect as soon as you pick it**
+3. Press **開始** (start) under **字幕の生成** (caption generation).
+   **Check that the level meter moves**
+4. Press **閲覧画面を開く** (open the viewer page) under **画面共有で見せる**
+   (show by screen share), then press **F11** for full screen
+5. Share that browser window in Zoom
 
-閲覧画面の経路は推測できない文字列（`/v/<ランダム>`）が付く。**`http://localhost:8080/`
-だけでは404になる。** 操作画面に出ているURLを使うこと。
+The viewer page has a path you cannot guess (`/v/<random>`).
+**`http://localhost:8080/` alone returns 404.** Use the URL shown on the control
+page.
 
-### ブラウザからZoom字幕を出す
+### Sending Zoom captions from the browser
 
-**トークンは起動後に入れられる。** 会議が始まらないと取れないので、
-`--token` を付けずに起動しておいてよい。
+**You can enter the token after start-up.** The token does not exist until the
+meeting starts, so it is fine to launch without `--token`.
 
-1. 右上の**歯車**を押して操作画面を開く
-2. **画面共有を一度切る**（トークンが映らないように）
-3. トークンを貼って「**登録**」。入力欄は伏せ字で、登録すると空になる
-4. 「**開始**」を押す。捨て字幕が3つ流れる
-5. 画面共有を再開する
+1. Press the gear icon in the top right to open the control page
+2. **Stop screen sharing for a moment**, so the token is not shown to everyone
+3. Paste the token into **APIトークン** under **Zoom字幕** (Zoom captions) and
+   press **登録** (register). The field is masked, and it clears after you register
+4. Press **開始** (start). Three warm-up captions are sent
+5. Start screen sharing again
 
-止めるときは「**停止**」。会議の一部だけ字幕を出すこともできる。
+Press **停止** (stop) to stop. You can caption only part of a meeting.
 
-**右上の表示を見ること。**
+**Watch the status in the top right.**
 
-| 表示 | 意味 |
+| Display | Meaning |
 |---|---|
-| `Zoom: 未登録` | トークンがまだ入っていない |
-| `Zoom: 停止中` | 登録済み。「開始」を押せば送る |
-| `Zoom: 送信中` | 送っている |
-| `Zoom: 送信中（失敗 3）` | **送信が失敗している。**トークンが切れたか、会議が変わった |
-| `生成: 停止中` | **字幕を作っていない。**Zoomを送信中にしても1行も流れない |
+| `Zoom: 未登録` | No token yet |
+| `Zoom: 停止中` | Token registered. Press 開始 to send |
+| `Zoom: 送信中` | Captions are being sent |
+| `Zoom: 送信中（失敗 3）` | **Sending is failing.** The token expired, or the meeting changed |
+| `生成: 停止中` | **No captions are being made.** Nothing flows, even if Zoom is set to sending |
+| `生成: 中` | Captions are being made |
 
-**失敗の表示を見逃さないこと。** Zoomは間違ったトークンでも200以外を返すだけで、
-理由を教えない。トークンを取り直して登録し直す。
+**Do not miss the failure count.** Zoom answers a wrong token with a non-200
+status and no explanation. Get a new token and register it again.
 
-**確認すること:**
+**Check all of these:**
 
-- 「生成: 中」（右上）になっている
-- 「音声の入力」の下のメーターが振れている（「音が来ていない」なら入力が違う）
-- 左上の丸が緑（サーバに繋がっている）
-- 行が下から積み上がっていく
-- 右上のトグルで、日本語の認識結果が出たり消えたりする
+- The top right says `生成: 中`
+- The meter under **音声の入力** moves. If it says no sound is arriving, the
+  input is wrong
+- The dot in the top left is green, which means the browser is connected to the
+  app
+- Lines stack up from the bottom
+- The toggle in the top right shows and hides the Japanese text
 
-**画面共有の映像は圧縮される。** 小さい字は潰れるので、共有した後で
-2台目の端末から見え方を確かめること。読めなければ行数を減らす
-（`config.WEB_LINES`）。
+**Screen sharing compresses the picture.** Small text breaks up. After you start
+sharing, check on a second device that the text is readable. If it is not, show
+fewer lines (`config.WEB_LINES`).
 
-Zoom字幕APIと同時に使ってもよい。
+You can use the Zoom caption API at the same time.
 
 ```bash
 pixi run caption --token "<URL>" --web
 ```
 
-ポートが埋まっているときは番号を変える。**閲覧と操作の両方を指定すること。**
-既定の 8081 は操作画面が使っているので、閲覧側に指定してはいけない。
+If a port is taken, change the numbers. **Give both numbers.** Port 8081 belongs
+to the control page, so never give 8081 to the viewer page.
 
 ```bash
 pixi run caption --web 8090 --control-port 8091
@@ -289,48 +325,54 @@ pixi run caption --web 8090 --control-port 8091
 
 ---
 
-## 本番当日の手順
+## On the day
 
-0. 会議の前に `StartLiveCaption.bat` を立ち上げておいてよい。
-   **「開始」を押すまで何も取り込まない**ので、準備中の雑談は認識に流れない
-1. 字幕PCで TeamViewer に接続できることを確認
-2. 字幕PCのZoomで会議に参加（スピーカー `CABLE Input`、マイクはミュート）
-3. `pixi run caption --check-audio 10` で音が来ていることを確認（10秒）
-4. ホストが「APIトークンをコピー」して、チャットで字幕PCに送る
-5. 操作画面の「音声の入力」が `CABLE Output` であることを確かめる
-6. 「字幕の生成」で**開始**を押す。ここから音を取り込み始める。
-   **メーターが振れることを見る。** 振れなければ入力を選び直す（生成中でも差し替えられる）
-7. 字幕を出す。次のどちらでもよい
-   - `pixi run caption --token "<URL>"`（コマンドで渡す）
-   - `pixi run caption --web` で起動しておき、**ブラウザの操作画面から登録して開始**
-     （こちらは会議の途中で止めたり再開したりできる）
-8. 会議の冒頭で、外国人参加者に伝える:
-   - 「字幕を表示」をオンにすること
-   - **字幕の表示領域をドラッグして広げること**（最小4行では読む余裕がない）
-9. 終わったら操作画面の「終了」を押す。**タブとターミナルが閉じる**
-10. 終了後、ダウンロードフォルダの `live-caption_*.md` に会議の記録が残っている。
-   **誤認識を拾って `docs/glossary.tsv` の第3列に足すこと。** 次の会議の質が上がる
+0. You can start `StartLiveCaption.bat` before the meeting.
+   **It takes in nothing until you press start**, so small talk during setup
+   does not reach the recognition model
+1. Check that you can reach the caption PC with TeamViewer
+2. Join the meeting from the caption PC (speaker `CABLE Input`, microphone muted)
+3. Run `pixi run caption --check-audio 10` and confirm the sound arrives
+4. The host copies the API token and sends it to the caption PC in the chat
+5. Check that **音声の入力** on the control page is `CABLE Output`
+6. Press **開始** under **字幕の生成**. Audio starts coming in here.
+   **Watch the meter move.** If it does not, pick another input. You can change
+   the device while captions are being generated
+7. Show the captions. Either way works:
+   - `pixi run caption --token "<URL>"` (pass it on the command line)
+   - Start with `pixi run caption --web`, then **register the token on the
+     control page and press start**. This way you can stop and restart during
+     the meeting
+8. At the start of the meeting, tell the people who will read the captions:
+   - Turn on "Show Captions"
+   - **Drag the caption area to make it taller.** Four lines is not enough room
+     to read
+9. When it is over, press **終了** under **アプリの終了** on the control page. **The tab and the
+   terminal window both close**
+10. After the meeting, the record is in your Downloads folder as
+    `live-caption_*.md`. **Collect the misrecognitions and add them to the third
+    column of `docs/glossary.tsv`.** The next meeting will be better
 
 ---
 
-## うまくいかないときの切り分け
+## Working out what is wrong
 
-| 症状 | 見るところ |
+| Symptom | Where to look |
 |---|---|
-| 何も起きない・ログが流れない | **操作画面の「字幕の生成」を開始したか。**起動しただけでは動かない |
-| `CABLE Output` が一覧に無い | VB-CABLEのインストール。再起動したか |
-| メーターが振れない | Zoomのスピーカー設定。両方48000 Hzか。**操作画面の「音声の入力」が `CABLE Output` か** |
-| 「入力を開けない」と出る | 別のアプリが専有していないか。48000 Hz を受け付ける装置か。別の入力を選ぶ |
-| `[認識]` が出ない | `.env` の `OPENAI_API_KEY`。ネットワーク |
-| `[認識]` は出るが `[字幕]` が出ない | 翻訳のエラーが画面に出ているはず |
-| ログは流れるが受信側に出ない | **ホストの画面を見ていないか**（ホストには出ない）。受信側が「字幕を表示」をオンにしているか。トークンが今の会議のものか |
-| 受信側に出ないが、喋ると別の字幕が出る | **Zoomの自動字幕が動いている。**オフにする |
-| 用語は表にあるのに認識が外す | `config.ASR_KEYWORD_LIMIT` で切られていないか。表の末尾は認識に渡らない |
-| 字幕が途中で止まった | `seq` の巻き戻し。アプリを再起動したなら `local/seq_state.json` を確認 |
-| 用語が誤る | `docs/glossary.tsv` の第3列に、実際に出た誤認識を足す |
-| 字幕が速すぎて読めない | 受信側に表示領域を広げてもらう。`config.FORCE_CUT_CHARS` を下げる |
-| 認識の再接続が増える | 回線。字幕PCのZoomで受信ビデオを止める。別回線を試す |
+| Nothing happens. No log lines | **Did you press 開始 under 字幕の生成?** Launching the app is not enough |
+| `CABLE Output` is not in the list | Is VB-CABLE installed? Did you restart the PC? |
+| The level meter does not move | The Zoom speaker setting. Both devices at 48000 Hz. **Is 音声の入力 set to `CABLE Output`?** |
+| "cannot open the input" | Another app may have the device. Does the device accept 48000 Hz? Pick a different input |
+| No recognition lines | `OPENAI_API_KEY` in `.env`. The network |
+| Recognition lines but no caption lines | A translation error should be on the screen |
+| Log lines flow, but nobody sees the captions | **Are you looking at the host's screen?** The host never sees them. Did the other person turn on "Show Captions"? Is the token from this meeting? |
+| Different captions appear when someone speaks | **Zoom's automatic captions are running.** Turn them off |
+| A term is in the glossary but the recogniser still misses it | It may be cut by `config.ASR_KEYWORD_LIMIT`. Words at the end of the table do not reach the recogniser |
+| Captions stopped part way through | The `seq` number went backwards. If you restarted the app, check `local/seq_state.json` |
+| A term comes out wrong | Add the misrecognition you actually saw to the third column of `docs/glossary.tsv` |
+| Captions go by too fast to read | Ask the readers to make the caption area taller. Lower `config.FORCE_CUT_CHARS` |
+| The recogniser reconnects again and again | The network. Turn off incoming video in Zoom on the caption PC. Try another line |
 
-**意味の通らない語が残ったら、推測で用語表に入れないこと。**
-「people parkour」が `p-pol` の誤認識だと分かったのは麻生の指摘による。
-音声からは推測できなかった。分からない語は聞くこと。
+**If a word makes no sense, do not guess and do not put your guess in the
+glossary.** "people parkour" turned out to be `p-pol`. Nobody could have worked
+that out from the sound alone. Ask the person who was speaking.
