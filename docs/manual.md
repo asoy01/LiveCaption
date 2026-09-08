@@ -296,11 +296,14 @@ The tables in `docs/glossary/` decide how well the technical terms come out.
 
 **There is one file per subject, and you choose which ones to use.**
 
-```
-docs/glossary/KAGRA_basic.tsv
-docs/glossary/Interferometer.tsv
-docs/glossary/LVK.tsv
-```
+| File | Terms | When to use it |
+|---|---|---|
+| `KAGRA_basic.tsv` | 23 | **Always.** People, organisations, the site, vibration isolation, vacuum, cryogenics |
+| `Interferometer.tsv` | 45 | Meetings about mirrors, optics, or the length degrees of freedom |
+| `LVK.tsv` | 0 | Empty. For LIGO-Virgo-KAGRA terms, when you need them |
+
+`KAGRA_basic` alone sends 41 words to the recogniser. With `Interferometer` it
+sends 124. The limit is 200.
 
 On the control page, tick the tables you want under **用語集** (glossary).
 **The change takes effect as soon as you tick a box.** If captions are being

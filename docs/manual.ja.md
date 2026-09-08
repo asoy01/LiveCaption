@@ -279,11 +279,13 @@ MME・DirectSound・WASAPI の3つに現れるためである。
 
 **分野ごとに1ファイルあり、どれを使うかを選ぶ。**
 
-```
-docs/glossary/KAGRA_basic.tsv
-docs/glossary/Interferometer.tsv
-docs/glossary/LVK.tsv
-```
+| ファイル | 語数 | いつ使うか |
+|---|---|---|
+| `KAGRA_basic.tsv` | 23 | **常に。** 人名・組織・施設・防振・真空・低温 |
+| `Interferometer.tsv` | 45 | 鏡・光学・長さの自由度の話が出る会議 |
+| `LVK.tsv` | 0 | 空。LVK共同観測の用語が要るときに書く |
+
+`KAGRA_basic` だけなら認識に渡す語は 41。`Interferometer` を足すと 124。上限は 200。
 
 操作画面の「用語集」で、使う表にチェックを入れる。
 **チェックした時点で切り替わる。** 生成中なら、新しい keywords を届けるために
