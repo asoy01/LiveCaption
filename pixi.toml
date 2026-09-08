@@ -1,0 +1,18 @@
+[workspace]
+channels = ["conda-forge"]
+name = "LiveCaption"
+platforms = ["win-64", "linux-64"]
+version = "0.1.0"
+
+[tasks]
+caption = "python run.py"
+# 会議で使う既定の形。ブラウザ字幕を出し、Zoomのトークンは後から画面で入れる。
+web = "python run.py --web"
+devices = "python run.py --list-devices"
+
+[dependencies]
+python = "3.12.*"
+websockets = ">=17.1,<18"
+numpy = ">=2.5.2,<3"
+python-sounddevice = ">=0.5.6,<0.6"
+segno = ">=1.6.6,<2"

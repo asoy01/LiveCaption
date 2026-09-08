@@ -1,0 +1,9 @@
+.pixi/
+__pycache__/
+*.pyc
+.env
+data/recordings/*
+!data/recordings/.gitkeep
+
+# local files
+local/
