@@ -41,6 +41,12 @@
 入力デバイスの一覧:
 
     pixi run python run.py --list-devices
+
+**用語集は会議ごとに組み合わせを変える。** `docs/glossary/` に置いた .tsv を
+必要なぶんだけ重ねる。操作画面の「用語集」で選べる。選択は覚えているので、
+次の起動も同じ組み合わせで始まる。起動時に決めるなら:
+
+    pixi run python run.py --glossary KAGRA_basic Interferometer
 """
 
 from __future__ import annotations
@@ -75,6 +81,10 @@ def parse_args() -> argparse.Namespace:
                    choices=["minimal", "low", "medium", "high", "xhigh"],
                    help="認識の遅延と精度の調整（既定: low）")
     p.add_argument("--model", default=config.TRANSLATE_MODEL, help="翻訳のモデル")
+    p.add_argument("--glossary", nargs="*", metavar="名前", default=None,
+                   help="使う用語集（docs/glossary/ の .tsv の名前）。複数を重ねられる。"
+                        "例: --glossary KAGRA_basic Interferometer。"
+                        "指定しなければ前回の選択（操作画面からいつでも変えられる）")
     p.add_argument("--web", nargs="?", type=int, const=config.WEB_PORT, default=None,
                    metavar="ポート",
                    help=f"ブラウザに字幕を出す（閲覧は既定 {config.WEB_PORT}番）。--token と併用可")
@@ -141,6 +151,7 @@ def main() -> int:
         dry_run=args.dry_run,
         save=not args.no_save,
         transcript_dir=Path(args.save_dir),
+        glossary_names=None if args.glossary is None else tuple(args.glossary),
     )
 
     if args.from_file:

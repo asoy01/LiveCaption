@@ -136,8 +136,12 @@ needed.
 - The technical terms come out correctly
 
 **Run it for about five minutes and note the terms that came out wrong.** Add
-those misrecognitions to the third column of `docs/glossary.tsv`. This is what
-decides the quality on the day.
+those misrecognitions to the third column of the right table in
+`docs/glossary/`. This is what decides the quality on the day.
+
+**Check which tables are ticked under 用語集 (glossary) on the control page
+before you start.** A meeting about mirror control needs `Interferometer`; the
+morning meeting may not.
 
 **You do not have to take notes during the meeting.** The record is saved in
 your Downloads folder. The Japanese text and the English caption are paired, so
@@ -334,7 +338,8 @@ pixi run caption --web 8090 --control-port 8091
 2. Join the meeting from the caption PC (speaker `CABLE Input`, microphone muted)
 3. Run `pixi run caption --check-audio 10` and confirm the sound arrives
 4. The host copies the API token and sends it to the caption PC in the chat
-5. Check that **音声の入力** on the control page is `CABLE Output`
+5. Check that **音声の入力** on the control page is `CABLE Output`, and that the
+   right tables are ticked under **用語集** (glossary) for this meeting
 6. Press **開始** under **字幕の生成**. Audio starts coming in here.
    **Watch the meter move.** If it does not, pick another input. You can change
    the device while captions are being generated
@@ -351,7 +356,8 @@ pixi run caption --web 8090 --control-port 8091
    terminal window both close**
 10. After the meeting, the record is in your Downloads folder as
     `live-caption_*.md`. **Collect the misrecognitions and add them to the third
-    column of `docs/glossary.tsv`.** The next meeting will be better
+    column of the right table in `docs/glossary/`.** The next meeting will be
+    better. The header of the `.md` says which tables were used
 
 ---
 
@@ -369,7 +375,8 @@ pixi run caption --web 8090 --control-port 8091
 | Different captions appear when someone speaks | **Zoom's automatic captions are running.** Turn them off |
 | A term is in the glossary but the recogniser still misses it | It may be cut by `config.ASR_KEYWORD_LIMIT`. Words at the end of the table do not reach the recogniser |
 | Captions stopped part way through | The `seq` number went backwards. If you restarted the app, check `local/seq_state.json` |
-| A term comes out wrong | Add the misrecognition you actually saw to the third column of `docs/glossary.tsv` |
+| A term comes out wrong | Add the misrecognition you actually saw to the third column of the right table in `docs/glossary/` |
+| A whole subject's terms come out wrong | The table for that subject may not be ticked under 用語集 on the control page |
 | Captions go by too fast to read | Ask the readers to make the caption area taller. Lower `config.FORCE_CUT_CHARS` |
 | The recogniser reconnects again and again | The network. Turn off incoming video in Zoom on the caption PC. Try another line |
 

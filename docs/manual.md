@@ -289,8 +289,43 @@ The timestamp is the time the recognition became final.
 
 ## 6. The glossary
 
-`docs/glossary.tsv` decides how well the technical terms come out. **This file
-is the main thing you maintain.**
+The tables in `docs/glossary/` decide how well the technical terms come out.
+**These files are the main thing you maintain.**
+
+### Pick the tables for the meeting
+
+**There is one file per subject, and you choose which ones to use.**
+
+```
+docs/glossary/KAGRA_basic.tsv
+docs/glossary/Interferometer.tsv
+docs/glossary/LVK.tsv
+```
+
+On the control page, tick the tables you want under **用語集** (glossary).
+**The change takes effect as soon as you tick a box.** If captions are being
+generated, the recogniser reconnects so that the new keywords reach it.
+
+The row under the boxes shows the total number of terms and how many words go to
+the recogniser. **Watch the limit.** Words past `config.ASR_KEYWORD_LIMIT` never
+reach the recogniser, and the page says so in red when that happens. If you see
+it, tick fewer tables.
+
+**Your choice is remembered.** The next start uses the same combination. It is
+printed at start-up and shown on the control page, so you can see what is in use.
+
+You can also choose at start-up:
+
+```bash
+pixi run caption --web --glossary KAGRA_basic Interferometer
+```
+
+**When the same Japanese term is in two tables, the two entries are merged.**
+The English comes from the first table that has it, and the misrecognitions from
+the third column are collected from every table. If two tables give different
+English for the same term, the app prints a warning and uses the first one.
+
+### The file format
 
 One term per line, three columns separated by tabs:
 
@@ -311,9 +346,11 @@ step can recover the correct term from it.
 
 How to grow the table after a meeting:
 
-1. Open `live-caption_*.md` in your Downloads folder
+1. Open `live-caption_*.md` in your Downloads folder. The header says which
+   tables were used
 2. Look for terms that came out wrong in the English
-3. Add the wrong Japanese text to the third column of that term's line
+3. Add the wrong Japanese text to the third column of that term's line, in
+   whichever table holds that term
 4. **Add English misrecognitions too.** For example "people" for `p-pol`
 5. **Add forms where the end of the previous word is stuck to the front.**
    For example `無観測系` for `干渉計`: the leading `む` belongs to the word before
@@ -326,8 +363,10 @@ from the sound alone.
 `牛場` had no `Woza` in it, although a note said it did. Run the term through
 the translation step and confirm.
 
-**Different KAGRA subsystems use different words.** You need either one large
-table, or one table per kind of meeting.
+**Put a new term in the table where it belongs.** A term used in every KAGRA
+meeting goes in `KAGRA_basic`. A term only a mirror-control meeting uses goes in
+`Interferometer`. Keeping them apart is what lets you leave out the words a
+meeting does not need.
 
 ---
 
@@ -368,6 +407,7 @@ Options:
 | `--loop` | Repeat the file given by `--from-file` |
 | `--delay <level>` | Recognition delay and accuracy. `minimal`, `low`, `medium`, `high`, `xhigh`. Default `low` |
 | `--model <name>` | Translation model. Default `gpt-4.1-mini` |
+| `--glossary <name> ...` | Which tables in `docs/glossary/` to use. Several can be given. Default: the combination you chose last |
 | `--check-audio [sec]` | Show the input level and exit. Calls no API |
 | `--list-devices` | List the input devices |
 | `--cloudflared <path>` | Where `cloudflared` is. Not needed if it is on PATH or in `local/bin` |
@@ -432,4 +472,4 @@ out. If you missed one, look again instead of sending it a second time.
 
 - [test-procedure.md](test-procedure.md) — the staged test used to bring up a
   new caption PC, and the checklist for the day of the meeting
-- [glossary.tsv](glossary.tsv) — the term table
+- [glossary/](glossary/) — the term tables, one file per subject

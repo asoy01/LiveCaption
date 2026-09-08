@@ -318,6 +318,10 @@ CONTROL_BODY = """
   .row2:last-child { margin-bottom: 0; }
   /* 見出しは行を独り占めする。狭い欄で、ラベルと部品を横に並べると折り返しが汚い。 */
   .lbl { flex: 1 0 100%; color: var(--fg); font-size: 13px; }
+  /* 用語集のチェックは1行に1つ。名前と語数を並べると横に入りきらない。 */
+  .gloss { flex: 1 0 100%; display: flex; align-items: center; gap: 6px;
+           cursor: pointer; font-size: 13px; }
+  .gloss input { cursor: pointer; }
   input[type=password], input[type=text] {
     font: inherit; font-size: 13px; color: var(--fg);
     background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
@@ -469,6 +473,16 @@ CONTROL_BODY = """
   </div>
 
   <div class="grp">
+    <h2>用語集</h2>
+    <div class="row2" id="glossBox">
+      <span id="glossLoading">読み込み中…</span>
+    </div>
+    <div class="row2">
+      <span id="glossState"></span>
+    </div>
+  </div>
+
+  <div class="grp">
     <h2>アプリの終了</h2>
     <div class="row2">
       <button id="quit" class="danger">終了</button>
@@ -484,6 +498,8 @@ CONTROL_BODY = """
 __FEED_JS__
 
   const token = $("token"), save = $("save"), start = $("start"), stop = $("stop");
+  const glossBox = $("glossBox"), glossState = $("glossState");
+  let glossLoaded = false;
   const gstart = $("gstart"), gstop = $("gstop");
   const gpill = $("genPill"), genState = $("genState");
   const devices = $("devices"), devReload = $("devReload");
@@ -602,6 +618,7 @@ __FEED_JS__
     // 一覧は最初の1回だけ取る。開いている選択肢を勝手に差し替えない。
     // **選べないときも取りに行く。** 取らないと「読み込み中…」が残ってしまう。
     if (!devLoaded) { loadDevices(); }
+    if (!glossLoaded) { loadGlossary(); }
 
     // --- Zoom ---
     let label, cls;
@@ -731,6 +748,66 @@ __FEED_JS__
     devices.disabled = false;
   });
 
+  // --- 用語集 -------------------------------------------------------------
+  // **会議によって語彙が違う。** 必要な表だけを重ねる。1つの大きな表を
+  // 全部の会議で使うと、関係の無い語が認識の keywords を食う。
+  function showGlossary(g) {
+    const sel = new Set(g.selected || []);
+    glossBox.innerHTML = "";
+    if (!g.sets || !g.sets.length) {
+      glossBox.textContent = "docs/glossary/ に .tsv が無い";
+    } else {
+      for (const s of g.sets) {
+        const lab = document.createElement("label");
+        lab.className = "gloss";
+        const cb = document.createElement("input");
+        cb.type = "checkbox"; cb.value = s.name; cb.checked = sel.has(s.name);
+        // 選んだ時点で切り替える。「適用」は押させない。
+        cb.addEventListener("change", applyGlossary);
+        lab.appendChild(cb);
+        lab.appendChild(document.createTextNode(" " + s.name + "（" + s.terms + " 語）"));
+        glossBox.appendChild(lab);
+      }
+    }
+    const parts = [];
+    parts.push("合計 " + g.terms + " 語");
+    parts.push("認識に渡す語 " + g.keywords + " / " + g.limit);
+    glossState.textContent = parts.join("　");
+    // **上限で切れた語は認識に届かない。** 黙って落とすと、表に足したのに
+    // 効かない、という分かりにくい失敗になる。
+    if (g.dropped > 0) {
+      glossState.innerHTML = parts.join("　")
+        + '<br><span class="ng">' + g.dropped
+        + " 語が上限で切り捨てられた。選ぶ表を減らすこと</span>";
+    }
+  }
+
+  async function loadGlossary() {
+    glossLoaded = true;
+    try {
+      const r = await fetch("/api/glossary");
+      showGlossary(await r.json());
+    } catch (e) {
+      glossLoaded = false;
+      say("用語集の一覧を取れない: " + e.message, false);
+    }
+  }
+
+  async function applyGlossary() {
+    const names = [...glossBox.querySelectorAll("input:checked")].map(c => c.value);
+    for (const c of glossBox.querySelectorAll("input")) { c.disabled = true; }
+    try {
+      const g = await post("/api/glossary", { names });
+      showGlossary(g);
+      say("用語集を " + (names.join(", ") || "(なし)") + " にした。", true);
+    } catch (e) {
+      say(String(e.message), false);
+      await loadGlossary();   // 失敗したら実際の選択へ戻す
+      return;
+    }
+    for (const c of glossBox.querySelectorAll("input")) { c.disabled = false; }
+  }
+
   // --- Zoom ---------------------------------------------------------------
   save.addEventListener("click", async () => {
     const value = token.value.trim();
@@ -857,6 +934,8 @@ class WebCaptions:
         self.engine = None
         # 入力デバイスの一覧と差し替え（app.AudioControl）。
         self.audio = None
+        # 用語集の一覧と選び直し（app.GlossaryControl）。
+        self.glossary = None
         self.on_shutdown = None
         self.tunnel: tunnel_mod.Tunnel | None = None
         # 会議の記録（transcript.Transcript）。--no-save のときは None のまま。
@@ -1097,6 +1176,11 @@ def _control_handler(web: WebCaptions):
                 self._send_json(200, web.status())
             elif u.path == "/api/qr":
                 self._send_qr(web.public_url())
+            elif u.path == "/api/glossary":
+                if web.glossary is None:
+                    self._send_json(503, {"error": "用語集の受け口が用意できていない。"})
+                else:
+                    self._send_json(200, web.glossary.status())
             elif u.path == "/api/devices":
                 if web.audio is None:
                     self._send_json(503, {"error": "音声の受け口が用意できていない。"})
@@ -1140,7 +1224,7 @@ def _control_handler(web: WebCaptions):
                 self._shutdown()
                 return
             if path not in ("/api/token", "/api/zoom", "/api/tunnel",
-                            "/api/engine", "/api/device"):
+                            "/api/engine", "/api/device", "/api/glossary"):
                 self.send_error(404)
                 return
             try:
@@ -1164,6 +1248,22 @@ def _control_handler(web: WebCaptions):
                     self._send_json(400, {"error": str(exc)})
                     return
                 self._send_json(200, web.status())
+                return
+
+            if path == "/api/glossary":
+                if web.glossary is None:
+                    self._send_json(503, {"error": "用語集の受け口が用意できていない。"})
+                    return
+                raw = body.get("names")
+                if not isinstance(raw, list):
+                    self._send_json(400, {"error": "names は配列で渡すこと。"})
+                    return
+                try:
+                    st = web.glossary.select([str(n) for n in raw])
+                except ValueError as exc:
+                    self._send_json(400, {"error": str(exc)})
+                    return
+                self._send_json(200, st)
                 return
 
             if path == "/api/engine":

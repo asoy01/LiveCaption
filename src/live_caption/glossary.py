@@ -1,6 +1,13 @@
 """用語対訳表の読み込み。
 
-書式は `docs/glossary.tsv`:
+**表は複数ある。** `docs/glossary/` に置いた `.tsv` を、会議に合わせて選んで重ねる。
+例: `KAGRA_basic` + `Interferometer`。選択は操作画面から変えられる。
+
+分けるのは、サブシステムによって語彙が違うためである。1つの大きな表を
+全部の会議で使うと、関係の無い語が認識の `keywords` を食い、上限
+（`config.ASR_KEYWORD_LIMIT`）で本当に要る語が落ちる。
+
+書式は `docs/glossary/*.tsv`:
 
     日本語(正しい表記) <TAB> English <TAB> よくある誤認識(カンマ区切り)
 
@@ -18,6 +25,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,9 +39,29 @@ class Entry:
     wrong: tuple[str, ...]
 
 
-def load(path: Path | None = None) -> list[Entry]:
+def path_of(name: str) -> Path:
+    """名前から表のファイルの場所を作る。拡張子は付けても付けなくてもよい。"""
+    stem = name[:-4] if name.lower().endswith(".tsv") else name
+    return config.GLOSSARY_DIR / f"{stem}.tsv"
+
+
+def available() -> list[dict]:
+    """`docs/glossary/` にある表の一覧。名前順。
+
+    語数まで返す。**どれを選ぶと何語になるかが見えないと、選べない。**
+    """
+    out = []
+    if not config.GLOSSARY_DIR.is_dir():
+        return out
+    for p in sorted(config.GLOSSARY_DIR.glob("*.tsv"), key=lambda q: q.name.lower()):
+        out.append({"name": p.stem, "terms": len(load_file(p))})
+    return out
+
+
+def load_file(path: Path) -> list[Entry]:
+    """1つの表を読む。"""
     entries: list[Entry] = []
-    for line in (path or config.GLOSSARY_PATH).read_text(encoding="utf-8").splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip() or line.startswith("#"):
             continue
         cols = line.split("\t")
@@ -45,6 +73,68 @@ def load(path: Path | None = None) -> list[Entry]:
         if ja:
             entries.append(Entry(ja, en, wrong))
     return entries
+
+
+def load(names: list[str] | tuple[str, ...] | None = None) -> list[Entry]:
+    """選んだ表を重ねて読む。`names` が None なら既定の選択を使う。
+
+    **同じ日本語が複数の表に出たら、1つにまとめる。** 英語は最初に出たものを採り、
+    誤認識の列は全部の表から集める。誤認識は多いほうがよいので捨てない。
+
+    英語が食い違ったら画面に出す。**黙って片方を捨てると、会議中に
+    「表に書いたはずの英語が出ない」と悩むことになる。**
+    """
+    if names is None:
+        names = selection()
+
+    merged: dict[str, Entry] = {}
+    for name in names:
+        path = path_of(name)
+        if not path.exists():
+            print(f"  [用語集] {path.name} が無い。飛ばす")
+            continue
+        for e in load_file(path):
+            old = merged.get(e.ja)
+            if old is None:
+                merged[e.ja] = e
+                continue
+            if old.en and e.en and old.en != e.en:
+                print(f"  [用語集] 「{e.ja}」の英語が食い違う: "
+                      f"{old.en!r} を使い、{e.en!r}（{name}）は使わない")
+            wrong = tuple(dict.fromkeys(old.wrong + e.wrong))
+            merged[e.ja] = Entry(old.ja, old.en or e.en, wrong)
+    return list(merged.values())
+
+
+def selection() -> tuple[str, ...]:
+    """いま選ばれている表の名前。前回の選択を覚えている。
+
+    **覚えるのは、会議ごとに選び直す手間を無くすためである。** 同じ種類の
+    会議が続くことが多い。起動時の画面と操作画面の両方に出るので、
+    前回のままなことに気づけないという心配はない。
+    """
+    try:
+        saved = json.loads(config.GLOSSARY_STATE_PATH.read_text(encoding="utf-8"))
+        names = tuple(str(n) for n in saved.get("names", []))
+    except (OSError, ValueError, AttributeError):
+        names = ()
+    # 消えた表を覚えたままにしない。
+    names = tuple(n for n in names if path_of(n).exists())
+    if names:
+        return names
+    return tuple(n for n in config.GLOSSARY_DEFAULT if path_of(n).exists())
+
+
+def remember(names: list[str] | tuple[str, ...]) -> None:
+    """次の起動のために選択を覚える。書けなくても落とさない。"""
+    try:
+        config.GLOSSARY_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        config.GLOSSARY_STATE_PATH.write_text(
+            json.dumps({"names": list(names)}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        print(f"  [用語集] 選択を覚えられない: {exc}")
 
 
 def keywords(

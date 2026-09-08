@@ -196,11 +196,53 @@ class AudioControl:
         return self.status()
 
 
+class GlossaryControl:
+    """用語集の一覧と選び直し。
+
+    **会議によって語彙が違う。** サブシステムごとの表を必要なぶんだけ重ねる。
+    1つの大きな表を全部の会議で使うと、関係の無い語が認識の keywords を食い、
+    上限で本当に要る語が落ちる。
+
+    呼ぶのはHTTPサーバのスレッドである。
+    """
+
+    def __init__(self, app: "App") -> None:
+        self.app = app
+
+    def status(self) -> dict:
+        return {
+            "sets": glossary.available(),
+            "selected": list(self.app.glossary_names),
+            "terms": len(self.app.entries),
+            "keywords": len(self.app.keywords),
+            "limit": config.ASR_KEYWORD_LIMIT,
+            "dropped": self.app.dropped_keywords,
+        }
+
+    def select(self, names: list[str]) -> dict:
+        """選び直す。**生成中なら、認識を繋ぎ直して新しい keywords を届ける。**
+
+        keywords はセッションの開始時にしか送れない。繋ぎ直さないと、
+        翻訳だけが新しい表になり、認識は古い表のままになる。
+        """
+        known = {s["name"] for s in glossary.available()}
+        unknown = [n for n in names if n not in known]
+        if unknown:
+            raise ValueError(f"用語集が無い: {', '.join(unknown)}")
+        self.app.apply_glossary(names)
+        return self.status()
+
+
 class App:
     def __init__(self, settings: config.Settings, web=None) -> None:  # noqa: ANN001
         self.settings = settings
         self.web = web
-        entries = glossary.load(settings.glossary_path)
+        # **使う用語集は名前で決まる。** 起動時の指定が無ければ前回の選択。
+        self.glossary_names: tuple[str, ...] = tuple(
+            settings.glossary_names if settings.glossary_names is not None
+            else glossary.selection()
+        )
+        entries = glossary.load(self.glossary_names)
         self.entries = entries
         # 上限で切り捨てられた語は認識の段に届かない。黙って落とさず、
         # 起動時の画面に数を出す（2026-09-07 に27語が落ちていたのに気づけなかった）。
@@ -220,6 +262,7 @@ class App:
         self.zoom = ZoomControl(self.sender)
         self.engine = EngineControl(self)
         self.audio = AudioControl(self)
+        self.glossary = GlossaryControl(self)
         # run() で受け取る。操作画面から入力を差し替えるために持っておく。
         self.capture = None
         # 音声デバイスを開けなかったときの理由。開けたら消す。
@@ -247,6 +290,7 @@ class App:
                     "languages": ",".join(settings.languages),
                     "translate": settings.translate_model,
                     "glossary": len(entries),
+                    "glossary_sets": ", ".join(self.glossary_names) or "(なし)",
                     "dry_run": settings.dry_run,
                 },
             )
@@ -260,6 +304,8 @@ class App:
             web.engine = self.engine
             # 入力デバイスの一覧と差し替え。
             web.audio = self.audio
+            # 用語集の一覧と選び直し。
+            web.glossary = self.glossary
             # 同じ画面から字幕アプリそのものを終わらせる。
             web.on_shutdown = self.request_stop
             # 記録が溜まっていることを操作画面に出す。
@@ -299,6 +345,37 @@ class App:
             self._flip(on)
         else:
             loop.call_soon_threadsafe(self._flip, on)
+
+    def apply_glossary(self, names: list[str] | tuple[str, ...]) -> None:
+        """用語集を選び直して、認識と翻訳の両方に反映する。
+
+        **別のスレッドから呼ばれる。**
+
+        翻訳のプロンプトはその場で作り直せる。認識の `keywords` は
+        セッションの開始時にしか送れないので、生成中なら繋ぎ直す。
+        """
+        names = tuple(names)
+        entries = glossary.load(names)
+        every = glossary.keywords(entries, limit=None)
+
+        self.glossary_names = names
+        self.entries = entries
+        self.keywords = every[: config.ASR_KEYWORD_LIMIT]
+        self.dropped_keywords = len(every) - len(self.keywords)
+        self.asr.keywords = self.keywords
+        # 翻訳のプロンプトを作り直す。訳の途中の文には影響しない。
+        self.translator.system = translator_mod.build_system(entries)
+        glossary.remember(names)
+
+        label = ", ".join(names) or "(なし)"
+        print(f"[{now()}] 用語  用語集を {label} にした"
+              f"（{len(entries)} 語、認識に渡す語 {len(self.keywords)}）")
+        if self.dropped_keywords:
+            print(f"       **{self.dropped_keywords} 語が上限で切り捨てられた。"
+                  "認識の段には届かない。**")
+        if self.generating:
+            # keywords はセッションの開始時にしか送れない。繋ぎ直す。
+            self.request_restart()
 
     def request_restart(self) -> None:
         """音声デバイスと認識を開き直す。**別のスレッドから呼ばれる。**"""
@@ -432,7 +509,8 @@ class App:
         print("=" * 70)
         print("LiveCaption")
         print("=" * 70)
-        print(f"用語対訳表: {len(self.entries)} 語"
+        print(f"用語対訳表: {', '.join(self.glossary_names) or '**選ばれていない**'}"
+              f"  {len(self.entries)} 語"
               f"（認識に渡す語 {len(self.keywords)}、上限 {config.ASR_KEYWORD_LIMIT}）")
         if self.dropped_keywords:
             print(f"  **{self.dropped_keywords} 語が上限で切り捨てられた。"

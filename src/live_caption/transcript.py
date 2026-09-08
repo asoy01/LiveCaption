@@ -178,11 +178,13 @@ def render(meta: dict, records: list[dict], ended: str = "", final: bool = True)
         lines.append(f"- 翻訳: {meta['translate']}")
     if meta.get("glossary") is not None:
         lines.append(f"- 用語対訳表: {meta['glossary']} 語")
+    if meta.get("glossary_sets"):
+        lines.append(f"- 使った用語集: {meta['glossary_sets']}")
     if meta.get("dry_run"):
         lines.append("- **--dry-run。Zoomへは送っていない。**")
     lines.append("")
     lines.append("認識の出力（上）と、字幕として出した英語（下）を並べてある。")
-    lines.append("**上の行の誤りは `docs/glossary.tsv` の第3列に足すこと。**")
+    lines.append("**上の行の誤りは `docs/glossary/` の表の第3列に足すこと。**")
     lines.append("")
     lines.append("---")
     lines.append("")

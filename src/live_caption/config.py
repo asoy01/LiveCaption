@@ -171,7 +171,14 @@ TRANSCRIPT_DIR = downloads_dir()
 TRANSCRIPT_PREFIX = "live-caption_"
 
 # --- その他 -----------------------------------------------------------------
-GLOSSARY_PATH = PROJECT_ROOT / "docs" / "glossary.tsv"
+# 用語対訳表は docs/glossary/ に置いた .tsv である。**会議ごとに組み合わせを変える。**
+# サブシステムによって語彙が違うので、1つの大きな表を全部の会議で使うと、
+# 関係の無い語が認識の keywords を食い、上限で本当に要る語が落ちる。
+GLOSSARY_DIR = PROJECT_ROOT / "docs" / "glossary"
+# 何も選ばれていないときに読むもの（拡張子は付けない）。
+GLOSSARY_DEFAULT: tuple[str, ...] = ("KAGRA_basic",)
+# 前回の選択。操作画面で選び直すたびに書く。次の起動もこれで始まる。
+GLOSSARY_STATE_PATH = PROJECT_ROOT / "local" / "glossary_state.json"
 ENV_PATH = PROJECT_ROOT / ".env"
 
 
@@ -179,7 +186,8 @@ ENV_PATH = PROJECT_ROOT / ".env"
 class Settings:
     caption_url: str
     device: str | None = None
-    glossary_path: Path = GLOSSARY_PATH
+    # 使う用語集の名前。None なら、前回の選択（無ければ GLOSSARY_DEFAULT）。
+    glossary_names: tuple[str, ...] | None = None
     delay: str = ASR_DELAY
     translate_model: str = TRANSLATE_MODEL
     dry_run: bool = False
