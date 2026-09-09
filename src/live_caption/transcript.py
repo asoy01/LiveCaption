@@ -1,8 +1,12 @@
 """会議の記録を残す。
 
-**日本語の認識文と、それを訳した英語の字幕を対にして書く。** 英語だけでは、
-後から用語の誤りを追えない。誤認識は日本語の側にしか現れないためである
+**認識の出力と、それを訳した字幕を対にして書く。** 字幕だけでは、後から用語の
+誤りを追えない。誤認識は認識の側にしか現れないためである
 （`docs/test-procedure.md` の段階2で採取しているもの）。
+
+日本語の会議なら「日本語の認識文と英語の字幕」、英語の会議なら「英語の認識文と
+日本語の字幕」になる。**鍵の名前は向きによらず `ja`（認識）と `en`（字幕）である。**
+過去の記録と `scripts/transcript_to_md.py` がこの名前で読んでいるので変えない。
 
 ## ファイルは2つできる
 
@@ -88,12 +92,18 @@ class Transcript:
         took: float = 0.0,
         total: float = 0.0,
         spec: bool = False,
+        direction: str = "",
     ) -> None:
         """確定した1文を記録する。
 
-        `ja` は認識の出力そのもの。**日本語とは限らない。** 会議の前半は英語なので、
-        そのときは英語がそのまま入る。`en` は字幕として出した行で、翻訳に失敗した
-        ときは空になる。**空でも捨てない。** 後から誤認識を拾うのに要る。
+        **鍵の名前は `ja` / `en` だが、意味は「認識の出力」と「字幕」である。**
+        `ja` は認識の出力そのもので、日本語とは限らない。会議の前半は英語なので、
+        そのときは英語がそのまま入る。字幕の向きが `en2ja` なら、`ja` に英語が入り
+        `en` に日本語が入る。**鍵の名前は変えない。** 過去の記録と
+        `scripts/transcript_to_md.py` がこの名前で読んでいる。
+
+        `en` は字幕として出した行で、翻訳に失敗したときは空になる。
+        **空でも捨てない。** 後から誤認識を拾うのに要る。
 
         `when` は**認識が確定した時刻**である。呼ばれるのは翻訳が終わった後なので、
         ここで時計を読むと2〜3秒ずれる。記録に要るのは、訳せた時刻ではなく
@@ -125,6 +135,10 @@ class Transcript:
         # 先回りの翻訳が当たった文。当たると total が took より小さくなる。
         if spec:
             record["spec"] = True
+        # 字幕の向き。**会議の途中で変えられるので、1文ごとに残す。**
+        # メタに1回だけ書くと、切り替えた後の記録が嘘になる。
+        if direction:
+            record["dir"] = direction
         self.records.append(record)
         self._write(record)
 
@@ -205,6 +219,15 @@ def render(meta: dict, records: list[dict], ended: str = "", final: bool = True)
         )
     if meta.get("translate"):
         lines.append(f"- 翻訳: {meta['translate']}")
+    # 向きは1文ごとに記録してある。会議の途中で切り替えられるためである。
+    used = [d for d in dict.fromkeys(str(r.get("dir", "")) for r in records) if d]
+    if not used and meta.get("direction"):
+        used = [str(meta["direction"])]
+    if used:
+        labels = {"ja2en": "日本語 → 英語", "en2ja": "英語 → 日本語"}
+        lines.append("- 字幕の向き: " + "、".join(labels.get(d, d) for d in used))
+        if len(used) > 1:
+            lines.append("  **会議の途中で向きを変えている。**")
     if meta.get("glossary") is not None:
         lines.append(f"- 用語対訳表: {meta['glossary']} 語")
     if meta.get("glossary_sets"):
@@ -212,7 +235,7 @@ def render(meta: dict, records: list[dict], ended: str = "", final: bool = True)
     if meta.get("dry_run"):
         lines.append("- **--dry-run。Zoomへは送っていない。**")
     lines.append("")
-    lines.append("認識の出力（上）と、字幕として出した英語（下）を並べてある。")
+    lines.append("認識の出力（上）と、字幕として出した行（下）を並べてある。")
     lines.append("**上の行の誤りは `etc/glossary/` の表の第3列に足すこと。**")
     lines.append("")
     lines.append("---")

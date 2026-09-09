@@ -1,4 +1,10 @@
-"""翻訳。日本語は英語に訳し、英語はそのまま出す。
+"""翻訳。**向きは会議ごとに選ぶ。**
+
+- `ja2en`: 日本語は英語に訳し、英語はそのまま出す
+- `en2ja`: 英語は日本語に訳し、日本語はそのまま出す
+
+どちらの向きでも、逆の言語が混ざったときはそのまま出す。KAGRAの朝礼は前半が英語、
+後半が日本語なので、片方の言語だけを前提にできない。
 
 用語対訳表と置換規則をプロンプトに埋める。認識が漢字を外しても、ここで復元する。
 ただし**全部は救えない**。誤認識が「別の妥当な専門用語」に着地すると、
@@ -18,7 +24,7 @@ import urllib.request
 
 from . import config, glossary
 
-SYSTEM = """\
+SYSTEM_JA2EN = """\
 あなたは重力波望遠鏡 KAGRA の会議の同時通訳者である。音声認識の出力を、英語の字幕に変換する。
 
 **この会議は日本語と英語が混ざる。** KAGRAの朝礼は前半が英語、後半が日本語である。
@@ -51,6 +57,47 @@ SYSTEM = """\
 - 意味が取れない部分は、無理に訳さず、そのまま音写する。
 """
 
+SYSTEM_EN2JA = """\
+あなたは重力波望遠鏡 KAGRA の会議の同時通訳者である。音声認識の出力を、日本語の字幕に変換する。
+
+**この会議は日本語と英語が混ざる。** KAGRAの朝礼は前半が英語、後半が日本語である。
+
+- 入力が**英語**なら、日本語に訳す。
+- 入力が**既に日本語**なら、そのまま日本語で出す。**英語に訳してはいけない。**
+  認識の誤りと言い直しだけを整え、語彙や言い回しは変えない。
+  **入力が日本語のときも、下の置換規則は適用する。** 誤認識はそこで直す。
+
+入力は音声認識の生の出力である。次の特徴がある。
+
+- 専門用語を、音の近い普通の語に取り違えていることが多い。下の置換規則で直すこと。
+- アルファベットの略語が小文字になっている。正しい大文字に直すこと。
+- 句読点が無い、または誤っている。
+- 話者の多くは英語を母語としない。文法が崩れていても、意味を取って訳すこと。
+
+この会議は重力波検出器 KAGRA の定例である。話題は干渉計の光学と制御、防振系（サスペンション）、
+真空、低温など。専門用語はこの分野のものとして解釈すること。
+
+{glossary}
+
+出力の規則:
+
+- 日本語の字幕だけを出力する。説明や注釈は付けない。
+- **出力は必ず日本語である。英語の文を出力してはいけない。**
+  入力が日本語だったときは、その日本語を出す。訳し返さない。
+- **1行は20〜{max_chars}文字にする。** これより長い場合だけ改行する。
+  **極端に短い行を作らない。** 改行は、読点や助詞の切れ目など、意味の切れ目で入れること。
+- **多くても3行に収めること。** 字幕の表示領域は狭く、送りすぎると先頭が流れて消える。
+  入力が長い場合は、細部を削ってでも短くする。
+- 会議で口頭で話される日本語にする。文語的な表現は使わない。「です・ます」で揃える。
+- **専門用語を日本語に訳しすぎない。** 上の表にある語は表の日本語を使う。
+  表に無い略語や装置名（PRM、OMC、ITM など）は、英字のまま残すこと。
+  現場で英語のまま呼んでいる語（ロック、アライメント、デチューンなど）も、そのまま使う。
+- 意味が取れない部分は、無理に訳さず、そのまま音写する。
+"""
+
+# 向きから、使うシステムプロンプトを引く。
+SYSTEMS = {"ja2en": SYSTEM_JA2EN, "en2ja": SYSTEM_EN2JA}
+
 USER = """\
 直前の文脈（訳さなくてよい。指示語を解釈するための参考）:
 {context}
@@ -63,14 +110,29 @@ USER = """\
 
 
 def build_system(
-    entries: list[glossary.Entry], max_chars: int = config.MAX_CAPTION_CHARS
+    entries: list[glossary.Entry],
+    max_chars: int | None = None,
+    direction: str | None = None,
 ) -> str:
     """システムプロンプトを組み立てる。
 
     **これがこのシステムの中核である。** 本体も `scripts/` の実験もここを使う。
     プロンプトを別々に持つと必ずずれるので、複製しないこと。
+
+    `direction` が None なら、いま選ばれている向き（`config.DIRECTION`）。
+    `max_chars` が None なら、その向きの1行の文字数（英語80 / 日本語40）。
+
+    **既定値引数で `config` の値を捕まえてはいけない。** 既定値引数は import の
+    ときに1回だけ評価されるので、向きの切り替えも `.env` の差し替えも効かなくなる。
+    ここで、呼ばれるたびに読む。
     """
-    return SYSTEM.format(glossary=glossary.prompt_block(entries), max_chars=max_chars)
+    name = config.DIRECTION if direction is None else direction
+    if max_chars is None:
+        max_chars = config.DIRECTIONS[name].max_caption_chars
+    template = SYSTEMS.get(name, SYSTEM_JA2EN)
+    return template.format(
+        glossary=glossary.prompt_block(entries, direction=name), max_chars=max_chars
+    )
 
 
 def chat(model: str, system: str, user: str, timeout: float = 180.0) -> tuple[str, float]:
@@ -143,9 +205,16 @@ class Translator:
 
 
 def _wrap(line: str, limit: int) -> list[str]:
-    """モデルが長い行を返したときの保険。単語の切れ目で折る。"""
+    """モデルが長い行を返したときの保険。単語の切れ目で折る。
+
+    **日本語には空白が無い。** 空白で折るだけだと、長い日本語の行がそのまま
+    通ってしまい、保険にならない。空白が無い行は句読点で折り、それも無ければ
+    文字数で切る。
+    """
     if len(line) <= limit:
         return [line]
+    if " " not in line:
+        return _wrap_ja(line, limit)
     out, current = [], ""
     for word in line.split(" "):
         if current and len(current) + 1 + len(word) > limit:
@@ -155,4 +224,31 @@ def _wrap(line: str, limit: int) -> list[str]:
             current = f"{current} {word}".strip()
     if current:
         out.append(current)
+    return out
+
+
+def _wrap_ja(line: str, limit: int) -> list[str]:
+    """空白の無い行を折る。読点・句点を優先し、無ければ文字数で切る。
+
+    **行数を先に決めて、幅を均す。** 端から `limit` で切ると、42文字の行が
+    「40文字」と「す。」に割れる。1〜2文字の行は字幕として読めない。
+    """
+    out = []
+    while len(line) > limit:
+        # **毎回、残りの長さから割り直す。** 最初に決めた幅のまま切り進めると、
+        # 区切りの位置で余りがずれて、最後に「す。」だけの行が残る。
+        pieces = -(-len(line) // limit)      # 何行に割るか（切り上げ）
+        width = -(-len(line) // pieces)      # 均した幅
+        window = line[:width]
+        cut = max(window.rfind(mark) + len(mark) for mark in ("、", "。", "，", "・"))
+        # あまり手前で切ると細切れになる。後半に区切りが無ければ文字数で切る。
+        if cut <= width // 2:
+            cut = width
+            # **行の頭に句読点や閉じ括弧を置かない。** 1文字ぶん前の行へ送る。
+            while line[cut: cut + 1] in ("、", "。", "，", "．", "・", "」", "）", "』"):
+                cut += 1
+        out.append(line[:cut].strip())
+        line = line[cut:].strip()
+    if line:
+        out.append(line)
     return out

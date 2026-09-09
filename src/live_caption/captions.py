@@ -63,10 +63,13 @@ class CaptionSender:
     def __init__(
         self,
         base_url: str | None = None,
-        lang: str = config.CAPTION_LANG,
+        lang: str | None = None,
         dry_run: bool = False,
     ) -> None:
-        self.lang = lang
+        # **既定値引数で `config.CAPTION_LANG` を捕まえてはいけない。** 既定値引数は
+        # import のときに1回だけ評価されるので、字幕の向きを `en2ja` にしても
+        # `en-US` のまま送ることになる。ここで、作られるたびに読む。
+        self.lang = config.CAPTION_LANG if lang is None else lang
         # dry_run は「何があってもZoomへ送らない」。試験用で、実行中は変えられない。
         self.dry_run = dry_run
         self._lock = threading.Lock()

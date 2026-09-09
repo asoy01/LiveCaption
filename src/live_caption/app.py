@@ -265,9 +265,12 @@ class TuningControl:
 
         `ValueError` は操作した人に見せる。
         """
+        # **全部を検算してから入れる。** 途中で弾かれたときに、半分だけ変わった
+        # 状態にしない。入れるのは `config.set_tuning` で、値だけでなく
+        # 「人が明示して変えたか」も覚える（向きの切り替えから守るため）。
         checked = {name: config.coerce_tuning(name, raw) for name, raw in values.items()}
         for name, value in checked.items():
-            setattr(config, name, value)
+            config.set_tuning(name, value)
         # **`Segmenter` は作られたときに値を写している。** そこへ届けないと、
         # 画面の数字だけが変わって、切り方は前のままになる。
         self.app.segmenter.idle_sec = config.IDLE_FLUSH_SEC
@@ -287,10 +290,43 @@ class TuningControl:
         return st
 
 
+class DirectionControl:
+    """字幕の向きの切り替え。
+
+    **会議ごとに選ぶ。** 日本語の会議には英語字幕、英語の会議には日本語字幕。
+    用語集と違って、切り替えても認識は繋ぎ直さない（`keywords` が向きで変わらない）。
+
+    呼ぶのはHTTPサーバのスレッドである。
+    """
+
+    def __init__(self, app: "App") -> None:
+        self.app = app
+
+    def status(self) -> dict:
+        return {
+            "current": config.DIRECTION,
+            "items": [
+                {"name": d.name, "label": d.label, "lang": d.caption_lang}
+                for d in config.DIRECTIONS.values()
+            ],
+        }
+
+    def select(self, name: str) -> dict:
+        """選び直す。**その場で効く。再起動も再接続も要らない。**"""
+        self.app.apply_direction(str(name))
+        return self.status()
+
+
 class App:
     def __init__(self, settings: config.Settings, web=None) -> None:  # noqa: ANN001
         self.settings = settings
         self.web = web
+        # **向きは他の何よりも先に決める。** `Segmenter` は作られたときに
+        # `FORCE_CUT_CHARS` を写し、`Translator` は向きでプロンプトを選ぶ。
+        # 後から差し替えると、その2つだけが古い向きのままになる。
+        self.direction = config.apply_direction(
+            settings.direction or config.direction_selection()
+        )
         # **使う用語集は名前で決まる。** 起動時の指定が無ければ前回の選択。
         self.glossary_names: tuple[str, ...] = tuple(
             settings.glossary_names if settings.glossary_names is not None
@@ -318,6 +354,7 @@ class App:
         self.audio = AudioControl(self)
         self.glossary = GlossaryControl(self)
         self.tuning = TuningControl(self)
+        self.dir_control = DirectionControl(self)
         # run() で受け取る。操作画面から入力を差し替えるために持っておく。
         self.capture = None
         # 音声デバイスを開けなかったときの理由。開けたら消す。
@@ -344,6 +381,8 @@ class App:
                     "delay": settings.delay,
                     "languages": ",".join(settings.languages),
                     "translate": settings.translate_model,
+                    # 始めたときの向き。**途中で変えられるので、1文ごとにも残す。**
+                    "direction": self.direction.name,
                     "glossary": len(entries),
                     "glossary_sets": ", ".join(self.glossary_names) or "(なし)",
                     "dry_run": settings.dry_run,
@@ -363,6 +402,8 @@ class App:
             web.glossary = self.glossary
             # 遅延の調整つまみ。よく変えないので、画面では畳んである。
             web.tuning = self.tuning
+            # 字幕の向き。会議ごとに選ぶ。
+            web.direction = self.dir_control
             # 同じ画面から字幕アプリそのものを終わらせる。
             web.on_shutdown = self.request_stop
             # 記録が溜まっていることを操作画面に出す。
@@ -435,6 +476,39 @@ class App:
         if self.generating:
             # keywords はセッションの開始時にしか送れない。繋ぎ直す。
             self.request_restart()
+
+    def apply_direction(self, name: str) -> None:
+        """字幕の向きを切り替える。**別のスレッドから呼ばれる。**
+
+        **認識は繋ぎ直さない。** `keywords` は用語表の日本語と英語の両方を常に
+        渡しているので、向きを変えても同じ語が同じ並びで行く。用語集の選び直しとは
+        ここが違う。
+
+        `config.apply_direction()` が定数を差し替え、ここが、その定数を写して
+        持っている3つ（翻訳のプロンプト・`Segmenter`・`CaptionSender`）に届ける。
+        """
+        d = config.apply_direction(name)
+        self.direction = d
+        # **走っている先回りの翻訳を捨てる。** 古いプロンプトで訳しているので、
+        # 採用すると切り替えた直後の1文だけ逆向きの字幕が出る。
+        #
+        # **タスクの取り消しは、走らせている輪の中からでないといけない。**
+        # ここはHTTPサーバのスレッドなので、輪へ渡す（`set_generating` と同じ形）。
+        loop = self.zoom.loop
+        if loop is None:
+            self._drop_speculation()
+        else:
+            loop.call_soon_threadsafe(self._drop_speculation)
+        self.translator.system = translator_mod.build_system(self.entries)
+        # 直前の文脈も捨てる。切り替えの前後で字幕の言語が変わるため。
+        self.translator.history.clear()
+        # **`Segmenter` は作られたときに値を写している。** 届けないと切り方が前のまま。
+        self.segmenter.force_cut = config.FORCE_CUT_CHARS
+        self.sender.lang = d.caption_lang
+        config.remember_direction(d.name)
+        print(f"[{now()}] 向き  字幕を {d.label} にした"
+              f"（1行 {config.MAX_CAPTION_CHARS} 文字、強制分割 {config.FORCE_CUT_CHARS} 文字、"
+              f"Zoomの lang={d.caption_lang}）")
 
     def request_restart(self) -> None:
         """音声デバイスと認識を開き直す。**別のスレッドから呼ばれる。**"""
@@ -634,7 +708,7 @@ class App:
                 self.transcript.add(
                     cut.text, lines, sent, when=heard_at,
                     cut=cut.reason, waited=cut.waited, took=took, total=total,
-                    spec=used_spec,
+                    spec=used_spec, direction=config.DIRECTION,
                 )
 
     # --- 起動 ---------------------------------------------------------------
@@ -646,6 +720,8 @@ class App:
         print("=" * 70)
         print("LiveCaption")
         print("=" * 70)
+        print(f"字幕の向き: {self.direction.label}"
+              f"（1行 {config.MAX_CAPTION_CHARS} 文字、強制分割 {config.FORCE_CUT_CHARS} 文字）")
         print(f"用語対訳表: {', '.join(self.glossary_names) or '**選ばれていない**'}"
               f"  {len(self.entries)} 語"
               f"（認識に渡す語 {len(self.keywords)}、上限 {config.ASR_KEYWORD_LIMIT}）")
@@ -683,7 +759,7 @@ class App:
             # ここでファイルを作る。会議が始まる前に、書ける場所かどうかが分かる。
             self.transcript.open()
             print(f"記録:       {self.transcript.path}")
-            print("  日本語の認識文と英語の字幕を対にして、確定するたびに書く。")
+            print("  認識の出力と字幕を対にして、確定するたびに書く。")
         else:
             print("記録:       **残さない**（--no-save）")
         if start_now:
@@ -747,6 +823,7 @@ class App:
                 self.transcript.add(
                     cut.text, lines, sent, when=heard_at,
                     cut=cut.reason, took=took, total=time.time() - heard_at,
+                    direction=config.DIRECTION,
                 )
 
     def report(self, capture=None) -> None:

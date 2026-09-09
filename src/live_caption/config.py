@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -52,12 +53,18 @@ CONTEXT_SENTENCES = 3
 
 # --- 字幕の切り出しと送信 ---------------------------------------------------
 # Zoomの字幕オーバーレイは既定フォントで1行およそ80文字。
+# **これは英語を出すときの値である。** 日本語は全角で幅が倍あるので、
+# 向きを `en2ja` にすると 40 に差し替わる（下の「字幕の向き」）。
 MAX_CAPTION_CHARS = 80
 # 句点が来ないまま伸び続けたときに、強制的に切る長さ。
 #
 # **短くすること。** 話者は「、」で繋いで長く話す。120文字にしていたら、
 # 1文が字幕4〜5行になり、送った瞬間に先頭が窓から押し出された。
 # 70文字なら、おおむね2行に収まる。
+#
+# **これは日本語を聞くときの値である。** 英語は同じ内容を話すのに字数が倍要るので、
+# 向きを `en2ja` にすると 140 に差し替わる。ただし `.env` や操作画面で明示した値は
+# 残る（下の「字幕の向き」と `apply_direction()`）。
 FORCE_CUT_CHARS = 70
 # 発話が途切れてから、句点が無くても確定させるまでの秒数。
 IDLE_FLUSH_SEC = 2.5
@@ -82,6 +89,7 @@ SPECULATE_AFTER_SEC = 1.4
 # まとめて送ると読み手が追えない。窓は最小4行しかない。
 LINE_INTERVAL_SEC = 0.6
 # 会議開始時に流す捨て字幕。最初の数個は受信側に届かない（HANDOFF 参照）。
+# **向きが `en2ja` のときは日本語の3行に差し替わる。**
 WARMUP_CAPTIONS = (
     "Live captions are starting.",
     "Please widen the caption area to see more lines.",
@@ -89,6 +97,7 @@ WARMUP_CAPTIONS = (
 )
 
 # --- Zoom字幕API ------------------------------------------------------------
+# **これは英語を出すときの値である。** 向きが `en2ja` なら `ja-JP` に差し替わる。
 CAPTION_LANG = "en-US"
 CAPTION_TIMEOUT = 10.0
 # seq はミーティングのセッション全体で単調増加していないといけない。
@@ -98,6 +107,56 @@ SEQ_STATE_PATH = PROJECT_ROOT / "local" / "seq_state.json"
 # 送信レートの実測は 3.5 回/秒なので、係数はそれより大きく取る。
 SEQ_TIME_SCALE = 10
 SEQ_EPOCH = 1_767_225_600  # 2026-01-01 UTC。32bit に収めるための基準。
+
+# --- 字幕の向き -------------------------------------------------------------
+# **会議ごとに1つ選ぶ。** 日本語の会議には英語字幕、英語の会議には日本語字幕。
+# 逆の言語が混ざったときは訳さずにそのまま出す。プロンプトが両方を扱う。
+#
+# 向きが決めるのは、翻訳のプロンプトと、下の4つだけである。
+# **認識には手を触れない。** `keywords` は用語表の日本語と英語の両方を常に渡すので
+# （`glossary.keywords()`）、向きを変えても同じ語が同じ並びで行く。
+# だから切り替えに WebSocket の張り直しが要らない。用語集の選び直しとはここが違う。
+
+
+@dataclass(frozen=True)
+class Direction:
+    name: str
+    label: str                # 操作画面に出す名前
+    caption_lang: str         # Zoom字幕APIの lang
+    max_caption_chars: int    # 1行の文字数
+    force_cut_chars: int      # 文末記号が来ないまま伸びたときに切る長さ
+    warmup: tuple[str, ...]   # 流し始めの捨て字幕
+
+
+DIRECTIONS: dict[str, Direction] = {
+    "ja2en": Direction(
+        name="ja2en",
+        label="日本語 → 英語",
+        caption_lang=CAPTION_LANG,
+        max_caption_chars=MAX_CAPTION_CHARS,
+        force_cut_chars=FORCE_CUT_CHARS,
+        warmup=WARMUP_CAPTIONS,
+    ),
+    "en2ja": Direction(
+        name="en2ja",
+        label="英語 → 日本語",
+        caption_lang="ja-JP",
+        # 日本語は全角で幅が倍あるので、同じ窓に入る文字数は半分になる。
+        max_caption_chars=40,
+        # 英語は同じ内容を話すのに字数が倍要る。70 のままだと文が細切れになる。
+        force_cut_chars=140,
+        warmup=(
+            "字幕を開始します。",
+            "字幕の表示領域を広げてください。",
+            "---",
+        ),
+    ),
+}
+DIRECTION_DEFAULT = "ja2en"
+# いま選ばれている向き。`apply_direction()` が書き換える。
+DIRECTION = DIRECTION_DEFAULT
+# 前回の選択。操作画面で選び直すたびに書く。次の起動もこれで始まる。
+DIRECTION_STATE_PATH = PROJECT_ROOT / "local" / "direction_state.json"
 
 # --- ブラウザ字幕 -----------------------------------------------------------
 # Zoom字幕APIはホスト権限（トークンのコピー）が要る。自分がホストでない会議では
@@ -206,6 +265,8 @@ class Settings:
     device: str | None = None
     # 使う用語集の名前。None なら、前回の選択（無ければ GLOSSARY_DEFAULT）。
     glossary_names: tuple[str, ...] | None = None
+    # 字幕の向き。None なら、前回の選択（無ければ DIRECTION_DEFAULT）。
+    direction: str | None = None
     delay: str = ASR_DELAY
     translate_model: str = TRANSLATE_MODEL
     dry_run: bool = False
@@ -234,6 +295,11 @@ SPECULATE_MARGIN_SEC = 1.1
 # **差し替える前の値を控えておく。** 操作画面の「既定に戻す」で使う。
 # `apply_env_overrides()` が globals() を書き換えるので、その前に取る。
 _DEFAULTS = {attr: globals()[attr] for _e, attr, _c, _f in _TUNABLE}
+
+# **人が明示して変えたつまみ。** 向きを切り替えると `FORCE_CUT_CHARS` の既定値も
+# 変わる（日本語70 / 英語140）が、**明示した値まで勝手に戻してはいけない。**
+# ここに入っているものは向きに追随しない。既定と同じ値に戻したら、ここから外れる。
+_EXPLICIT: set[str] = set()
 # 画面に出す説明。**単位と、変えるとどうなるかを書く。**
 _TUNING_HELP = {
     "IDLE_FLUSH_SEC": "秒。発話が途切れてから、文末記号が無くても確定させるまで。"
@@ -265,6 +331,38 @@ def coerce_tuning(attr: str, raw) -> float | int:
     raise ValueError(f"{attr} は変えられる設定ではない。")
 
 
+def default_of(attr: str) -> float | int:
+    """そのつまみの既定値。**向きで変わるものは、いまの向きから取る。**
+
+    `FORCE_CUT_CHARS` は聞く言語で変わる（日本語70 / 英語140）。操作画面の
+    「既定に戻す」が、向きに合った値に戻るようにするため、ここで分岐する。
+    """
+    if attr == "FORCE_CUT_CHARS":
+        return direction().force_cut_chars
+    return _DEFAULTS[attr]
+
+
+def _remember_explicit(attr: str, value) -> None:
+    """人が明示して変えた値かどうかを覚える。
+
+    **既定と同じ値なら「明示していない」に戻す。** 操作画面の「.env に保存」は
+    既定のままの項目も書き出すので、`.env` に値があること自体は意思の証拠にならない。
+    既定と違う値だけを、向きの切り替えから守る。
+    """
+    if value == default_of(attr):
+        _EXPLICIT.discard(attr)
+    else:
+        _EXPLICIT.add(attr)
+
+
+def set_tuning(attr: str, raw) -> float | int:
+    """調整つまみを検算して入れる。操作画面から呼ぶ。"""
+    value = coerce_tuning(attr, raw)
+    globals()[attr] = value
+    _remember_explicit(attr, value)
+    return value
+
+
 def tuning() -> list[dict]:
     """調整つまみの、いまの値と既定値。操作画面に返す。"""
     return [
@@ -272,13 +370,63 @@ def tuning() -> list[dict]:
             "name": attr,
             "env": env_name,
             "value": globals()[attr],
-            "default": _DEFAULTS[attr],
+            "default": default_of(attr),
             "min": floor,
             "step": 1 if cast is int else 0.1,
             "help": _TUNING_HELP.get(attr, ""),
         }
         for env_name, attr, cast, floor in _TUNABLE
     ]
+
+
+def direction() -> Direction:
+    """いま選ばれている向き。"""
+    return DIRECTIONS[DIRECTION]
+
+
+def apply_direction(name: str) -> Direction:
+    """字幕の向きを切り替えて、出力側の定数を差し替える。選んだ向きを返す。
+
+    **翻訳のプロンプトはここでは作り直さない。** 呼ぶ側（`app.apply_direction`）が
+    用語表を持っているので、そちらでやる。ここが差し替えるのは定数だけである。
+    """
+    if name not in DIRECTIONS:
+        known = " / ".join(DIRECTIONS)
+        raise ValueError(f"字幕の向きが違う: 「{name}」。{known} のどちらか。")
+    d = DIRECTIONS[name]
+    globals()["DIRECTION"] = name
+    globals()["CAPTION_LANG"] = d.caption_lang
+    globals()["MAX_CAPTION_CHARS"] = d.max_caption_chars
+    globals()["WARMUP_CAPTIONS"] = d.warmup
+    # 明示して変えた値は残す。触っていないものだけ、向きの既定値に合わせる。
+    if "FORCE_CUT_CHARS" not in _EXPLICIT:
+        globals()["FORCE_CUT_CHARS"] = d.force_cut_chars
+    return d
+
+
+def direction_selection() -> str:
+    """覚えている向き。無ければ既定。
+
+    **覚えるのは、会議ごとに選び直す手間を無くすためである。** 用語集と同じ考え方。
+    起動時の画面と操作画面の両方に出るので、前回のままなことには気づける。
+    """
+    try:
+        saved = json.loads(DIRECTION_STATE_PATH.read_text(encoding="utf-8"))
+        name = str(saved.get("name", ""))
+    except (OSError, ValueError, AttributeError):
+        name = ""
+    return name if name in DIRECTIONS else DIRECTION_DEFAULT
+
+
+def remember_direction(name: str) -> None:
+    """次の起動のために選択を覚える。書けなくても落とさない。"""
+    try:
+        DIRECTION_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        DIRECTION_STATE_PATH.write_text(
+            json.dumps({"name": name}, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except OSError as exc:
+        print(f"  [向き] 選択を覚えられない: {exc}")
 
 
 def tuning_warning() -> str:
@@ -347,7 +495,11 @@ def apply_env_overrides() -> None:
             print(f"  [設定の警告] {env_name}: {exc} 既定の {before} を使う。")
             continue
         globals()[attr] = value
-        changed.append(f"{attr} {before} → {value}")
+        _remember_explicit(attr, value)
+        # 既定と同じ値が書いてあることは多い（「.env に保存」が全項目を書くため）。
+        # 変わっていないものを「差し替えた」と出すと、読む側が混乱する。
+        if value != before:
+            changed.append(f"{attr} {before} → {value}")
 
     # `IDLE_FLUSH_SEC` だけを変えたときは、先回りの時刻もそれに合わせる。
     # **合わせないと、先回りが早すぎて投げ捨てが増えるだけになる。**

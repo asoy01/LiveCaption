@@ -331,8 +331,10 @@ pixi run caption --web 8090 --control-port 8091
 1. Join the meeting from the caption PC (speaker `CABLE Input`, microphone muted)
 2. Run `pixi run caption --check-audio 10` and confirm the sound arrives
 3. The host copies the API token and sends it to the caption PC in the chat
-4. Check that **音声の入力** on the control page is `CABLE Output`, and that the
-   right tables are ticked under **用語集** (glossary) for this meeting
+4. Check three things on the control page: **音声の入力** (audio input) is
+   `CABLE Output`, the right tables are ticked under **用語集** (glossary) for
+   this meeting, and **字幕の向き** (direction) matches the language of the
+   meeting — 日本語 → 英語 for a Japanese meeting, 英語 → 日本語 for an English one
 5. Press **開始** under **字幕の生成**. Audio starts coming in here.
    **Watch the meter move.** If it does not, pick another input. You can change
    the device while captions are being generated

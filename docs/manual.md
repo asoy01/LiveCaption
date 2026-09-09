@@ -212,9 +212,28 @@ The list shows the host API as well as the name, because Windows shows
 
 Any of the three works. MME is the default and is fine.
 
-### Step 4. Start caption generation
+### Step 4. Check the direction, then start caption generation
 
-Press **開始** (start) under **字幕の生成** (caption generation).
+Look at **字幕の向き** (caption direction) on the control page. **Choose it for
+each meeting.**
+
+| Choice | What kind of meeting | Captions you get |
+|---|---|---|
+| 日本語 → 英語 | The meeting is held in Japanese, with people who read English | English |
+| 英語 → 日本語 | The meeting is held in English, with people who read Japanese | Japanese |
+
+**The change takes effect as soon as you pick it.** There is no apply button.
+You can change it in the middle of a meeting: the recogniser is not
+reconnected, so captions keep running.
+
+**When the other language comes in, it is passed through, not translated.** In a
+日本語 → 英語 meeting, an English sentence is shown as it is. The KAGRA morning
+meeting is English in the first half and Japanese in the second half, and one
+choice covers both halves.
+
+**The next start uses the same direction.** It remembers your last choice.
+
+Then press **開始** (start) under **字幕の生成** (caption generation).
 
 **Watch the level meter.** If nobody has spoken yet, the meter does not move.
 Ask someone to speak. If the meter stays flat while a person is speaking, the
@@ -471,6 +490,7 @@ Options:
 | `--delay <level>` | Recognition delay and accuracy. `minimal`, `low`, `medium`, `high`, `xhigh`. Default `low` |
 | `--model <name>` | Translation model. Default `gpt-4.1-mini` |
 | `--glossary <name> ...` | Which tables in `etc/glossary/` to use. Several can be given. Default: the combination you chose last |
+| `--direction <way>` | Which way to translate. `ja2en` (English captions for a Japanese meeting) or `en2ja` (Japanese captions for an English meeting). Default: the one you chose last |
 | `--check-audio [sec]` | Show the input level and exit. Calls no API |
 | `--list-devices` | List the input devices |
 | `--cloudflared <path>` | Where `cloudflared` is. Not needed if it is on PATH or in `local/bin` |

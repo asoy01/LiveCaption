@@ -21,6 +21,10 @@
 
 本命は2である。参考情報として並べるだけでは効かないので、置換規則として渡す。
 根拠は local/HANDOFF.md の「用語対訳表を置換規則にした効果」。
+
+**字幕の向きを変えても、表は作り直さない。** `日本語 / English` の対なので、
+`prompt_block()` が左右を入れ替えるだけで `en2ja` に使える。認識に渡す
+`keywords()` は、そもそも両方の言語を常に渡しているので向きに依存しない。
 """
 
 from __future__ import annotations
@@ -152,13 +156,44 @@ def keywords(
     return out if limit is None else out[:limit]
 
 
-def prompt_block(entries: list[Entry]) -> str:
-    """翻訳のプロンプトに埋める2節を作る。"""
-    terms = [f"- {e.ja} = {e.en}" for e in entries if e.en]
-    rules = [f"- 「{w}」 → 「{e.ja}」 = {e.en}" for e in entries for w in e.wrong]
+def prompt_block(entries: list[Entry], direction: str | None = None) -> str:
+    """翻訳のプロンプトに埋める2節を作る。
+
+    **向きで左右を入れ替える。** 表は `日本語 / English` の対なので、どちらを
+    字幕の言語にするかで、対訳表の並びと、置換規則の行き先が変わる。表そのものは
+    作り直さない。`en2ja` でも同じ `.tsv` をそのまま使う。
+
+    `direction` が None なら、いま選ばれている向き（`config.DIRECTION`）。
+    """
+    name = config.DIRECTION if direction is None else direction
+
+    if name == "en2ja":
+        # 出すのは日本語。英語 = 日本語 の順に並べ、置換規則も日本語に着地させる。
+        header = "## 用語対訳表（この日本語を必ず使う）"
+        terms = [f"- {e.en} = {e.ja}" for e in entries if e.en]
+        rules = [f"- 「{w}」 → 「{e.en}」 = {e.ja}"
+                 for e in entries if e.en for w in e.wrong]
+        examples = [
+            "- **左の語がこの分野で意味を成さないなら、必ず右の語として訳すこと。**",
+            "  例:「people」は「p-pol」（p偏光）の誤認識であることが多い。",
+            "- **日本語の誤認識も含まれる。** 日本語で話している部分にも同じ規則を適用すること。",
+            "  例:「間食系」「感傷系」は日本語として意味を成さない。必ず「干渉計」の話である。",
+            "  **「防振系」や「懸架系」と取り違えてはいけない。音が近いだけの別の語である。**",
+        ]
+    else:
+        header = "## 用語対訳表（この英語を必ず使う）"
+        terms = [f"- {e.ja} = {e.en}" for e in entries if e.en]
+        rules = [f"- 「{w}」 → 「{e.ja}」 = {e.en}" for e in entries for w in e.wrong]
+        examples = [
+            "- **左の語がこの分野で意味を成さないなら、必ず右の語として訳すこと。**",
+            "  例:「間食系」「感傷系」は日本語として意味を成さない。必ず「干渉計」= interferometer とする。",
+            "  **「防振系」や「懸架系」と取り違えてはいけない。音が近いだけの別の語である。**",
+            "- **英語の誤認識も含まれる。** 英語で話している部分にも同じ規則を適用すること。",
+            "  例:「people」は「p-pol」（p偏光）の誤認識であることが多い。",
+        ]
 
     return "\n".join([
-        "## 用語対訳表（この英語を必ず使う）",
+        header,
         "",
         *terms,
         "",
@@ -167,11 +202,7 @@ def prompt_block(entries: list[Entry]) -> str:
         "下の「誤 → 正」は、実際に音声認識が出した誤りである。",
         "左の語が入力に現れたら、右の語の誤認識だと考えること。",
         "",
-        "- **左の語がこの分野で意味を成さないなら、必ず右の語として訳すこと。**",
-        "  例:「間食系」「感傷系」は日本語として意味を成さない。必ず「干渉計」= interferometer とする。",
-        "  **「防振系」や「懸架系」と取り違えてはいけない。音が近いだけの別の語である。**",
-        "- **英語の誤認識も含まれる。** 英語で話している部分にも同じ規則を適用すること。",
-        "  例:「people」は「p-pol」（p偏光）の誤認識であることが多い。",
+        *examples,
         "- 左の語が普通の語としても成立する場合（例:「変更」「反射」「people」「サークル」）は、文脈で判断する。",
         "  装置や測定の話をしている最中なら、右の語を優先する。",
         "  人や組織の話をしているなら、そのままの意味で訳す。",

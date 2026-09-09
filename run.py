@@ -81,6 +81,10 @@ def parse_args() -> argparse.Namespace:
                    choices=["minimal", "low", "medium", "high", "xhigh"],
                    help="認識の遅延と精度の調整（既定: low）")
     p.add_argument("--model", default=config.TRANSLATE_MODEL, help="翻訳のモデル")
+    p.add_argument("--direction", choices=list(config.DIRECTIONS), default=None,
+                   help="字幕の向き。ja2en は日本語の会議に英語字幕、"
+                        "en2ja は英語の会議に日本語字幕。"
+                        "指定しなければ前回の選択（操作画面からいつでも変えられる）")
     p.add_argument("--glossary", nargs="*", metavar="名前", default=None,
                    help="使う用語集（etc/glossary/ の .tsv の名前）。複数を重ねられる。"
                         "例: --glossary KAGRA_basic Interferometer。"
@@ -152,6 +156,7 @@ def main() -> int:
         save=not args.no_save,
         transcript_dir=Path(args.save_dir),
         glossary_names=None if args.glossary is None else tuple(args.glossary),
+        direction=args.direction,
     )
 
     if args.from_file:

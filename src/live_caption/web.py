@@ -254,7 +254,9 @@ VIEWER_BODY = """</style>
   <label class="toggle">
     <input type="checkbox" id="ja">
     <span class="track"></span>
-    <span>Japanese</span>
+    <!-- **「Japanese」とは書けない。** 向きが en2ja なら、ここに出るのは英語である。
+         このトグルが出すのは「認識の出力」であって、特定の言語ではない。 -->
+    <span>Source</span>
   </label>
 </header>
 <main id="main">
@@ -423,7 +425,8 @@ CONTROL_BODY = """
   <label class="toggle">
     <input type="checkbox" id="ja">
     <span class="track"></span>
-    <span>日本語</span>
+    <!-- 出るのは認識の出力である。向きが en2ja なら英語になる。 -->
+    <span>認識文</span>
   </label>
 </header>
 
@@ -533,6 +536,20 @@ CONTROL_BODY = """
   </div>
 
   <div class="grp">
+    <h2>字幕の向き</h2>
+    <div class="row2">
+      <select id="dirSel"><option>読み込み中…</option></select>
+    </div>
+    <div class="row2">
+      <span id="dirState"></span>
+    </div>
+    <div class="row2 hint">
+      会議ごとに選ぶ。<b>選んだ時点で切り替わる。</b>次の起動もこの向きで始まる。
+      逆の言語が混ざったときは、訳さずにそのまま出す。
+    </div>
+  </div>
+
+  <div class="grp">
     <h2>用語集</h2>
     <details class="fold" id="glossFold">
       <summary id="glossSummary">読み込み中…</summary>
@@ -591,6 +608,8 @@ __FEED_JS__
   const glossFilter = $("glossFilter"), glossFilterRow = $("glossFilterRow");
   const glossAll = $("glossAll"), glossNone = $("glossNone");
   let glossLoaded = false;
+  const dirSel = $("dirSel"), dirState = $("dirState");
+  let dirLoaded = false;
   const tuneBox = $("tuneBox"), tuneState = $("tuneState"), tuneEnv = $("tuneEnv");
   const tuneFold = $("tuneFold"), tuneSummary = $("tuneSummary");
   const tuneSave = $("tuneSave"), tuneReset = $("tuneReset");
@@ -715,6 +734,7 @@ __FEED_JS__
     // 一覧は最初の1回だけ取る。開いている選択肢を勝手に差し替えない。
     // **選べないときも取りに行く。** 取らないと「読み込み中…」が残ってしまう。
     if (!devLoaded) { loadDevices(); }
+    if (!dirLoaded) { loadDirection(); }
     if (!glossLoaded) { loadGlossary(); }
     if (!tuneLoaded) { loadTuning(); }
 
@@ -961,6 +981,50 @@ __FEED_JS__
     for (const c of glossBox.querySelectorAll("input")) { c.disabled = false; }
   }
 
+  // --- 字幕の向き ---------------------------------------------------------
+  // **会議ごとに選ぶ。** 選んだ時点で切り替わる。適用ボタンは無い。
+  // 認識は繋ぎ直さないので、生成を回したまま変えてよい。
+  function showDirection(d) {
+    const items = d.items || [];
+    dirSel.innerHTML = "";
+    for (const it of items) {
+      const o = document.createElement("option");
+      o.value = it.name;
+      o.textContent = it.label;
+      if (it.name === d.current) { o.selected = true; }
+      dirSel.appendChild(o);
+    }
+    const cur = items.find((x) => x.name === d.current);
+    dirState.textContent = cur ? ("Zoomへは " + cur.lang + " として送る") : "";
+  }
+
+  async function loadDirection() {
+    dirLoaded = true;
+    try {
+      const r = await fetch("/api/direction");
+      showDirection(await r.json());
+    } catch (e) {
+      dirLoaded = false;
+      say("字幕の向きを取れない: " + e.message, false);
+    }
+  }
+
+  dirSel.addEventListener("change", async () => {
+    dirSel.disabled = true;
+    try {
+      const d = await post("/api/direction", { name: dirSel.value });
+      showDirection(d);
+      say("字幕の向きを変えた。", true);
+      // **強制分割の長さが向きで変わる。** 「遅延の調整」の数字を取り直さないと、
+      // 畳んだ中に古い値が残る。
+      if (tuneLoaded) { await loadTuning(); }
+    } catch (e) {
+      say(String(e.message), false);
+      await loadDirection();   // 失敗したら実際の向きへ戻す
+    }
+    dirSel.disabled = false;
+  });
+
   // --- 遅延の調整 ---------------------------------------------------------
   // **よく変えるものではない。** 既定値は実測で決めてある。だから畳んである。
   // 触った値はすぐ効く。次の起動にも残したいときだけ「.env に保存」を押す。
@@ -1182,6 +1246,8 @@ class WebCaptions:
         self.glossary = None
         # 遅延の調整つまみ（app.TuningControl）。
         self.tuning = None
+        # 字幕の向き（app.DirectionControl）。
+        self.direction = None
         self.on_shutdown = None
         self.tunnel: tunnel_mod.Tunnel | None = None
         # 会議の記録（transcript.Transcript）。--no-save のときは None のまま。
@@ -1432,6 +1498,11 @@ def _control_handler(web: WebCaptions):
                     self._send_json(503, {"error": "設定の受け口が用意できていない。"})
                 else:
                     self._send_json(200, web.tuning.status())
+            elif u.path == "/api/direction":
+                if web.direction is None:
+                    self._send_json(503, {"error": "字幕の向きの受け口が用意できていない。"})
+                else:
+                    self._send_json(200, web.direction.status())
             elif u.path == "/api/devices":
                 if web.audio is None:
                     self._send_json(503, {"error": "音声の受け口が用意できていない。"})
@@ -1476,7 +1547,7 @@ def _control_handler(web: WebCaptions):
                 return
             if path not in ("/api/token", "/api/zoom", "/api/tunnel",
                             "/api/engine", "/api/device", "/api/glossary",
-                            "/api/tuning", "/api/tuning/save"):
+                            "/api/tuning", "/api/tuning/save", "/api/direction"):
                 self.send_error(404)
                 return
             try:
@@ -1512,6 +1583,18 @@ def _control_handler(web: WebCaptions):
                     return
                 try:
                     st = web.glossary.select([str(n) for n in raw])
+                except ValueError as exc:
+                    self._send_json(400, {"error": str(exc)})
+                    return
+                self._send_json(200, st)
+                return
+
+            if path == "/api/direction":
+                if web.direction is None:
+                    self._send_json(503, {"error": "字幕の向きの受け口が用意できていない。"})
+                    return
+                try:
+                    st = web.direction.select(body.get("name"))
                 except ValueError as exc:
                     self._send_json(400, {"error": str(exc)})
                     return
