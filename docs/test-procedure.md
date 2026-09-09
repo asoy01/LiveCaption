@@ -59,12 +59,6 @@ pixi install
 Check that `OPENAI_API_KEY` is set in `.env`. **The value in `.env` wins over the
 environment variable of the same name.**
 
-### 5. Remote control
-
-If you use MS-S1 MAX as the caption PC, **connect with TeamViewer. Do not use
-RDP.** RDP redirects the audio to "remote audio", which breaks the path to
-`CABLE Input`.
-
 ---
 
 ## Stage 1. Does the audio arrive? (no meeting, no API)
@@ -334,30 +328,29 @@ pixi run caption --web 8090 --control-port 8091
 0. You can start `StartLiveCaption.bat` before the meeting.
    **It takes in nothing until you press start**, so small talk during setup
    does not reach the recognition model
-1. Check that you can reach the caption PC with TeamViewer
-2. Join the meeting from the caption PC (speaker `CABLE Input`, microphone muted)
-3. Run `pixi run caption --check-audio 10` and confirm the sound arrives
-4. The host copies the API token and sends it to the caption PC in the chat
-5. Check that **音声の入力** on the control page is `CABLE Output`, and that the
+1. Join the meeting from the caption PC (speaker `CABLE Input`, microphone muted)
+2. Run `pixi run caption --check-audio 10` and confirm the sound arrives
+3. The host copies the API token and sends it to the caption PC in the chat
+4. Check that **音声の入力** on the control page is `CABLE Output`, and that the
    right tables are ticked under **用語集** (glossary) for this meeting
-6. Press **開始** under **字幕の生成**. Audio starts coming in here.
+5. Press **開始** under **字幕の生成**. Audio starts coming in here.
    **Watch the meter move.** If it does not, pick another input. You can change
    the device while captions are being generated
-7. Show the captions. Either way works:
+6. Show the captions. Either way works:
    - `pixi run caption --token "<URL>"` (pass it on the command line)
    - Start with `pixi run caption --web`, then **register the token on the
      control page and press start**. This way you can stop and restart during
      the meeting
-8. At the start of the meeting, tell the people who will read the captions:
+7. At the start of the meeting, tell the people who will read the captions:
    - Turn on "Show Captions"
    - **Drag the caption area to make it taller.** Four lines is not enough room
      to read
-9. When it is over, press **終了** under **アプリの終了** on the control page. **The tab and the
+8. When it is over, press **終了** under **アプリの終了** on the control page. **The tab and the
    terminal window both close**
-10. After the meeting, the record is in your Downloads folder as
-    `live-caption_*.md`. **Collect the misrecognitions and add them to the third
-    column of the right table in `etc/glossary/`.** The next meeting will be
-    better. The header of the `.md` says which tables were used
+9. After the meeting, the record is in your Downloads folder as
+   `live-caption_*.md`. **Collect the misrecognitions and add them to the third
+   column of the right table in `etc/glossary/`.** The next meeting will be
+   better. The header of the `.md` says which tables were used
 
 ---
 
