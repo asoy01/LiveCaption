@@ -15,6 +15,7 @@ delay は API の遅延と精度の調整つまみ。minimal / low / medium / hi
     1. 発話が止まってから、確定した文字列が返るまでの秒数（これが字幕の遅延）
     2. 1つの区切りが何文字になるか（Zoom字幕は1回のPOSTを短くしたい）
     3. 用語（keywords）を渡したときの認識
+    4. 話し続けている間の delta の間隔（`IDLE_FLUSH_SEC` を下げられる下限）
 
 音声は 24 kHz・16 bit・モノラルの WAV であること。ffmpeg で作る:
     ffmpeg -i in.m4a -ac 1 -ar 24000 -c:a pcm_s16le out.wav
@@ -34,7 +35,13 @@ import websockets
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from live_caption import config as config_mod  # noqa: E402
 from live_caption import glossary as glossary_mod  # noqa: E402
+
+
+def config_idle() -> float:
+    """いま設定されている無音待ちの秒数。比較のために出す。"""
+    return config_mod.IDLE_FLUSH_SEC
 
 URL = "wss://api.openai.com/v1/realtime?intent=transcription"
 CHUNK_MS = 100
@@ -146,8 +153,12 @@ async def run(path: Path, seconds: int, delay: str) -> int:
                 if kind.endswith("input_audio_transcription.delta"):
                     item_id = ev.get("item_id", "?")
                     if item_id not in items:
-                        items[item_id] = {"text": "", "first": now, "last": now}
+                        items[item_id] = {"text": "", "first": now, "last": now, "gaps": []}
                         order.append(item_id)
+                    else:
+                        # 同じ item の中の間隔＝話し続けている間の間隔。
+                        # item の切れ目をまたぐ間隔は、本当の沈黙を含むので混ぜない。
+                        items[item_id]["gaps"].append(now - items[item_id]["last"])
                     items[item_id]["text"] += ev.get("delta", "")
                     items[item_id]["last"] = now
                     last_delta_at[0] = now
@@ -196,6 +207,37 @@ async def run(path: Path, seconds: int, delay: str) -> int:
     print(f"item の数: {len(order)}")
     print(f"1 item の長さ: 最小 {min(lens)}字  中央 {sorted(lens)[len(lens)//2]}字  最大 {max(lens)}字")
     print()
+
+    # **IDLE_FLUSH_SEC を下げられる下限は、ここで決まる。**
+    # 無音タイマーは「delta が来なくなってから」を測っている。話し続けている
+    # 最中の間隔より短くすると、まだ喋っている途中で文を確定させてしまう。
+    gaps = sorted(g for i in order for g in items[i]["gaps"])
+    if gaps:
+        def pct(p: float) -> float:
+            return gaps[min(len(gaps) - 1, int(p * len(gaps)))]
+
+        print("同じ item の中での delta の間隔（＝話し続けている間の間隔）:")
+        print(
+            f"  件数 {len(gaps)}  中央 {pct(0.5):.2f}s  p95 {pct(0.95):.2f}s"
+            f"  p99 {pct(0.99):.2f}s  最大 {gaps[-1]:.2f}s"
+        )
+        print()
+        # 閾値を動かしたときに、無音での確定が何回起きるか。
+        # **下げた分がそのまま「途中で切る」回数になる。**
+        minutes = max(audio_done, 1.0) / 60.0
+        print("  閾値ごとの、無音で確定させる回数:")
+        print("    閾値     件数   1分あたり")
+        for th in (1.0, 1.2, 1.5, 1.8, 2.0, 2.5, 3.0):
+            n = sum(1 for g in gaps if g >= th)
+            mark = "  <- いまの設定" if abs(th - config_idle()) < 0.01 else ""
+            print(f"    {th:4.1f}s  {n:5d}   {n / minutes:6.1f}{mark}")
+        print()
+        print("  **IDLE_FLUSH_SEC は、この p99 より上に置くこと。** 下げると、")
+        print("  まだ話している途中で文を確定させてしまう。")
+        print()
+        print("  注意: item が長いと、この間隔には話者の交代や本当の沈黙も混ざる。")
+        print("  「話し続けている間の間隔」の上限としては、やや大きめに出る。")
+        print()
     print("item ごとの中身:")
     for i in order:
         it = items[i]

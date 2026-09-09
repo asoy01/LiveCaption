@@ -76,7 +76,18 @@ class Transcript:
             return
         self._write({"type": "meta", "started": _clock(self.started), **self.meta})
 
-    def add(self, ja: str, en: list[str], sent: int = 0, when: float | None = None) -> None:
+    def add(
+        self,
+        ja: str,
+        en: list[str],
+        sent: int = 0,
+        when: float | None = None,
+        *,
+        cut: str = "",
+        waited: float = 0.0,
+        took: float = 0.0,
+        total: float = 0.0,
+    ) -> None:
         """確定した1文を記録する。
 
         `ja` は認識の出力そのもの。**日本語とは限らない。** 会議の前半は英語なので、
@@ -86,6 +97,11 @@ class Transcript:
         `when` は**認識が確定した時刻**である。呼ばれるのは翻訳が終わった後なので、
         ここで時計を読むと2〜3秒ずれる。記録に要るのは、訳せた時刻ではなく
         話された時刻なので、呼ぶ側から渡す。
+
+        後ろの4つは遅延の調整用である。`cut` は確定の理由（punct / force / idle /
+        flush）、`waited` は無音で確定したときに実際に待った秒数、`took` は翻訳、
+        `total` は**確定から最初の字幕までの実測**。
+        **1文ごとの実測が無いと、どこを削ればよいか決められない。**
         """
         at = when if when is not None else time.time()
         record = {
@@ -96,6 +112,15 @@ class Transcript:
             "en": list(en),
             "sent": int(sent),
         }
+        if cut:
+            record["cut"] = cut
+        # 無音待ち以外は待っていないので、書いても意味が無い。
+        if waited:
+            record["waited"] = round(waited, 2)
+        if took:
+            record["took"] = round(took, 2)
+        if total:
+            record["total"] = round(total, 2)
         self.records.append(record)
         self._write(record)
 

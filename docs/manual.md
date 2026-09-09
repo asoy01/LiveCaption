@@ -306,6 +306,16 @@ Downloads/live-caption_2026-09-08_143012.md      readable form, written at exit
 Each entry pairs the Japanese text from the recogniser with the English caption.
 The timestamp is the time the recognition became final.
 
+The `.jsonl` also carries measured timings. They do not appear in the `.md`, but
+you need them to tune the delay later.
+
+| Field | Meaning |
+|---|---|
+| `cut` | Why the sentence was finalised: `punct` (end mark), `force` (length), `idle` (silence), `flush` (at exit) |
+| `waited` | Seconds actually waited, when the sentence was finalised by silence |
+| `took` | Seconds the translation took |
+| `total` | **Seconds from finalisation to the first caption.** `total − took` is the queue |
+
 - To read the record during the meeting, press **途中まで読む** (read so far)
   under **会議の記録** (meeting record) on the control page
 - **The `.md` file is written when the app exits.** If the PC loses power,
@@ -481,6 +491,9 @@ measurements, so change them only when you have a reason.
 | `CONTEXT_SENTENCES` | 3 | How many earlier sentences are given to the translator as context |
 | `MAX_CAPTION_CHARS` | 80 | Longest English line sent to Zoom |
 | `FORCE_CUT_CHARS` | 70 | A Japanese sentence longer than this is cut. Lower it if the captions go by too fast |
+| `IDLE_FLUSH_SEC` | 2.5 | Seconds of silence after which a sentence is finalised even without an end mark. **Measure the delta intervals with `stream_test.py` before lowering it.** A value below the interval seen during continuous speech cuts the speaker off mid-sentence |
+| `IDLE_POLL_SEC` | 0.1 | How often the timer above is checked. A finer value wastes less time |
+| `LINE_INTERVAL_SEC` | 0.6 | Gap between lines sent to Zoom. The caption area shows as few as 4 lines, so sending them at once pushes the first line out. **It does not apply to the viewer page**, which gets every line at once |
 | `WEB_LINES` | 8 | Lines shown on the viewer page |
 | `WEB_PORT` | 8080 | Viewer page |
 | `CONTROL_PORT` | 8081 | Control page |

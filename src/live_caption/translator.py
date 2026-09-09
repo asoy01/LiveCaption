@@ -102,31 +102,34 @@ class Translator:
         self.system = build_system(entries)
         self.history: list[str] = []
 
-    def _request(self, target: str) -> str:
+    def _request(self, target: str) -> tuple[str, float]:
         context = "\n".join(self.history[-config.CONTEXT_SENTENCES:]) or "(なし)"
-        text, _ = chat(
+        return chat(
             self.model, self.system, USER.format(context=context, target=target), timeout=60.0
         )
-        return text
 
-    async def translate(self, target: str) -> list[str]:
-        """1文を訳して、字幕として送る行のリストを返す。失敗したら空リスト。"""
+    async def translate(self, target: str) -> tuple[list[str], float]:
+        """1文を訳して、(字幕の行, 所要秒) を返す。失敗したら空リスト。
+
+        **所要秒は戻り値で返す。属性に置いてはいけない。** 翻訳は最大4本が
+        同時に走るので、共有の属性に書くと、読むときには別の文の値になっている。
+        """
         try:
-            text = await asyncio.to_thread(self._request, target)
+            text, took = await asyncio.to_thread(self._request, target)
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", "replace")[:200]
             print(f"  [翻訳の失敗] HTTP {e.code} {detail}")
-            return []
+            return [], 0.0
         except Exception as e:  # noqa: BLE001 - 会議中に落とさない
             print(f"  [翻訳の失敗] {type(e).__name__}: {e}")
-            return []
+            return [], 0.0
 
         # 訳した文だけを文脈に足す。失敗した文は足さない。
         self.history.append(target)
         del self.history[:-config.CONTEXT_SENTENCES]
 
         lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-        return [ln for line in lines for ln in _wrap(line, config.MAX_CAPTION_CHARS)]
+        return [ln for line in lines for ln in _wrap(line, config.MAX_CAPTION_CHARS)], took
 
 
 def _wrap(line: str, limit: int) -> list[str]:

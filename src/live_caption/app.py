@@ -310,7 +310,7 @@ class App:
             web.on_shutdown = self.request_stop
             # 記録が溜まっていることを操作画面に出す。
             web.transcript = self.transcript
-        self.sentences: asyncio.Queue[str] = asyncio.Queue()
+        self.sentences: asyncio.Queue[segmenter_mod.Cut] = asyncio.Queue()
         self.inflight: asyncio.Queue = asyncio.Queue(maxsize=MAX_INFLIGHT)
         self.stats = {"sentences": 0, "lines": 0}
         # 外から終了を頼まれたら立てる。run() がこれを見て後片付けに入る。
@@ -452,35 +452,50 @@ class App:
             self._restart.clear()
 
     def _on_delta(self, delta: str) -> None:
-        for sentence in self.segmenter.feed(delta):
-            self.sentences.put_nowait(sentence)
+        for cut in self.segmenter.feed(delta):
+            self.sentences.put_nowait(cut)
 
     async def _watch_idle(self) -> None:
         """発話が途切れたら、文末記号が無くても確定させる。"""
         while True:
-            await asyncio.sleep(0.5)
-            for sentence in self.segmenter.flush_if_idle():
-                self.sentences.put_nowait(sentence)
+            await asyncio.sleep(config.IDLE_POLL_SEC)
+            for cut in self.segmenter.flush_if_idle():
+                self.sentences.put_nowait(cut)
 
     async def _dispatch(self) -> None:
         """文を受け取って翻訳を始める。順序を保つため、タスクを順番に積む。"""
         while True:
-            sentence = await self.sentences.get()
+            cut = await self.sentences.get()
             self.stats["sentences"] += 1
-            print(f"[{now()}] 認識  {sentence}")
+            self.stats[f"cut_{cut.reason}"] = self.stats.get(f"cut_{cut.reason}", 0) + 1
+            print(f"[{now()}] 認識  {cut.text}")
             if self.web is not None:
-                self.web.asr(sentence)
-            task = asyncio.create_task(self.translator.translate(sentence))
+                self.web.asr(cut.text)
+            task = asyncio.create_task(self.translator.translate(cut.text))
             # 元の文と、認識が確定した時刻を一緒に持ち回る。記録で日本語と英語を
             # 対にするため、そして記録の時刻を「訳せた時刻」にしないためである。
             # 満杯なら待つ。これが翻訳の同時実行数の上限になる。
-            await self.inflight.put((sentence, time.time(), task))
+            await self.inflight.put((cut, time.time(), task))
 
     async def _post(self) -> None:
         """翻訳の完了を順番に待って、字幕として送る。"""
         while True:
-            sentence, heard_at, task = await self.inflight.get()
-            lines = await task
+            cut, heard_at, task = await self.inflight.get()
+            lines, took = await task
+            # 確定から最初の字幕までの実測。翻訳そのものの時間と分けて出す。
+            # 差が待ち行列と諸経費である。
+            total = time.time() - heard_at
+            # **閲覧画面には先に全部渡す。** 下の 0.6秒 の間隔は Zoom の表示制約への
+            # 対処で（字幕の窓は最小4行しかなく、まとめて送ると先頭が押し出される）、
+            # 8行ある閲覧画面には要らない。ここを一緒にしていたので、閲覧画面が
+            # Zoom の都合で遅れていた。
+            if self.web is not None:
+                for line in lines:
+                    self.web.caption(line)
+            # 実測は最初の行にだけ出す。2行目からは同じ幅の空白で桁を揃える
+            # （「総」「訳」が全角なので、2文字ぶん余分に要る）。
+            head = f"(総 {total:.1f}s / 訳 {took:.1f}s)"
+            cont = " " * (len(head) + 2)
             sent = 0
             for i, line in enumerate(lines):
                 if i:
@@ -488,17 +503,19 @@ class App:
                     await asyncio.sleep(config.LINE_INTERVAL_SEC)
                 # Zoomへ送ったかどうかに関わらず、画面には必ず出す。
                 # 送っていないことは、行頭の印で分かるようにする。
+                mark = head if not i else cont
                 if await self.sender.send(line):
                     self.stats["lines"] += 1
                     sent += 1
-                    print(f"[{now()}] 字幕  {line}")
+                    print(f"[{now()}] 字幕  {mark} {line}")
                 else:
-                    print(f"[{now()}] 字幕  {line}   (Zoomへは送っていない)")
-                if self.web is not None:
-                    self.web.caption(line)
+                    print(f"[{now()}] 字幕  {mark} {line}   (Zoomへは送っていない)")
             # 翻訳に失敗して lines が空でも記録する。日本語だけでも残す価値がある。
             if self.transcript is not None:
-                self.transcript.add(sentence, lines, sent, when=heard_at)
+                self.transcript.add(
+                    cut.text, lines, sent, when=heard_at,
+                    cut=cut.reason, waited=cut.waited, took=took, total=total,
+                )
 
     # --- 起動 ---------------------------------------------------------------
 
@@ -592,12 +609,12 @@ class App:
         await finished.wait()
         # 最後の文が認識され、訳され、送られるまでの余裕
         await asyncio.sleep(12)
-        for sentence in self.segmenter.flush():
-            print(f"[{now()}] 認識  {sentence}")
+        for cut in self.segmenter.flush():
+            print(f"[{now()}] 認識  {cut.text}")
             heard_at = time.time()
             if self.web is not None:
-                self.web.asr(sentence)
-            lines = await self.translator.translate(sentence)
+                self.web.asr(cut.text)
+            lines, took = await self.translator.translate(cut.text)
             sent = 0
             for line in lines:
                 if await self.sender.send(line):
@@ -607,12 +624,27 @@ class App:
                 if self.web is not None:
                     self.web.caption(line)
             if self.transcript is not None:
-                self.transcript.add(sentence, lines, sent, when=heard_at)
+                self.transcript.add(
+                    cut.text, lines, sent, when=heard_at,
+                    cut=cut.reason, took=took, total=time.time() - heard_at,
+                )
 
     def report(self, capture=None) -> None:
         """終了時の要約。Ctrl+C のあとでも呼べるように同期で書く。"""
         print("-" * 70)
         print(f"確定した文: {self.stats['sentences']}")
+        # 確定の理由ごとの内訳。**無音待ちの割合が、遅延の調整の出発点である。**
+        breakdown = [
+            (label, self.stats.get(f"cut_{key}", 0))
+            for key, label in (
+                ("punct", "文末記号"), ("force", "強制分割"),
+                ("idle", "無音待ち"), ("flush", "終了時"),
+            )
+        ]
+        total_cuts = sum(n for _, n in breakdown) or 1
+        print("  " + "  ".join(
+            f"{label} {n}（{100 * n / total_cuts:.1f}%）" for label, n in breakdown if n
+        ))
         print(f"Zoomへ送った行: {self.sender.sent}（失敗 {self.sender.failed}）")
         print(f"認識の再接続: {self.asr.reconnects} 回")
         if capture is not None:
