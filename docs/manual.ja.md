@@ -131,13 +131,41 @@ pixi run python scripts/cable_loopback.py
   => 通っている
 ```
 
+### 3.7 スタートメニューに登録する（任意）
+
+**`InstallToStartMenu.bat`** をダブルクリックする。現在のユーザーのスタート
+メニューに `LiveCaption` の項目が入る。会議の前にこのフォルダを探さなくてよい。
+
+```
+Windowsキー  ->  「livecaption」と打つ  ->  Enter
+```
+
+目に入る場所に置きたければ、スタートメニューの LiveCaption を右クリックして
+**スタートにピン留めする** か **タスクバーにピン留めする** を選ぶ。
+
+管理者権限は要らない。作られるのはショートカット1つで、置き場所は
+`%APPDATA%\Microsoft\Windows\Start Menu\Programs\LiveCaption.lnk`。
+
+**このフォルダを移動・改名したら、もう一度実行すること。** ショートカットは
+絶対パスを持っているので、フォルダが動くと動かなくなる。
+
+アイコンは `etc/LiveCaption.ico` を使う。変えるときは `scripts/make_icon.py` を
+直して実行し、登録し直す。
+
+登録を消すときは、端末から `-Remove` を付けて実行する。
+
+```bash
+InstallToStartMenu.bat -Remove
+```
+
 ---
 
 ## 4. 会議で使う
 
 ### 手順1. アプリを起動する
 
-**`StartLiveCaption.bat`** をダブルクリックする。操作画面がブラウザで開く。
+**`StartLiveCaption.bat`** をダブルクリックする。手順3.7で登録してあれば、
+スタートメニューの **LiveCaption** からでもよい。操作画面がブラウザで開く。
 
 ```
 http://localhost:8081              操作画面   <- この画面は共有しないこと
@@ -363,6 +391,7 @@ pixi run caption --web --glossary KAGRA_basic Interferometer
 
 ```bash
 StartLiveCaption.bat                             # 会議で使うのはこれ
+InstallToStartMenu.bat                           # スタートメニューに登録する（最初に1回）
 
 pixi run web                                     # 同じもの。端末から起動する場合
 pixi run caption --web                           # 同上

@@ -133,13 +133,43 @@ If the amplitude comes back, VB-CABLE is working.
   => the path works
 ```
 
+### 3.7 Put LiveCaption in the Start menu (optional)
+
+Double-click **`InstallToStartMenu.bat`**. It adds a `LiveCaption` entry to the
+Start menu of the current user, so you do not have to find this folder before a
+meeting.
+
+```
+Windows key  ->  type "livecaption"  ->  Enter
+```
+
+To keep it in sight, find LiveCaption in the Start menu, right-click it, and
+choose **Pin to Start** or **Pin to taskbar**.
+
+No administrator rights are needed. The entry is one shortcut file, written to
+`%APPDATA%\Microsoft\Windows\Start Menu\Programs\LiveCaption.lnk`.
+
+**Run it again if you move or rename this folder.** The shortcut holds the full
+path, so it stops working after the folder moves.
+
+The icon comes from `etc/LiveCaption.ico`. To change it, edit
+`scripts/make_icon.py`, run it, and register the shortcut again.
+
+To take the entry out of the Start menu, run the batch file with `-Remove` from
+a terminal:
+
+```bash
+InstallToStartMenu.bat -Remove
+```
+
 ---
 
 ## 4. Run a meeting
 
 ### Step 1. Start the app
 
-Double-click **`StartLiveCaption.bat`**. The control page opens in your browser.
+Double-click **`StartLiveCaption.bat`**, or pick **LiveCaption** in the Start menu
+if you registered it in step 3.7. The control page opens in your browser.
 
 ```
 http://localhost:8081     control page   <- do NOT screen-share this page
@@ -390,6 +420,7 @@ The batch file is the normal way to start. These commands are for everything els
 
 ```bash
 StartLiveCaption.bat                             # what you use for a meeting
+InstallToStartMenu.bat                           # put LiveCaption in the Start menu (once)
 
 pixi run web                                     # the same thing, from a terminal
 pixi run caption --web                           # the same thing again

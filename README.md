@@ -83,6 +83,10 @@ participants, read the meeting record, and quit.
 **Do not screen-share the control page.** It shows the Zoom caption token.
 Share the viewer page instead.
 
+To start it from the Start menu instead of finding this folder every time,
+double-click `InstallToStartMenu.bat` once. After that, press the Windows key,
+type "livecaption", and press Enter.
+
 ## Documentation
 
 | Document | Contents |
@@ -95,14 +99,15 @@ Share the viewer page instead.
 ## Layout
 
 ```
-StartLiveCaption.bat   what you double-click for a meeting
-run.py                 start-up and command line options
-src/live_caption/      the application
-scripts/               one-off measurement and check scripts
-docs/                  manual, test procedure
-etc/glossary/          term tables, one file per subject
-data/recordings/       audio used for comparing recognisers (not in git)
-local/                 working files (not in git)
+StartLiveCaption.bat     what you double-click for a meeting
+InstallToStartMenu.bat   puts LiveCaption in the Start menu (run once)
+run.py                   start-up and command line options
+src/live_caption/        the application
+scripts/                 one-off measurement and check scripts
+docs/                    manual, test procedure
+etc/                     term tables (etc/glossary/) and the application icon
+data/recordings/         audio used for comparing recognisers (not in git)
+local/                   working files (not in git)
 ```
 
 The record of each meeting is written to **your Downloads folder** as
