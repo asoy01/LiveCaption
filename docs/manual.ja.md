@@ -459,6 +459,24 @@ pixi run caption --web 8090 --control-port 8091
 `src/live_caption/config.py` にある。既定値は実測で決めたものなので、
 理由があるときだけ変えること。
 
+**下の4つは `.env` からも変えられる。** コードを直さずに、字幕PCごとに調整できる。
+書き方は `.env.example` にある。
+
+| `.env` の名前 | 対応する設定 |
+|---|---|
+| `LIVECAPTION_IDLE_FLUSH_SEC` | `IDLE_FLUSH_SEC` |
+| `LIVECAPTION_SPECULATE_AFTER_SEC` | `SPECULATE_AFTER_SEC` |
+| `LIVECAPTION_FORCE_CUT_CHARS` | `FORCE_CUT_CHARS` |
+| `LIVECAPTION_LINE_INTERVAL_SEC` | `LINE_INTERVAL_SEC` |
+
+差し替えると、起動時に `[設定] .env で差し替えた: …` と出る。
+
+**`IDLE_FLUSH_SEC` だけを変えると、`SPECULATE_AFTER_SEC` も自動で追随する**
+（`IDLE_FLUSH_SEC − 1.1` 秒）。合わせないと、先回りが早すぎて投げ捨てが増えるだけになる。
+
+**書き間違えても会議は止まらない。** 数字として読めない値や小さすぎる値は、
+警告を出して既定値のまま動く。ただし**黙って無視はしない**ので、起動時の表示を見ること。
+
 | 設定 | 既定 | 意味 |
 |---|---|---|
 | `ASR_MODEL` | `gpt-live-transcribe` | 音声認識のモデル |

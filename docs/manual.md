@@ -489,6 +489,26 @@ pixi run caption --web 8090 --control-port 8091
 These live in `src/live_caption/config.py`. The default values come from
 measurements, so change them only when you have a reason.
 
+**The four below can also be set in `.env`,** so you can tune a caption PC
+without editing the code. `.env.example` shows how to write them.
+
+| Name in `.env` | Setting it changes |
+|---|---|
+| `LIVECAPTION_IDLE_FLUSH_SEC` | `IDLE_FLUSH_SEC` |
+| `LIVECAPTION_SPECULATE_AFTER_SEC` | `SPECULATE_AFTER_SEC` |
+| `LIVECAPTION_FORCE_CUT_CHARS` | `FORCE_CUT_CHARS` |
+| `LIVECAPTION_LINE_INTERVAL_SEC` | `LINE_INTERVAL_SEC` |
+
+When a value is replaced, the app prints `[設定] .env で差し替えた: …` at start-up.
+
+**If you change `IDLE_FLUSH_SEC` alone, `SPECULATE_AFTER_SEC` follows it
+automatically** (`IDLE_FLUSH_SEC − 1.1` seconds). Without that, the speculative
+translation would fire too early and only waste calls.
+
+**A typo cannot stop a meeting.** A value that is not a number, or is too small,
+is reported at start-up and the default is used. It is **not** ignored silently,
+so read the start-up messages.
+
 | Setting | Default | What it does |
 |---|---|---|
 | `ASR_MODEL` | `gpt-live-transcribe` | The speech recognition model |

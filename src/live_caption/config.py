@@ -214,19 +214,89 @@ class Settings:
     transcript_dir: Path = TRANSCRIPT_DIR
 
 
-def load_env(path: Path = ENV_PATH) -> None:
-    """.env を読む。**.env の値を優先し、環境変数を上書きする。**"""
-    if not path.exists():
-        return
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
+# --- .env から差し替えられる調整つまみ -------------------------------------
+#
+# **既定値は実測で決めたものである。** 上のコメントに根拠が書いてある。
+# 会議室や話し方に合わせて現場で変えたいときだけ、`.env` に書く。
+#
+# (環境変数名, 定数名, 型, これ未満は受け付けない値)
+_TUNABLE = (
+    ("LIVECAPTION_IDLE_FLUSH_SEC", "IDLE_FLUSH_SEC", float, 0.3),
+    ("LIVECAPTION_SPECULATE_AFTER_SEC", "SPECULATE_AFTER_SEC", float, 0.0),
+    ("LIVECAPTION_FORCE_CUT_CHARS", "FORCE_CUT_CHARS", int, 20),
+    ("LIVECAPTION_LINE_INTERVAL_SEC", "LINE_INTERVAL_SEC", float, 0.0),
+)
+
+# 先回りを投げてから確定までに空けておく秒数。翻訳の中央値 0.9 ＋ 余裕 0.2。
+# `IDLE_FLUSH_SEC` だけを差し替えたときに、`SPECULATE_AFTER_SEC` をこれで導く。
+SPECULATE_MARGIN_SEC = 1.1
+
+
+def apply_env_overrides() -> None:
+    """調整つまみを環境変数（`.env` を含む）で差し替える。
+
+    **定数の行で `os.environ` を読んではいけない。** `config` は `load_env()` より
+    先に import されるので、その時点では `.env` はまだ読まれていない。
+    差し替えはここで、`.env` を読んだ後に行う。
+
+    **会議の当日に、書き間違いでアプリが起動しないのは困る。** 数字として読めない
+    値や小さすぎる値は、警告を出して既定値のままにする。**黙って無視はしない。**
+    """
+    changed: list[str] = []
+    for env_name, attr, cast, floor in _TUNABLE:
+        raw = os.environ.get(env_name, "").strip()
+        if not raw:
             continue
-        key, _, value = line.partition("=")
-        key, value = key.strip(), value.strip().strip('"').strip("'")
-        # .env の値を優先する。環境変数に同じ名前があっても上書きする。
-        if value:
-            os.environ[key] = value
+        before = globals()[attr]
+        try:
+            value = cast(raw)
+        except ValueError:
+            print(f"  [設定の警告] {env_name}={raw} は数字として読めない。"
+                  f"既定の {before} を使う。")
+            continue
+        if value < floor:
+            print(f"  [設定の警告] {env_name}={raw} は小さすぎる（{floor} 以上にすること）。"
+                  f"既定の {before} を使う。")
+            continue
+        globals()[attr] = value
+        changed.append(f"{attr} {before} → {value}")
+
+    # `IDLE_FLUSH_SEC` だけを変えたときは、先回りの時刻もそれに合わせる。
+    # **合わせないと、先回りが早すぎて投げ捨てが増えるだけになる。**
+    if (not os.environ.get("LIVECAPTION_SPECULATE_AFTER_SEC", "").strip()
+            and os.environ.get("LIVECAPTION_IDLE_FLUSH_SEC", "").strip()
+            and SPECULATE_AFTER_SEC):
+        derived = round(max(0.3, IDLE_FLUSH_SEC - SPECULATE_MARGIN_SEC), 2)
+        if derived != SPECULATE_AFTER_SEC:
+            changed.append(f"SPECULATE_AFTER_SEC {SPECULATE_AFTER_SEC} → {derived}（自動）")
+            globals()["SPECULATE_AFTER_SEC"] = derived
+
+    if changed:
+        print("  [設定] .env で差し替えた: " + "、".join(changed))
+
+    # 先回りは確定より前に投げないと意味が無い。
+    if SPECULATE_AFTER_SEC and SPECULATE_AFTER_SEC >= IDLE_FLUSH_SEC:
+        print(f"  [設定の警告] SPECULATE_AFTER_SEC（{SPECULATE_AFTER_SEC}）が "
+              f"IDLE_FLUSH_SEC（{IDLE_FLUSH_SEC}）以上である。先回りは一度も走らない。")
+
+
+def load_env(path: Path = ENV_PATH) -> None:
+    """.env を読んで、調整つまみを反映する。
+
+    **.env の値を優先し、環境変数を上書きする。**
+    """
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key, value = key.strip(), value.strip().strip('"').strip("'")
+            # .env の値を優先する。環境変数に同じ名前があっても上書きする。
+            if value:
+                os.environ[key] = value
+    # .env が無くても、環境変数だけで差し替えられるようにする。
+    apply_env_overrides()
 
 
 def openai_key() -> str:

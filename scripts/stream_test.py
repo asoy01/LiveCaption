@@ -48,21 +48,6 @@ CHUNK_MS = 100
 RATE = 24000
 
 
-def load_env() -> None:
-    path = PROJECT_ROOT / ".env"
-    if not path.exists():
-        return
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key, value = key.strip(), value.strip().strip('"').strip("'")
-        # .env の値を優先する。環境変数に同じ名前があっても上書きする。
-        if value:
-            os.environ[key] = value
-
-
 def keywords(limit: int = 100) -> list[str]:
     """認識側に渡す語。本体の用語表を使う（ここに複製しない）。"""
     return glossary_mod.keywords(glossary_mod.load(), limit)
@@ -247,7 +232,9 @@ async def run(path: Path, seconds: int, delay: str) -> int:
 
 
 def main() -> int:
-    load_env()
+    # **本体の load_env を使う。** 自前で持つと、.env による閾値の差し替えが
+    # ここだけ効かず、表示する IDLE_FLUSH_SEC が実際と食い違う。
+    config_mod.load_env()
     if not os.environ.get("OPENAI_API_KEY"):
         print("OPENAI_API_KEY が無い。")
         return 1

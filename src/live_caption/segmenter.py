@@ -55,12 +55,15 @@ def has_content(text: str) -> bool:
 class Segmenter:
     def __init__(
         self,
-        force_cut: int = config.FORCE_CUT_CHARS,
-        idle_sec: float = config.IDLE_FLUSH_SEC,
+        force_cut: int | None = None,
+        idle_sec: float | None = None,
     ) -> None:
         self.buffer = ""
-        self.force_cut = force_cut
-        self.idle_sec = idle_sec
+        # **既定値引数で config の値を捕まえてはいけない。** 既定値引数は import の
+        # ときに1回だけ評価されるので、`.env` による差し替え（`load_env()` が行う）が
+        # 効かなくなる。ここで、作られるたびに読む。
+        self.force_cut = config.FORCE_CUT_CHARS if force_cut is None else force_cut
+        self.idle_sec = config.IDLE_FLUSH_SEC if idle_sec is None else idle_sec
         self.last_delta_at = time.monotonic()
 
     def feed(self, delta: str) -> list[Cut]:
