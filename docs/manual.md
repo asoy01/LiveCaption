@@ -50,8 +50,15 @@ You can use all three at the same time.
 
 ### Delay
 
-About 3 seconds from speech to caption:
-0.5–1 second for recognition, 1.9 seconds for translation, 0.3 seconds to send.
+It depends on how the sentence ends (measured on 2026-09-09).
+
+| | Recognition | Wait to finalise | Translation | Send | Total |
+|---|---|---|---|---|---|
+| Ends with an end mark (about 74%) | 0.2–1 s | 0 s | 0.9 s | 0.3 s | **about 1.5–2 s** |
+| Ends in silence (about 9%) | same | 2.5 s | 0.9 s | 0.3 s | **about 4 s** |
+
+For a sentence that ends in silence, the translation is sent during the wait
+(`SPECULATE_AFTER_SEC`). When it matches, the 0.9 s of translation disappears.
 
 ---
 
@@ -315,6 +322,7 @@ you need them to tune the delay later.
 | `waited` | Seconds actually waited, when the sentence was finalised by silence |
 | `took` | Seconds the translation took |
 | `total` | **Seconds from finalisation to the first caption.** `total − took` is the queue |
+| `spec` | Present when a speculative translation was used. Then `total` is smaller than `took` |
 
 - To read the record during the meeting, press **途中まで読む** (read so far)
   under **会議の記録** (meeting record) on the control page
@@ -493,6 +501,7 @@ measurements, so change them only when you have a reason.
 | `FORCE_CUT_CHARS` | 70 | A Japanese sentence longer than this is cut. Lower it if the captions go by too fast |
 | `IDLE_FLUSH_SEC` | 2.5 | Seconds of silence after which a sentence is finalised even without an end mark. **Measure the delta intervals with `stream_test.py` before lowering it.** A value below the interval seen during continuous speech cuts the speaker off mid-sentence |
 | `IDLE_POLL_SEC` | 0.1 | How often the timer above is checked. A finer value wastes less time |
+| `SPECULATE_AFTER_SEC` | 1.4 | After this much silence, the translation is sent without waiting for the sentence to be finalised. When it matches, the caption appears about 0.9 s sooner; when it does not, the call is thrown away and costs money. `0` turns it off |
 | `LINE_INTERVAL_SEC` | 0.6 | Gap between lines sent to Zoom. The caption area shows as few as 4 lines, so sending them at once pushes the first line out. **It does not apply to the viewer page**, which gets every line at once |
 | `WEB_LINES` | 8 | Lines shown on the viewer page |
 | `WEB_PORT` | 8080 | Viewer page |

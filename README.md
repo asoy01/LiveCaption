@@ -34,7 +34,8 @@ own speaker, so recording the speaker output on the host PC loses the host's
 own voice. The caption PC receives the mixed audio from Zoom, and that mix
 contains every participant.
 
-Delay from speech to caption is about 3 seconds.
+Delay from speech to caption is about 1.5–2 seconds for a sentence that ends
+with an end mark, and about 4 seconds for one that trails off into silence.
 
 ## Three ways to show the captions
 

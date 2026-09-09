@@ -10,9 +10,13 @@
        ↓ 1行ずつ
     Zoom字幕API（seq を保存しながらPOST）
 
-翻訳は1文あたり約1.9秒かかる。会議では文がそれより短い間隔で出るので、
-**訳しながら次の文の翻訳を始める。ただし送る順序は守る。**
+翻訳は1文あたり約0.9秒（実測、2026-09-09）。会議では文がそれより短い間隔で
+出ることがあるので、**訳しながら次の文の翻訳を始める。ただし送る順序は守る。**
 順序が入れ替わると読めなくなる。
+
+**無音で確定する文（約8.6%）は、確定を待たずに先回りで訳しておく。**
+`IDLE_FLUSH_SEC` は下げられないので（delta 間隔の p99 が閾値より上）、
+待っている間に訳しておくのが、この経路を速くする唯一の手である。
 
 ホストの画面には字幕が出ないので、麻生が動作を確認する手段はこの画面のログだけである。
 送った内容を必ず表示する。
@@ -42,6 +46,11 @@ MAX_INFLIGHT = 4
 
 def now() -> str:
     return time.strftime("%H:%M:%S")
+
+
+def _bare(text: str) -> str:
+    """末尾の文末記号と空白を落とす。先回りの翻訳の照合に使う。"""
+    return text.rstrip("。！？.!? 　")
 
 
 class ZoomControl:
@@ -313,6 +322,8 @@ class App:
         self.sentences: asyncio.Queue[segmenter_mod.Cut] = asyncio.Queue()
         self.inflight: asyncio.Queue = asyncio.Queue(maxsize=MAX_INFLIGHT)
         self.stats = {"sentences": 0, "lines": 0}
+        # 先回りの翻訳。(投げた文字列, タスク) を1つだけ持つ。
+        self._spec: tuple[str, asyncio.Task] | None = None
         # 外から終了を頼まれたら立てる。run() がこれを見て後片付けに入る。
         self.stop_requested = asyncio.Event()
 
@@ -448,6 +459,8 @@ class App:
             await asyncio.gather(asr, *waits, return_exceptions=True)
             capture.stop()
             self.segmenter.reset()
+            # 途中の文字を捨てたので、それを訳していた先回りも捨てる。
+            self._drop_speculation()
             # 差し替えで抜けたときは _gen_on が立ったままなので、そのまま開き直す。
             self._restart.clear()
 
@@ -455,10 +468,60 @@ class App:
         for cut in self.segmenter.feed(delta):
             self.sentences.put_nowait(cut)
 
+    # --- 先回りの翻訳 -------------------------------------------------------
+
+    def _speculate(self) -> None:
+        """無音が続いたら、確定を待たずに翻訳を投げておく。
+
+        確定した時点で中身が変わっていなければ、その結果をそのまま使う。
+        **`IDLE_FLUSH_SEC` の安全余裕はそのままで、翻訳の時間だけが消える。**
+        無音待ちを速くする手は、これしか残っていない（閾値は下げられない）。
+        """
+        if not config.SPECULATE_AFTER_SEC:
+            return
+        if self.segmenter.silent_for() < config.SPECULATE_AFTER_SEC:
+            return
+        text = self.segmenter.buffer.strip()
+        if not text or not segmenter_mod.has_content(text):
+            return
+        if self._spec is not None and self._spec[0] == text:
+            return                      # 同じ中身で二度投げない
+        self._drop_speculation()
+        self.stats["spec_fired"] = self.stats.get("spec_fired", 0) + 1
+        self._spec = (
+            text,
+            asyncio.create_task(self.translator.translate(text, remember=False)),
+        )
+
+    def _take_speculation(self, text: str):
+        """先回りの翻訳が使えるなら、そのタスクを返す。使えなければ捨てて None。"""
+        if self._spec is None:
+            return None
+        spec_text, task = self._spec
+        # 末尾の文末記号だけの違いは許す。認識は「。」を遅れて足すことがあり、
+        # 中身は同じなので訳し直す意味が無い。
+        if _bare(spec_text) != _bare(text):
+            self._drop_speculation()
+            return None
+        self._spec = None
+        self.stats["spec_used"] = self.stats.get("spec_used", 0) + 1
+        return task
+
+    def _drop_speculation(self) -> None:
+        """使わないと決まった先回りを捨てる。
+
+        取り消しても、走っているHTTPの往復そのものは止まらない
+        （`asyncio.to_thread` は途中で割り込めない）。結果を読まなくするだけである。
+        """
+        if self._spec is not None:
+            self._spec[1].cancel()
+            self._spec = None
+
     async def _watch_idle(self) -> None:
         """発話が途切れたら、文末記号が無くても確定させる。"""
         while True:
             await asyncio.sleep(config.IDLE_POLL_SEC)
+            self._speculate()
             for cut in self.segmenter.flush_if_idle():
                 self.sentences.put_nowait(cut)
 
@@ -471,20 +534,28 @@ class App:
             print(f"[{now()}] 認識  {cut.text}")
             if self.web is not None:
                 self.web.asr(cut.text)
-            task = asyncio.create_task(self.translator.translate(cut.text))
+            # 先回りが当たっていれば、それを使う。翻訳の時間がまるごと消える。
+            task = self._take_speculation(cut.text)
+            used_spec = task is not None
+            if task is None:
+                task = asyncio.create_task(self.translator.translate(cut.text))
             # 元の文と、認識が確定した時刻を一緒に持ち回る。記録で日本語と英語を
             # 対にするため、そして記録の時刻を「訳せた時刻」にしないためである。
             # 満杯なら待つ。これが翻訳の同時実行数の上限になる。
-            await self.inflight.put((cut, time.time(), task))
+            await self.inflight.put((cut, time.time(), task, used_spec))
 
     async def _post(self) -> None:
         """翻訳の完了を順番に待って、字幕として送る。"""
         while True:
-            cut, heard_at, task = await self.inflight.get()
+            cut, heard_at, task, used_spec = await self.inflight.get()
             lines, took = await task
             # 確定から最初の字幕までの実測。翻訳そのものの時間と分けて出す。
-            # 差が待ち行列と諸経費である。
+            # 差が待ち行列と諸経費である。**先回りが当たった文では total が
+            # took より小さくなる。** 翻訳が確定より前に終わっているからである。
             total = time.time() - heard_at
+            if used_spec and lines:
+                # 先回りは文脈に足していない。採用が決まったここで足す。
+                self.translator.remember(cut.text)
             # **閲覧画面には先に全部渡す。** 下の 0.6秒 の間隔は Zoom の表示制約への
             # 対処で（字幕の窓は最小4行しかなく、まとめて送ると先頭が押し出される）、
             # 8行ある閲覧画面には要らない。ここを一緒にしていたので、閲覧画面が
@@ -494,8 +565,8 @@ class App:
                     self.web.caption(line)
             # 実測は最初の行にだけ出す。2行目からは同じ幅の空白で桁を揃える
             # （「総」「訳」が全角なので、2文字ぶん余分に要る）。
-            head = f"(総 {total:.1f}s / 訳 {took:.1f}s)"
-            cont = " " * (len(head) + 2)
+            head = f"(総 {total:.1f}s / 訳 {took:.1f}s{' 先' if used_spec else ''})"
+            cont = " " * (len(head) + 2 + (1 if used_spec else 0))
             sent = 0
             for i, line in enumerate(lines):
                 if i:
@@ -515,6 +586,7 @@ class App:
                 self.transcript.add(
                     cut.text, lines, sent, when=heard_at,
                     cut=cut.reason, waited=cut.waited, took=took, total=total,
+                    spec=used_spec,
                 )
 
     # --- 起動 ---------------------------------------------------------------
@@ -645,6 +717,12 @@ class App:
         print("  " + "  ".join(
             f"{label} {n}（{100 * n / total_cuts:.1f}%）" for label, n in breakdown if n
         ))
+        fired = self.stats.get("spec_fired", 0)
+        if fired:
+            used = self.stats.get("spec_used", 0)
+            # **投げ捨てた分がそのまま余分な料金である。** 割に合うかはここで見る。
+            print(f"先回りの翻訳: {fired} 回投げて {used} 回当たった"
+                  f"（捨てた {fired - used}）")
         print(f"Zoomへ送った行: {self.sender.sent}（失敗 {self.sender.failed}）")
         print(f"認識の再接続: {self.asr.reconnects} 回")
         if capture is not None:

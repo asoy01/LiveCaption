@@ -87,6 +87,7 @@ class Transcript:
         waited: float = 0.0,
         took: float = 0.0,
         total: float = 0.0,
+        spec: bool = False,
     ) -> None:
         """確定した1文を記録する。
 
@@ -121,6 +122,9 @@ class Transcript:
             record["took"] = round(took, 2)
         if total:
             record["total"] = round(total, 2)
+        # 先回りの翻訳が当たった文。当たると total が took より小さくなる。
+        if spec:
+            record["spec"] = True
         self.records.append(record)
         self._write(record)
 

@@ -108,11 +108,21 @@ class Translator:
             self.model, self.system, USER.format(context=context, target=target), timeout=60.0
         )
 
-    async def translate(self, target: str) -> tuple[list[str], float]:
+    def remember(self, target: str) -> None:
+        """訳せた文を文脈に足す。先回りの翻訳が採用されたときに、呼ぶ側から呼ぶ。"""
+        self.history.append(target)
+        del self.history[:-config.CONTEXT_SENTENCES]
+
+    async def translate(self, target: str, *, remember: bool = True) -> tuple[list[str], float]:
         """1文を訳して、(字幕の行, 所要秒) を返す。失敗したら空リスト。
 
         **所要秒は戻り値で返す。属性に置いてはいけない。** 翻訳は最大4本が
         同時に走るので、共有の属性に書くと、読むときには別の文の値になっている。
+
+        `remember=False` は先回りの翻訳のためにある。**投げ捨てる可能性のある
+        文を文脈に混ぜてはいけない。** 先回りは1分に数回走って大半が捨てられるので、
+        混ぜると、直前3文の枠が言いかけの断片で埋まる。採用が決まってから
+        `remember()` を呼ぶこと。
         """
         try:
             text, took = await asyncio.to_thread(self._request, target)
@@ -125,8 +135,8 @@ class Translator:
             return [], 0.0
 
         # 訳した文だけを文脈に足す。失敗した文は足さない。
-        self.history.append(target)
-        del self.history[:-config.CONTEXT_SENTENCES]
+        if remember:
+            self.remember(target)
 
         lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
         return [ln for line in lines for ln in _wrap(line, config.MAX_CAPTION_CHARS)], took
