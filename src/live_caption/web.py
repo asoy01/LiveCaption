@@ -361,6 +361,22 @@ CONTROL_BODY = """
   /* 選んでいる表を目立たせる。畳む前に、何にチェックが入っているかを見る。 */
   .gloss .n { color: var(--ja); }
   .gloss.on .n { color: var(--fg); font-weight: 600; }
+  /* 遅延の調整。1行に「名前 / 入力欄」を置き、説明はその下に小さく敷く。
+     **説明を横に置くと、名前が潰れて何の設定か分からなくなる。** */
+  .tune { padding: 6px 0; border-top: 1px solid var(--line); }
+  .tune:first-child { border-top: 0; }
+  .tune .top { display: flex; align-items: center; gap: 8px; }
+  .tune .k { flex: 1 1 auto; font-size: 12px; color: var(--fg);
+             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tune input[type=number] {
+    font: inherit; font-size: 13px; color: var(--fg); width: 84px; flex: 0 0 auto;
+    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+    padding: 5px 8px; text-align: right;
+  }
+  /* 既定と違う値は目立たせる。畳んだ後でも「触ってある」と分かるようにする。 */
+  .tune.changed input[type=number] { border-color: var(--accent); }
+  .tune .d { flex: 0 0 auto; font-size: 11px; color: #6e7681; width: 66px; }
+  .tune .h { font-size: 11px; color: var(--ja); line-height: 1.45; margin: 3px 0 0; }
   .fold input[type=search] {
     font: inherit; font-size: 12px; color: var(--fg); width: 100%;
     background: #11161d; border: 1px solid #30363d; border-radius: 6px;
@@ -537,6 +553,24 @@ CONTROL_BODY = """
   </div>
 
   <div class="grp">
+    <h2>遅延の調整</h2>
+    <details class="fold" id="tuneFold">
+      <summary id="tuneSummary">よく変えるものではない</summary>
+      <div class="body">
+        <div id="tuneBox"></div>
+        <div class="row2" style="margin:8px 0 0">
+          <button id="tuneSave" class="primary">.env に保存</button>
+          <button id="tuneReset">既定に戻す</button>
+        </div>
+        <div class="hint" id="tuneEnv"></div>
+      </div>
+    </details>
+    <div class="row2">
+      <span id="tuneState"></span>
+    </div>
+  </div>
+
+  <div class="grp">
     <h2>アプリの終了</h2>
     <div class="row2">
       <button id="quit" class="danger">終了</button>
@@ -557,6 +591,10 @@ __FEED_JS__
   const glossFilter = $("glossFilter"), glossFilterRow = $("glossFilterRow");
   const glossAll = $("glossAll"), glossNone = $("glossNone");
   let glossLoaded = false;
+  const tuneBox = $("tuneBox"), tuneState = $("tuneState"), tuneEnv = $("tuneEnv");
+  const tuneFold = $("tuneFold"), tuneSummary = $("tuneSummary");
+  const tuneSave = $("tuneSave"), tuneReset = $("tuneReset");
+  let tuneLoaded = false;
   // 表がこれより多いときだけ絞り込みを出す。少ないうちは邪魔なだけである。
   const GLOSS_FILTER_FROM = 8;
   const gstart = $("gstart"), gstop = $("gstop");
@@ -678,6 +716,7 @@ __FEED_JS__
     // **選べないときも取りに行く。** 取らないと「読み込み中…」が残ってしまう。
     if (!devLoaded) { loadDevices(); }
     if (!glossLoaded) { loadGlossary(); }
+    if (!tuneLoaded) { loadTuning(); }
 
     // --- Zoom ---
     let label, cls;
@@ -922,6 +961,97 @@ __FEED_JS__
     for (const c of glossBox.querySelectorAll("input")) { c.disabled = false; }
   }
 
+  // --- 遅延の調整 ---------------------------------------------------------
+  // **よく変えるものではない。** 既定値は実測で決めてある。だから畳んである。
+  // 触った値はすぐ効く。次の起動にも残したいときだけ「.env に保存」を押す。
+  function showTuning(t) {
+    const items = t.items || [];
+    tuneBox.innerHTML = "";
+    let changed = 0;
+    for (const it of items) {
+      const off = Number(it.value) !== Number(it.default);
+      if (off) { changed += 1; }
+      const row = document.createElement("div");
+      row.className = "tune" + (off ? " changed" : "");
+      const top = document.createElement("div");
+      top.className = "top";
+      const k = document.createElement("span");
+      k.className = "k"; k.textContent = it.name;
+      const inp = document.createElement("input");
+      inp.type = "number"; inp.value = it.value;
+      inp.min = it.min; inp.step = it.step;
+      inp.dataset.name = it.name;
+      // 打っている途中で送らない。欄から離れたときと Enter で送る。
+      inp.addEventListener("change", applyTuning);
+      const d = document.createElement("span");
+      d.className = "d"; d.textContent = "既定 " + it.default;
+      top.append(k, inp, d);
+      const h = document.createElement("p");
+      h.className = "h"; h.textContent = it.help || "";
+      row.append(top, h);
+      tuneBox.appendChild(row);
+    }
+    tuneSummary.textContent = changed
+      ? changed + " 個を既定から変えている"
+      : "よく変えるものではない";
+    tuneEnv.textContent = t.env_path ? "保存先: " + t.env_path : "";
+    // 組み合わせがおかしいときだけ出す（先回りが確定待ち以上、など）。
+    if (t.warning) {
+      tuneState.innerHTML = '<span class="ng"></span>';
+      tuneState.querySelector(".ng").textContent = t.warning;
+    } else {
+      tuneState.textContent = "";
+    }
+  }
+
+  async function loadTuning() {
+    tuneLoaded = true;
+    try {
+      const r = await fetch("/api/tuning");
+      showTuning(await r.json());
+    } catch (e) {
+      tuneLoaded = false;
+      say("設定を取れない: " + e.message, false);
+    }
+  }
+
+  async function applyTuning(ev) {
+    const inp = ev.target;
+    const values = {}; values[inp.dataset.name] = inp.value;
+    inp.disabled = true;
+    try {
+      showTuning(await post("/api/tuning", { values }));
+      say(inp.dataset.name + " を " + inp.value + " にした。", true);
+    } catch (e) {
+      say(String(e.message), false);
+      await loadTuning();          // 失敗したら実際の値へ戻す
+      return;
+    }
+    inp.disabled = false;
+  }
+
+  tuneReset.addEventListener("click", async () => {
+    const values = {};
+    for (const inp of tuneBox.querySelectorAll("input[type=number]")) {
+      const row = inp.closest(".tune");
+      values[inp.dataset.name] = row.querySelector(".d").textContent.replace("既定 ", "");
+    }
+    try {
+      showTuning(await post("/api/tuning", { values }));
+      say("既定値に戻した。", true);
+    } catch (e) { say(String(e.message), false); }
+  });
+
+  tuneSave.addEventListener("click", async () => {
+    tuneSave.disabled = true;
+    try {
+      const t = await post("/api/tuning/save", {});
+      showTuning(t);
+      say(".env に保存した: " + (t.saved || ""), true);
+    } catch (e) { say(String(e.message), false); }
+    tuneSave.disabled = false;
+  });
+
   // --- Zoom ---------------------------------------------------------------
   save.addEventListener("click", async () => {
     const value = token.value.trim();
@@ -1050,6 +1180,8 @@ class WebCaptions:
         self.audio = None
         # 用語集の一覧と選び直し（app.GlossaryControl）。
         self.glossary = None
+        # 遅延の調整つまみ（app.TuningControl）。
+        self.tuning = None
         self.on_shutdown = None
         self.tunnel: tunnel_mod.Tunnel | None = None
         # 会議の記録（transcript.Transcript）。--no-save のときは None のまま。
@@ -1295,6 +1427,11 @@ def _control_handler(web: WebCaptions):
                     self._send_json(503, {"error": "用語集の受け口が用意できていない。"})
                 else:
                     self._send_json(200, web.glossary.status())
+            elif u.path == "/api/tuning":
+                if web.tuning is None:
+                    self._send_json(503, {"error": "設定の受け口が用意できていない。"})
+                else:
+                    self._send_json(200, web.tuning.status())
             elif u.path == "/api/devices":
                 if web.audio is None:
                     self._send_json(503, {"error": "音声の受け口が用意できていない。"})
@@ -1338,7 +1475,8 @@ def _control_handler(web: WebCaptions):
                 self._shutdown()
                 return
             if path not in ("/api/token", "/api/zoom", "/api/tunnel",
-                            "/api/engine", "/api/device", "/api/glossary"):
+                            "/api/engine", "/api/device", "/api/glossary",
+                            "/api/tuning", "/api/tuning/save"):
                 self.send_error(404)
                 return
             try:
@@ -1376,6 +1514,29 @@ def _control_handler(web: WebCaptions):
                     st = web.glossary.select([str(n) for n in raw])
                 except ValueError as exc:
                     self._send_json(400, {"error": str(exc)})
+                    return
+                self._send_json(200, st)
+                return
+
+            if path in ("/api/tuning", "/api/tuning/save"):
+                if web.tuning is None:
+                    self._send_json(503, {"error": "設定の受け口が用意できていない。"})
+                    return
+                try:
+                    if path == "/api/tuning/save":
+                        st = web.tuning.save()
+                    else:
+                        raw = body.get("values")
+                        if not isinstance(raw, dict):
+                            self._send_json(400, {"error": "values はオブジェクトで渡すこと。"})
+                            return
+                        st = web.tuning.set(raw)
+                except ValueError as exc:
+                    self._send_json(400, {"error": str(exc)})
+                    return
+                except OSError as exc:
+                    # .env が書けない（読み取り専用、同期中など）。会議は止めない。
+                    self._send_json(500, {"error": f".env に書けなかった: {exc}"})
                     return
                 self._send_json(200, st)
                 return

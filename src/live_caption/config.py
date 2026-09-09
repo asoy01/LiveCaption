@@ -231,6 +231,99 @@ _TUNABLE = (
 # `IDLE_FLUSH_SEC` だけを差し替えたときに、`SPECULATE_AFTER_SEC` をこれで導く。
 SPECULATE_MARGIN_SEC = 1.1
 
+# **差し替える前の値を控えておく。** 操作画面の「既定に戻す」で使う。
+# `apply_env_overrides()` が globals() を書き換えるので、その前に取る。
+_DEFAULTS = {attr: globals()[attr] for _e, attr, _c, _f in _TUNABLE}
+# 画面に出す説明。**単位と、変えるとどうなるかを書く。**
+_TUNING_HELP = {
+    "IDLE_FLUSH_SEC": "秒。発話が途切れてから、文末記号が無くても確定させるまで。"
+                      "実測の delta 間隔の p99 が 2.57 秒なので、下げると話の途中で切る",
+    "SPECULATE_AFTER_SEC": "秒。無音がこれだけ続いたら、確定を待たずに翻訳を投げる。"
+                           "当たれば約0.9秒早く出る。0 で止める",
+    "FORCE_CUT_CHARS": "文字。日本語がこれより長くなったら強制的に切る。"
+                       "字幕が速すぎて読めないときは下げる",
+    "LINE_INTERVAL_SEC": "秒。Zoomへ1行ずつ送る間隔。字幕の窓は最小4行しかない。"
+                         "閲覧画面には効かない",
+}
+
+
+def coerce_tuning(attr: str, raw) -> float | int:
+    """調整つまみの値を検算する。駄目なら `ValueError` を投げる。
+
+    **`.env` からも操作画面からも、同じ規則で弾く。** 2か所に書くと食い違う。
+    """
+    for _env_name, name, cast, floor in _TUNABLE:
+        if name != attr:
+            continue
+        try:
+            value = cast(str(raw).strip())
+        except (ValueError, TypeError):
+            raise ValueError(f"{attr}: 「{raw}」は数字として読めない。") from None
+        if value < floor:
+            raise ValueError(f"{attr}: {value} は小さすぎる（{floor} 以上にすること）。")
+        return value
+    raise ValueError(f"{attr} は変えられる設定ではない。")
+
+
+def tuning() -> list[dict]:
+    """調整つまみの、いまの値と既定値。操作画面に返す。"""
+    return [
+        {
+            "name": attr,
+            "env": env_name,
+            "value": globals()[attr],
+            "default": _DEFAULTS[attr],
+            "min": floor,
+            "step": 1 if cast is int else 0.1,
+            "help": _TUNING_HELP.get(attr, ""),
+        }
+        for env_name, attr, cast, floor in _TUNABLE
+    ]
+
+
+def tuning_warning() -> str:
+    """設定の組み合わせがおかしいときの一言。無ければ空文字。"""
+    if SPECULATE_AFTER_SEC and SPECULATE_AFTER_SEC >= IDLE_FLUSH_SEC:
+        return (f"先回り（{SPECULATE_AFTER_SEC}秒）が確定待ち（{IDLE_FLUSH_SEC}秒）"
+                f"以上なので、先回りは一度も走らない。")
+    return ""
+
+
+def save_env(values: dict[str, str], path: Path | None = None) -> Path:
+    """`.env` の該当行を書き換える。書いたパスを返す。
+
+    **他の行を消してはいけない。** `.env` には `OPENAI_API_KEY` が入っている。
+    既にある行はその場で置き換え、無ければ末尾に足す。
+    `#LIVECAPTION_...=` のように畳んである行は、コメントを外して使う
+    （`.env.example` をそのまま写した `.env` がこの形になっている）。
+
+    **書き込みは一時ファイル経由で行う。** 途中で落ちて `.env` が壊れると、
+    APIキーごと失われる。
+    """
+    # **既定値引数で ENV_PATH を捕まえない。** import のときに1回だけ評価されるので、
+    # 後から差し替えられなくなる（Segmenter で同じ罠を踏んだ）。
+    path = ENV_PATH if path is None else path
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    remaining = dict(values)
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        bare = stripped.lstrip("#").strip()
+        key = bare.partition("=")[0].strip()
+        if key in remaining:
+            lines[i] = f"{key}={remaining.pop(key)}"
+
+    if remaining:
+        if lines and lines[-1].strip():
+            lines.append("")
+        for key, value in remaining.items():
+            lines.append(f"{key}={value}")
+
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    tmp.replace(path)
+    return path
+
 
 def apply_env_overrides() -> None:
     """調整つまみを環境変数（`.env` を含む）で差し替える。
@@ -243,20 +336,15 @@ def apply_env_overrides() -> None:
     値や小さすぎる値は、警告を出して既定値のままにする。**黙って無視はしない。**
     """
     changed: list[str] = []
-    for env_name, attr, cast, floor in _TUNABLE:
+    for env_name, attr, _cast, _floor in _TUNABLE:
         raw = os.environ.get(env_name, "").strip()
         if not raw:
             continue
         before = globals()[attr]
         try:
-            value = cast(raw)
-        except ValueError:
-            print(f"  [設定の警告] {env_name}={raw} は数字として読めない。"
-                  f"既定の {before} を使う。")
-            continue
-        if value < floor:
-            print(f"  [設定の警告] {env_name}={raw} は小さすぎる（{floor} 以上にすること）。"
-                  f"既定の {before} を使う。")
+            value = coerce_tuning(attr, raw)
+        except ValueError as exc:
+            print(f"  [設定の警告] {env_name}: {exc} 既定の {before} を使う。")
             continue
         globals()[attr] = value
         changed.append(f"{attr} {before} → {value}")
@@ -275,9 +363,9 @@ def apply_env_overrides() -> None:
         print("  [設定] .env で差し替えた: " + "、".join(changed))
 
     # 先回りは確定より前に投げないと意味が無い。
-    if SPECULATE_AFTER_SEC and SPECULATE_AFTER_SEC >= IDLE_FLUSH_SEC:
-        print(f"  [設定の警告] SPECULATE_AFTER_SEC（{SPECULATE_AFTER_SEC}）が "
-              f"IDLE_FLUSH_SEC（{IDLE_FLUSH_SEC}）以上である。先回りは一度も走らない。")
+    warning = tuning_warning()
+    if warning:
+        print(f"  [設定の警告] {warning}")
 
 
 def load_env(path: Path = ENV_PATH) -> None:

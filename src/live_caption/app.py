@@ -242,6 +242,51 @@ class GlossaryControl:
         return self.status()
 
 
+class TuningControl:
+    """遅延の調整つまみを、操作画面から変えられるようにする。
+
+    **よく変えるものではない。** 既定値は実測で決めてある。操作画面では畳んでおく。
+
+    呼ぶのはHTTPサーバのスレッドである。
+    """
+
+    def __init__(self, app: "App") -> None:
+        self.app = app
+
+    def status(self) -> dict:
+        return {
+            "items": config.tuning(),
+            "warning": config.tuning_warning(),
+            "env_path": str(config.ENV_PATH),
+        }
+
+    def set(self, values: dict) -> dict:
+        """値を変える。**すぐ効く。再起動は要らない。**
+
+        `ValueError` は操作した人に見せる。
+        """
+        checked = {name: config.coerce_tuning(name, raw) for name, raw in values.items()}
+        for name, value in checked.items():
+            setattr(config, name, value)
+        # **`Segmenter` は作られたときに値を写している。** そこへ届けないと、
+        # 画面の数字だけが変わって、切り方は前のままになる。
+        self.app.segmenter.idle_sec = config.IDLE_FLUSH_SEC
+        self.app.segmenter.force_cut = config.FORCE_CUT_CHARS
+        if checked:
+            print(f"[{now()}] 設定  " + "、".join(
+                f"{n} を {v} にした" for n, v in checked.items()))
+        return self.status()
+
+    def save(self) -> dict:
+        """いまの値を `.env` に書く。次に起動したときも同じ値で始まる。"""
+        written = {item["env"]: str(item["value"]) for item in config.tuning()}
+        path = config.save_env(written)
+        print(f"[{now()}] 設定  {path} に保存した")
+        st = self.status()
+        st["saved"] = str(path)
+        return st
+
+
 class App:
     def __init__(self, settings: config.Settings, web=None) -> None:  # noqa: ANN001
         self.settings = settings
@@ -272,6 +317,7 @@ class App:
         self.engine = EngineControl(self)
         self.audio = AudioControl(self)
         self.glossary = GlossaryControl(self)
+        self.tuning = TuningControl(self)
         # run() で受け取る。操作画面から入力を差し替えるために持っておく。
         self.capture = None
         # 音声デバイスを開けなかったときの理由。開けたら消す。
@@ -315,6 +361,8 @@ class App:
             web.audio = self.audio
             # 用語集の一覧と選び直し。
             web.glossary = self.glossary
+            # 遅延の調整つまみ。よく変えないので、画面では畳んである。
+            web.tuning = self.tuning
             # 同じ画面から字幕アプリそのものを終わらせる。
             web.on_shutdown = self.request_stop
             # 記録が溜まっていることを操作画面に出す。

@@ -489,8 +489,23 @@ pixi run caption --web 8090 --control-port 8091
 These live in `src/live_caption/config.py`. The default values come from
 measurements, so change them only when you have a reason.
 
-**The four below can also be set in `.env`,** so you can tune a caption PC
-without editing the code. `.env.example` shows how to write them.
+**The four below can be changed from the control page and from `.env`,** so you
+never have to edit the code.
+
+### From the control page
+
+Press the **遅延の調整** (delay tuning) row to open it. **It is folded, because
+these are not settings you change often.**
+
+- Edit a number and leave the field. **It takes effect at once. No restart.**
+- **`.env` に保存** (save to .env) keeps the value for the next start. The other
+  lines in `.env`, including `OPENAI_API_KEY`, are left alone
+- **既定に戻す** (restore defaults) puts back the measured values
+- When a value differs from its default, the folded row says how many
+
+### In `.env`
+
+`.env.example` shows how to write them.
 
 | Name in `.env` | Setting it changes |
 |---|---|
