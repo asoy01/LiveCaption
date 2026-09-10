@@ -2,7 +2,7 @@
 
 日本語版は [manual.ja.md](manual.ja.md) にあります。
 
-LiveCaption puts real-time subtitles on a meeting. At the moment it translates
+LiveCaption shows real-time subtitles for a meeting. At the moment it translates
 between Japanese and English.
 
 You choose the direction.
@@ -25,16 +25,16 @@ participant. The reason is in section 9, "How it works".
 
 | Item | Notes |
 |---|---|
-| A Windows PC | Used only for captions.|
+| A Windows PC | Used only for captions |
 | VB-CABLE | A free virtual audio cable. [vb-audio.com/Cable/](https://vb-audio.com/Cable/) |
 | An OpenAI API key | Speech recognition and translation both call the OpenAI API |
 | pixi | Builds the Python environment. [pixi.sh](https://pixi.sh) |
 | Git | Used to fetch the repository |
 | An account for the caption PC in your meeting software, such as Zoom | A free account is enough |
-| Host or co-host rights | Only if you want to use the Zoom caption API. The other ways do not need it |
+| Host or co-host rights | Only if you want to use the Zoom caption API. The other two ways do not need host rights |
 
 Speech recognition costs **$0.017 per minute**, so about one US dollar per hour.
-The translation cost is small enough to ignore next to that.
+The translation cost is much smaller than that.
 
 Silence is billed too, so press stop during a break.
 
@@ -59,13 +59,13 @@ After the restart, open the Windows sound settings and check these two devices.
 | `CABLE Output` (recording) | **48000 Hz**, 16 bit |
 
 **Set both to 48000 Hz.** If the two rates differ, Windows resamples the audio
-and the sound breaks up. LiveCaption opens the device at 48000 Hz and converts
+and the sound is distorted. LiveCaption opens the device at 48000 Hz and converts
 the audio to 24000 Hz itself.
 
 ### 2.3 Install pixi
 
 pixi builds the Python environment. **You do not have to install Python
-separately.** pixi brings the version this project needs.
+separately.** pixi installs the version this project needs.
 
 Open PowerShell and run one of these.
 
@@ -77,8 +77,8 @@ winget install prefix-dev.pixi
 powershell -ExecutionPolicy ByPass -c "irm -useb https://pixi.sh/install.ps1 | iex"
 ```
 
-**Open a new PowerShell window afterwards**, or the change to PATH is not
-picked up. Then check that it is there.
+**Open a new PowerShell window afterwards.** An older window does not see the
+new PATH. Then check that pixi is installed.
 
 ```powershell
 pixi --version
@@ -112,12 +112,12 @@ Run this inside the folder you cloned.
 pixi install
 ```
 
-The packages go into a `.pixi` folder there. **Your system Python is left
-alone.** The first run takes a few minutes.
+The packages go into a `.pixi` folder there. **pixi does not change your system
+Python.** The first run takes a few minutes.
 
 ### 2.6 Write the API key into `.env`
 
-**The file goes in the top of the repository**, in the same folder as
+**The file goes in the top folder of the repository**, in the same folder as
 `pixi.toml` and `StartLiveCaption.bat`. Create a file called `.env` there.
 
 ```
@@ -130,7 +130,8 @@ LiveCaption\
   └ ...
 ```
 
-The quickest way is to copy the sample, inside the folder you cloned in 2.4.
+The quickest way is to copy the sample. Run these two commands inside the folder
+you cloned in 2.4.
 
 ```powershell
 copy .env.example .env
@@ -148,11 +149,11 @@ You create the key at [platform.openai.com](https://platform.openai.com).
 **The name is `.env`, not `.env.txt`.** Notepad can add `.txt` when you use
 "Save as" to make a new file. The `copy` command above avoids that.
 
-`.env` is not committed to Git; it is listed in `.gitignore`. Your key cannot be
-published by accident.
+`.env` is not committed to Git. It is listed in `.gitignore`, so you do not
+publish your key by accident.
 
-**The value in `.env` wins over the environment variable of the same name.**
-If you set the key in both places, `.env` is the one that is used.
+**The value in `.env` is used instead of the environment variable of the same
+name.** If you set the key in both places, LiveCaption reads `.env`.
 
 ### 2.7 Check that the audio path works
 
@@ -181,18 +182,18 @@ meeting.
 Windows key  ->  type "livecaption"  ->  Enter
 ```
 
-To keep it in sight, right-click LiveCaption in the Start menu and choose
+To keep the entry visible, right-click LiveCaption in the Start menu and choose
 **Pin to Start** or **Pin to taskbar**.
 
 No administrator rights are needed. It creates one shortcut, at
 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\LiveCaption.lnk`.
 
-**Run it again if you move or rename this folder.** The shortcut holds an
-absolute path, so it stops working when the folder moves.
+**Run `InstallToStartMenu.bat` again if you move or rename this folder.** The
+shortcut holds an absolute path, so it stops working when the folder moves.
 
-The icon comes from `etc/LiveCaption.ico`. To change it, edit
+The icon comes from `etc/LiveCaption.ico`. To change the icon, edit
 `scripts/make_icon.py`, run it, and register the shortcut again. To remove the
-entry, run the file from a terminal with `-Remove`.
+entry, run `InstallToStartMenu.bat` from a terminal with `-Remove`.
 
 ```powershell
 InstallToStartMenu.bat -Remove
@@ -203,11 +204,11 @@ InstallToStartMenu.bat -Remove
 You can put the caption PC in another room. **Do not use RDP (Remote Desktop).**
 
 RDP creates a separate session, locks the console session, and redirects the
-audio to "remote audio". **The path to `CABLE Input` that your meeting software
-was using is cut, and the captions stop.**
+audio to "remote audio". **RDP cuts the path to `CABLE Input` that your meeting
+software was using, and the captions stop.**
 
 Use a tool that drives the console session itself, such as a VNC-style remote
-desktop. Those leave the audio device setup alone.
+desktop. A VNC-style tool does not change the audio device setup.
 
 ---
 
@@ -226,23 +227,20 @@ http://localhost:8080/v/<random>   viewer page    <- share this one
 
 **Never screen-share the control page.** It shows the Zoom caption token.
 
-**LiveCaption starts with caption generation stopped.** No audio is taken in and
-no API is called until you press start. You can launch the app before you join
-the meeting, and the small talk during setup does not reach the recogniser.
+**LiveCaption starts with caption generation stopped.** No audio is read and
+no API is called until you press start. You can launch LiveCaption before you join
+the meeting, and the conversation during setup does not reach the recogniser.
 
 ### Step 2. Join the meeting from the caption PC
 
 Check three things in the meeting software on the caption PC.
 
-- **Speaker: `CABLE Input`.** If this is wrong, no audio reaches the app
+- **Audio output: `CABLE Input`.** If this is wrong, no audio reaches LiveCaption
 - **Microphone: muted.** This PC never speaks
 - **Display name: something like `Live Captions`.** The name appears in the
   participant list, so make it clear what this PC is doing
 
 Then join the meeting.
-
-Turning on "Hide non-video participants" saves bandwidth, which helps on a slow
-line.
 
 ### Step 3. Check the input device
 
@@ -274,11 +272,12 @@ each meeting.**
 You can change it in the middle of a meeting: the recogniser is not
 reconnected, so captions keep running.
 
-**When the other language comes in, it is passed through, not translated.** In a
-日本語 → 英語 meeting, an English sentence is shown as it is. **One choice covers
-a meeting that is English in the first half and Japanese in the second.**
+**A sentence spoken in the caption language is shown as it is, not translated.**
+In a 日本語 → 英語 meeting, an English sentence is shown as it is. **One choice
+covers a meeting that is English in the first half and Japanese in the second.**
 
-**The next start uses the same direction.** It remembers your last choice.
+**The next start uses the same direction.** LiveCaption remembers your last
+choice.
 
 Then press **開始** (start) under **字幕の生成** (caption generation).
 
@@ -311,7 +310,7 @@ The token can only be made during a meeting, and only by a host or a co-host.
 
 **Turn off the meeting software's automatic captions.** They share the same
 four-line window with LiveCaption's captions. If the automatic captions keep
-running, our lines are pushed out of the window.
+running, LiveCaption's lines are pushed out of the window.
 
 **Watch the status in the top right of the control page.**
 
@@ -352,7 +351,8 @@ Cloudflare and gives you a public URL and a QR code.
 3. They open the URL on their own phone or laptop
 
 **The tunnel is off by default.** Captions travel through Cloudflare.
-**Do not use it for meetings whose content must not leave your organisation.**
+**Do not use the tunnel for meetings whose content must not leave your
+organisation.**
 Use screen share instead.
 
 ### Step 6. Tell the audience
@@ -372,22 +372,22 @@ and the terminal window both close.
 
 ## 4. The glossary
 
-How well technical terms come out is decided by the tables in `etc/glossary/`.
-**This is the main thing you maintain.**
+The tables in `etc/glossary/` decide how well technical terms are translated.
+**These tables are the part of LiveCaption you maintain.**
 
 ### Build tables for your own field
 
 **Put one file per subject** in `etc/glossary/`, with the extension `.tsv`.
-Not in `docs/`. **These are data the app reads, not something to read yourself.**
+Not in `docs/`. **These are data LiveCaption reads, not something to read yourself.**
 
 The tables that ship with the repository are examples. **Replace them with the
 words that come up in your own meetings.**
 
-There are two reasons to split them. You can leave out the words a meeting does
-not need. And there is a limit on how many words can be passed to the recogniser
-(`config.ASR_KEYWORD_LIMIT`, 200 by default). One large table used for every
-meeting fills that budget with words the meeting does not need, and the words
-that matter fall off the end.
+There are two reasons to split them. First, you can leave out the words a
+meeting does not need. Second, there is a limit on how many words can be passed
+to the recogniser (`config.ASR_KEYWORD_LIMIT`, 200 by default). One large table
+used for every meeting fills that limit with words the meeting does not need,
+and the words that matter are cut.
 
 ### Format
 
@@ -404,9 +404,9 @@ The table is used in two places.
 2. **Translation.** The whole table goes into the translation prompt, and the
    third column becomes replacement rules
 
-**The third column is the important one.** The recogniser still gets things
-wrong. When you write down the errors it actually made, the translation step can
-recover the correct term from them.
+**The third column is the important one.** The recogniser still makes mistakes.
+When you write down the errors the recogniser really made, the translation step
+can recover the correct term from them.
 
 ### Choose tables for each meeting
 
@@ -417,16 +417,17 @@ soon as you tick.**
 
 When there are eight or more tables, a filter box appears above the list.
 **Tables you have ticked stay visible even when the filter hides the others.**
-Being able to untick something you cannot see would leave you not knowing what
-you removed. **全部選ぶ** (select all) and **全部外す** (clear all) also apply to
+Otherwise you could untick a table without seeing which table you removed.
+**全部選ぶ** (select all) and **全部外す** (clear all) also apply to
 tables hidden by the filter.
 
 Below the ticks you see the total word count and how many words go to the
 recogniser. **Watch the limit.** Words past `config.ASR_KEYWORD_LIMIT` never
-reach the recogniser. The number turns red when that happens; use fewer tables.
+reach the recogniser. The word count turns red when words are cut. Use fewer
+tables.
 
 **The choice is remembered.** The next start uses the same combination. You can
-also set it at start-up.
+also choose the tables at start-up.
 
 ```powershell
 pixi run caption --web --glossary table1 table2
@@ -434,8 +435,8 @@ pixi run caption --web --glossary table1 table2
 
 **When the same Japanese term appears in several tables, they are merged.** The
 English comes from the first table that has it, and the misrecognitions are
-collected from all of them. If two tables disagree on the English, the app says
-so on screen and uses the first one.
+collected from all of them. If two tables disagree on the English, LiveCaption shows
+a warning on screen and uses the first table.
 
 ### Grow the tables after a meeting
 
@@ -453,10 +454,10 @@ Three kinds of entry belong in the third column.
 - **A form with the end of the previous word stuck to the front.** The
   recogniser gets the word boundary wrong, so record the run-on form as well
 
-**Do not guess.** If a word makes no sense, ask the person who was speaking.
-Some errors cannot be worked out from the sound alone.
+**Do not guess.** If a word makes no sense, ask the person who was speaking. You
+cannot recover some errors from the sound alone.
 
-**A word you meant to add may not actually be there.** Check the words you rely
+**A word you meant to add may not be in the table.** Check the words you rely
 on by running them through the translation step.
 
 ---
@@ -484,7 +485,7 @@ need them when you tune the settings.
 | `cut` | Why the sentence was finalised. `punct` (end mark) / `force` (length) / `idle` (silence) / `flush` (at exit) |
 | `waited` | For a sentence finalised by silence, how long it actually waited |
 | `took` | Seconds spent on translation |
-| `total` | **Seconds from finalising to the first caption line.** `total − took` is queueing |
+| `total` | **Seconds from finalising to the first caption line.** `total − took` is the time the sentence waited in the queue |
 | `spec` | Present when the speculative translation was used. `total` is then smaller than `took` |
 | `dir` | The caption direction at that moment |
 
@@ -493,14 +494,14 @@ need them when you tune the settings.
 - **The `.md` file is written at exit.** If the PC loses power, rebuild it from
   the `.jsonl` with `pixi run python scripts/transcript_to_md.py`
 - To keep no record, start with `--no-save`
-- To put it somewhere else, use `--save-dir`
+- To write the record somewhere else, use `--save-dir`
 - If no sentence was produced, no file is written
 
 ---
 
 ## 6. Commands
 
-For a meeting you use the batch file. The rest is for everything else.
+For a meeting you use the batch file. The commands below are for setting up, testing, and recovery.
 
 ```powershell
 StartLiveCaption.bat                             # this is what you use for a meeting
@@ -526,9 +527,9 @@ Options:
 | `--direction <way>` | Caption direction. `ja2en` (English captions for a Japanese meeting) or `en2ja` (Japanese captions for an English meeting). Default: the one you chose last |
 | `--glossary <name> ...` | Which tables in `etc/glossary/` to use. Several can be given. Default: the combination you chose last |
 | `--device <name>` | Part of the input device name. Default: `CABLE Output` |
-| `--web [port]` | Show captions in a browser. This is the viewer port, 8080 by default |
+| `--web [port]` | Show captions in a browser. The number is the viewer port, 8080 by default |
 | `--control-port <port>` | The control page port, 8081 by default. **It always listens on 127.0.0.1 only** |
-| `--web-bind <address>` | The address the **viewer page** listens on, 127.0.0.1 by default. Use 0.0.0.0 to show it directly to devices on the same LAN. The control page is not affected |
+| `--web-bind <address>` | The address the **viewer page** listens on, 127.0.0.1 by default. Use 0.0.0.0 to show the viewer page directly to devices on the same LAN. The control page is not affected |
 | `--tunnel` | Open the tunnel at start-up. It is off by default |
 | `--no-browser` | Do not open the browser automatically |
 | `--no-save` | Keep no record of the meeting |
@@ -553,22 +554,24 @@ pixi run caption --web 8090 --control-port 8091
 
 ## 7. Settings
 
-They are in `src/live_caption/config.py`. The defaults come from measurement, so
-change them only when you have a reason.
+The settings are in `src/live_caption/config.py`. The defaults come from
+measurement, so change them only when you have a reason.
 
 **The four below can be changed from the control page and from `.env`.** You do
 not have to edit the code.
 
 ### From the control page
 
-Press the **遅延の調整** (delay tuning) row to open it. **It is folded because it
-is not something you change often.**
+Press the **遅延の調整** (delay tuning) row to open it. **The row is folded
+because you do not change these values often.**
 
-- Edit a number and leave the field: **it takes effect at once. No restart**
+- Edit a number and leave the field. **The change takes effect at once. No
+  restart**
 - **`.env` に保存** (save to `.env`) makes the next start use the same values.
   The other lines in `.env`, such as `OPENAI_API_KEY`, are left alone
 - **既定に戻す** (reset) goes back to the measured defaults
-- When a value differs from the default, the folded header says how many
+- When a value differs from the default, the folded header shows how many values
+  differ
 
 ### In `.env`
 
@@ -581,30 +584,30 @@ is not something you change often.**
 | `LIVECAPTION_FORCE_CUT_CHARS` | `FORCE_CUT_CHARS` |
 | `LIVECAPTION_LINE_INTERVAL_SEC` | `LINE_INTERVAL_SEC` |
 
-When a value is replaced, the app says so at start-up.
+When a value is replaced, LiveCaption prints a message at start-up.
 
 **If you change only `IDLE_FLUSH_SEC`, `SPECULATE_AFTER_SEC` follows it**
-(`IDLE_FLUSH_SEC − 1.1` seconds). Without that, the speculative translation
-fires too early and is thrown away more often, for no gain.
+(`IDLE_FLUSH_SEC − 1.1` seconds). Otherwise the speculative translation fires
+too early and is thrown away more often, for no gain.
 
 **A typo does not stop the meeting.** A value that is not a number, or one that
-is too small, produces a warning and the default is used. **It is never ignored
-silently**, so read the start-up output.
+is too small, produces a warning and the default is used. **LiveCaption never
+ignores a bad value silently**, so read the start-up output.
 
 ### The main settings
 
 | Setting | Default | Meaning |
 |---|---|---|
 | `ASR_MODEL` | `gpt-live-transcribe` | The speech recognition model |
-| `ASR_DELAY` | `low` | Both `minimal` and `high` got technical terms wrong |
+| `ASR_DELAY` | `low` | How long the recogniser waits before it returns text. Waiting longer can improve accuracy, but both `minimal` and `high` got technical terms wrong in our tests |
 | `ASR_LANGUAGES` | `("ja", "en")` | **Do not fix this to one language.** A meeting can switch language part way through |
 | `ASR_KEYWORD_LIMIT` | 200 | How many glossary words reach the recogniser. **Keep it above the size of your tables.** A warning appears at start-up when words are cut |
 | `TRANSLATE_MODEL` | `gpt-4.1-mini` | The translation model |
 | `CONTEXT_SENTENCES` | 3 | How many previous sentences go to the translation as context |
-| `MAX_CAPTION_CHARS` | 80 / 40 | Longest caption line. It depends on the direction: 80 for English, 40 for Japanese |
-| `FORCE_CUT_CHARS` | 70 / 140 | A sentence longer than this is cut. It depends on the direction: 70 when listening to Japanese, 140 for English. Lower it if the captions go by too fast |
-| `IDLE_FLUSH_SEC` | 2.5 | How long to wait after speech stops before finalising a sentence without an end mark. **Measure the gaps between deltas with `stream_test.py` before lowering it.** Below the gaps that occur while a person is still talking, it cuts sentences in the middle |
-| `IDLE_POLL_SEC` | 0.1 | How often that timer is checked. Finer means less wasted waiting |
+| `MAX_CAPTION_CHARS` | 80 / 40 | Longest caption line. The value depends on the direction: 80 for English, 40 for Japanese |
+| `FORCE_CUT_CHARS` | 70 / 140 | A sentence longer than this is cut. The value depends on the direction: 70 when listening to Japanese, 140 for English. Lower it if the captions go by too fast |
+| `IDLE_FLUSH_SEC` | 2.5 | How long to wait after speech stops before finalising a sentence without an end mark. **Measure the gaps between deltas with `stream_test.py` before lowering it.** A value below those gaps cuts sentences in the middle |
+| `IDLE_POLL_SEC` | 0.1 | How often that timer is checked. A smaller value wastes less time waiting |
 | `SPECULATE_AFTER_SEC` | 1.4 | After this much silence, send the translation without waiting for the sentence to be final. When it matches, the caption appears about 0.9 s earlier. Misses are thrown away, which costs a little more. `0` turns it off |
 | `LINE_INTERVAL_SEC` | 0.6 | The gap between lines sent to Zoom. The caption window is only four lines, so sending them at once pushes the first one out. **It does not apply to the viewer page**, which gets every line at once |
 | `WEB_LINES` | 8 | How many lines the viewer page shows |
@@ -617,17 +620,17 @@ silently**, so read the start-up output.
 
 | Symptom | Where to look |
 |---|---|
-| Nothing happens. No log lines | **Did you press 開始 under 字幕の生成?** Launching the app is not enough |
+| Nothing happens. No log lines | **Did you press 開始 under 字幕の生成?** Launching LiveCaption is not enough |
 | `CABLE Output` is not in the list | Is VB-CABLE installed? Did you restart the PC? |
 | The level meter does not move | The speaker setting in your meeting software. Both devices at 48000 Hz. **Is 音声の入力 set to `CABLE Output`?** |
 | "cannot open the input" | Another app may have the device. Does the device accept 48000 Hz? Pick a different input |
-| No recognition lines | `OPENAI_API_KEY` in `.env`. **Is `.env` in the top of the repository, next to `pixi.toml`? Is it named `.env.txt` by mistake?** Also check the network |
+| No recognition lines | `OPENAI_API_KEY` in `.env`. **Is `.env` in the top folder of the repository, next to `pixi.toml`? Is it named `.env.txt` by mistake?** Also check the network |
 | Recognition lines but no caption lines | A translation error should be on the screen |
-| Log lines flow, but nobody sees the captions | **Are you looking at the host's screen?** The host never sees them. Did the other person turn on "Show Captions"? Is the token from this meeting? |
+| Log lines flow, but nobody sees the captions | **Are you looking at the host's screen?** The host never sees the captions. Did the other person turn on "Show Captions"? Is the token from this meeting? |
 | Different captions appear when someone speaks | **The meeting software's automatic captions are running.** Turn them off |
 | A term is in the glossary but the recogniser still misses it | It may be cut by `ASR_KEYWORD_LIMIT`. Words at the end of the table do not reach the recogniser |
 | Every term of one subject comes out wrong | That subject's table is probably not ticked |
-| Captions stopped part way through | The `seq` number went backwards. If you restarted the app, check `local/seq_state.json` |
+| Captions stopped part way through | The `seq` number went backwards. If you restarted LiveCaption, check `local/seq_state.json` |
 | Captions go by too fast to read | Ask the readers to make the caption area taller. Lower `config.FORCE_CUT_CHARS` |
 | The recogniser reconnects again and again | The network. Turn off incoming video in the meeting software on the caption PC. Try another line |
 | Captions stopped after you connected remotely | **Did you connect with RDP?** It cuts the audio path (see 2.9) |
@@ -666,36 +669,37 @@ own microphone to your own speaker. If you record the speaker output on the host
 PC, **the host's own voice is missing.** The caption PC receives the mixed audio,
 and that mix contains every participant.
 
-Because a virtual audio cable is used, the app opens `CABLE Output` as an
-ordinary recording device. It does not use the WASAPI loopback API, so the
-volume and mute settings do not affect it.
+Because a virtual audio cable is used, LiveCaption opens `CABLE Output` as an
+ordinary recording device. LiveCaption does not use the WASAPI loopback API, so
+the volume and mute settings do not affect the audio LiveCaption reads.
 
-### Technical terms are handled in two steps
+### Technical terms are corrected in two steps
 
-Do not try to solve them with speech recognition alone.
+Do not try to solve technical terms with speech recognition alone.
 
 1. **Recognition.** The glossary words are passed as keywords, so the recogniser
    is more likely to catch the sound of a term
 2. **Translation.** The glossary, the replacement rules built from real
    misrecognitions, and the last three sentences as context all go to the model.
-   **This is the step that does the work**
+   **This step does most of the work**
 
-When the recogniser produces something that only sounds similar, the translation
-step can recover the term from the context and the table. **It cannot recover
-everything.** When a misrecognition lands on another plausible technical term,
-you get a fluent wrong translation.
+When the recogniser produces a word that only sounds similar, the translation
+step can recover the term from the context and the table. **The translation step
+cannot recover everything.** When a misrecognition becomes another technical
+term that also makes sense, the translation is fluent and wrong.
 
 ### Only finished sentences are sent
 
 If you show a partial sentence and rewrite it later, the reader cannot follow.
 Captions accumulate and are never replaced, so a partial line stays on screen and
-the corrected version appears below it. **The reader sees the same thing twice.**
+the corrected version appears below it. **The reader sees the same sentence
+twice.**
 
-This is why the translation time cannot be hidden by streaming.
+For this reason, streaming cannot hide the translation time.
 
 ### Delay
 
-It depends on how the sentence ends (measured).
+The delay depends on how the sentence ends (measured).
 
 | | Recognition | Wait to finalise | Translation | Send | Total |
 |---|---|---|---|---|---|
@@ -715,4 +719,4 @@ Lowering the threshold only cuts more sentences in the middle.
 
 - [test-procedure.md](test-procedure.md) — the staged test for bringing up a new
   caption PC, and the checklist for the day of the meeting
-- [../etc/glossary/](../etc/glossary/) — the term tables, one file per subject
+- [../etc/glossary/](../etc/glossary/) — the glossary tables, one file per subject
