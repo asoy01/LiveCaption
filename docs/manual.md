@@ -154,15 +154,7 @@ published by accident.
 **The value in `.env` wins over the environment variable of the same name.**
 If you set the key in both places, `.env` is the one that is used.
 
-### 2.7 Set up the meeting software on the caption PC
-
-- Set the display name to something like `Live Captions`. The name appears in
-  the participant list, so make it clear what this PC is doing
-- Speaker: **`CABLE Input`**
-- Microphone: **muted**
-- Turning on "Hide non-video participants" saves bandwidth
-
-### 2.8 Check that the audio path works
+### 2.7 Check that the audio path works
 
 This test needs no meeting and no API key. It plays a sine wave into
 `CABLE Input` and reads it back from `CABLE Output`.
@@ -179,7 +171,7 @@ If the amplitude comes back, VB-CABLE is working.
   => 通っている
 ```
 
-### 2.9 Put LiveCaption in the Start menu (optional)
+### 2.8 Put LiveCaption in the Start menu (optional)
 
 Double-click **`InstallToStartMenu.bat`**. It adds a `LiveCaption` entry to the
 current user's Start menu, so you do not have to find this folder before a
@@ -206,7 +198,7 @@ entry, run the file from a terminal with `-Remove`.
 InstallToStartMenu.bat -Remove
 ```
 
-### 2.10 If you operate the caption PC remotely
+### 2.9 If you operate the caption PC remotely
 
 You can put the caption PC in another room. **Do not use RDP (Remote Desktop).**
 
@@ -223,7 +215,7 @@ desktop. Those leave the audio device setup alone.
 
 ### Step 1. Start the app
 
-Double-click **`StartLiveCaption.bat`**. If you did step 2.9, you can use
+Double-click **`StartLiveCaption.bat`**. If you did step 2.8, you can use
 **LiveCaption** in the Start menu instead. The control page opens in your
 browser.
 
@@ -240,8 +232,17 @@ the meeting, and the small talk during setup does not reach the recogniser.
 
 ### Step 2. Join the meeting from the caption PC
 
-Set the speaker in your meeting software to `CABLE Input`, and mute the
-microphone.
+Check three things in the meeting software on the caption PC.
+
+- **Speaker: `CABLE Input`.** If this is wrong, no audio reaches the app
+- **Microphone: muted.** This PC never speaks
+- **Display name: something like `Live Captions`.** The name appears in the
+  participant list, so make it clear what this PC is doing
+
+Then join the meeting.
+
+Turning on "Hide non-video participants" saves bandwidth, which helps on a slow
+line.
 
 ### Step 3. Check the input device
 
@@ -629,7 +630,7 @@ silently**, so read the start-up output.
 | Captions stopped part way through | The `seq` number went backwards. If you restarted the app, check `local/seq_state.json` |
 | Captions go by too fast to read | Ask the readers to make the caption area taller. Lower `config.FORCE_CUT_CHARS` |
 | The recogniser reconnects again and again | The network. Turn off incoming video in the meeting software on the caption PC. Try another line |
-| Captions stopped after you connected remotely | **Did you connect with RDP?** It cuts the audio path (see 2.10) |
+| Captions stopped after you connected remotely | **Did you connect with RDP?** It cuts the audio path (see 2.9) |
 
 **Check the receiving side first.** A successful send is not proof that anything
 is displayed. Every send can return 200 while nothing appears on the other
