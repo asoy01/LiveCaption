@@ -25,7 +25,7 @@ participant. The reason is in section 9, "How it works".
 
 | Item | Notes |
 |---|---|
-| A Windows PC | Used only for captions. No GPU needed |
+| A Windows PC | Used only for captions.|
 | VB-CABLE | A free virtual audio cable. [vb-audio.com/Cable/](https://vb-audio.com/Cable/) |
 | An OpenAI API key | Speech recognition and translation both call the OpenAI API |
 | pixi | Builds the Python environment. [pixi.sh](https://pixi.sh) |
@@ -117,13 +117,39 @@ alone.** The first run takes a few minutes.
 
 ### 2.6 Write the API key into `.env`
 
-Copy `.env.example` to `.env` and fill in your key.
+**The file goes in the top of the repository**, in the same folder as
+`pixi.toml` and `StartLiveCaption.bat`. Create a file called `.env` there.
+
+```
+LiveCaption\
+  ├ .env.example          the sample, included in the repository
+  ├ .env                  the file you create
+  ├ pixi.toml
+  ├ StartLiveCaption.bat
+  ├ src\
+  └ ...
+```
+
+The quickest way is to copy the sample, inside the folder you cloned in 2.4.
+
+```powershell
+copy .env.example .env
+notepad .env
+```
+
+Write your key in the file and save it.
 
 ```
 OPENAI_API_KEY=sk-...
 ```
 
 You create the key at [platform.openai.com](https://platform.openai.com).
+
+**The name is `.env`, not `.env.txt`.** Notepad can add `.txt` when you use
+"Save as" to make a new file. The `copy` command above avoids that.
+
+`.env` is not committed to Git; it is listed in `.gitignore`. Your key cannot be
+published by accident.
 
 **The value in `.env` wins over the environment variable of the same name.**
 If you set the key in both places, `.env` is the one that is used.
@@ -594,7 +620,7 @@ silently**, so read the start-up output.
 | `CABLE Output` is not in the list | Is VB-CABLE installed? Did you restart the PC? |
 | The level meter does not move | The speaker setting in your meeting software. Both devices at 48000 Hz. **Is 音声の入力 set to `CABLE Output`?** |
 | "cannot open the input" | Another app may have the device. Does the device accept 48000 Hz? Pick a different input |
-| No recognition lines | `OPENAI_API_KEY` in `.env`. The network |
+| No recognition lines | `OPENAI_API_KEY` in `.env`. **Is `.env` in the top of the repository, next to `pixi.toml`? Is it named `.env.txt` by mistake?** Also check the network |
 | Recognition lines but no caption lines | A translation error should be on the screen |
 | Log lines flow, but nobody sees the captions | **Are you looking at the host's screen?** The host never sees them. Did the other person turn on "Show Captions"? Is the token from this meeting? |
 | Different captions appear when someone speaks | **The meeting software's automatic captions are running.** Turn them off |

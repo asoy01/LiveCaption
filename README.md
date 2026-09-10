@@ -17,11 +17,15 @@ You need a Windows PC used only for captions,
 [VB-CABLE](https://vb-audio.com/Cable/), [pixi](https://pixi.sh), and an OpenAI
 API key.
 
-```bash
+```powershell
+git clone https://github.com/asoy01/LiveCaption.git
+cd LiveCaption
 pixi install
-cp .env.example .env          # then put your OPENAI_API_KEY in it
+copy .env.example .env        # then put your OPENAI_API_KEY in it
 pixi run python scripts/cable_loopback.py   # check the VB-CABLE path
 ```
+
+`.env` stays in this folder, the top of the repository, next to `pixi.toml`.
 
 Then double-click `StartLiveCaption.bat`. The control page opens in your
 browser. Everything is done from there: start and stop caption generation,

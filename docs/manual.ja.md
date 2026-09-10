@@ -22,7 +22,7 @@ Zoom に字幕を出す機能を持っていますが、Zoom 専用ではあり�
 
 | 品目 | 補足 |
 |---|---|
-| Windows PC 1台 | 字幕専用。GPU は要りません |
+| Windows PC 1台 | 字幕専用。|
 | VB-CABLE | 無料の仮想オーディオケーブル。[vb-audio.com/Cable/](https://vb-audio.com/Cable/) |
 | OpenAI の APIキー | 音声認識と翻訳の両方が OpenAI API を呼びます |
 | pixi | Python 環境を作ります。[pixi.sh](https://pixi.sh) |
@@ -112,13 +112,39 @@ pixi install
 
 ### 2.6 APIキーを `.env` に書く
 
-`.env.example` を `.env` にコピーして、キーを埋めます。
+**置き場所はリポジトリの直下です。** `pixi.toml` や `StartLiveCaption.bat` と同じ
+フォルダに、`.env` という名前のファイルを作ります。
+
+```
+LiveCaption\
+  ├ .env.example          見本。リポジトリに入っています
+  ├ .env                  これを作ります
+  ├ pixi.toml
+  ├ StartLiveCaption.bat
+  ├ src\
+  └ ...
+```
+
+2.4 でクローンしたフォルダの中で、見本をコピーするのが早いです。
+
+```powershell
+copy .env.example .env
+notepad .env
+```
+
+開いたら、キーを書き込んで保存します。
 
 ```
 OPENAI_API_KEY=sk-...
 ```
 
 キーは [platform.openai.com](https://platform.openai.com) で作ります。
+
+**ファイル名は `.env` です。`.env.txt` ではありません。** メモ帳の「名前を付けて保存」で
+新規に作ると `.txt` が付くことがあります。上の `copy` を使えばこれは起きません。
+
+`.env` は Git に入りません（`.gitignore` に書いてあります）。キーが誤って公開される心配は
+要りません。
 
 **`.env` の値が、同じ名前の環境変数より優先されます。** 両方に書いた場合、使われるのは
 `.env` のほうです。
@@ -555,7 +581,7 @@ pixi run caption --web 8090 --control-port 8091
 | `CABLE Output` が一覧に無い | VB-CABLE を入れましたか。PC を再起動しましたか |
 | 音量メーターが振れない | 会議ソフトのスピーカー設定。両方 48000 Hz か。**「音声の入力」が `CABLE Output` か** |
 | 「入力を開けない」と出る | 別のアプリが専有していないか。48000 Hz を受け付ける装置か。別の入力を選んでください |
-| 認識の行が出ない | `.env` の `OPENAI_API_KEY`。ネットワーク |
+| 認識の行が出ない | `.env` の `OPENAI_API_KEY`。**`.env` はリポジトリ直下（`pixi.toml` と同じ場所）にありますか。名前が `.env.txt` になっていませんか。** ネットワークも確認 |
 | 認識は出るが字幕が出ない | 翻訳のエラーが画面に出ているはずです |
 | ログは流れるが受信側に出ない | **ホストの画面を見ていませんか**（ホストには出ません）。相手が「字幕を表示」をオンにしたか。トークンが今の会議のものか |
 | 喋ると別の字幕が出る | **会議ソフトの自動字幕が動いています。** オフにしてください |
