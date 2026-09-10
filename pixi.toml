@@ -3,6 +3,8 @@ channels = ["conda-forge"]
 name = "LiveCaption"
 platforms = ["win-64", "linux-64"]
 version = "0.1.0"
+license = "BSD-3-Clause"
+license-file = "LICENSE"
 
 [tasks]
 caption = "python run.py"

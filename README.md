@@ -127,4 +127,7 @@ The record of each meeting is written to **your Downloads folder** as
 
 ## Licence
 
-Not decided yet.
+BSD 3-Clause. See [LICENSE](LICENSE).
+
+The libraries this project depends on, VB-CABLE, and the OpenAI API each come
+with their own terms. This licence covers only the code in this repository.
