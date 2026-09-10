@@ -160,9 +160,10 @@ can collect the misrecognitions afterwards. The `.md` file is easier to read.
 
 Open a test meeting as the host, on a machine **other than** the caption PC.
 
-1. Toolbar, "Captions", the arrow, "Manual captions setup",
-   then **"Copy the API token"**
-2. Join the same meeting from a second device and turn on "Show Captions"
+1. Toolbar, "Captions", the arrow, "Manual captions setup", then **turn manual
+   captions on**. **"Copy the API token" does not appear until they are on**
+2. From the same place, choose **"Copy the API token"**
+3. Join the same meeting from a second device and turn on "Show Captions"
 
 ```bash
 pixi run python scripts/zoom_cc_test.py --auto "<the token URL you copied>"

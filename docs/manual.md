@@ -300,13 +300,15 @@ There are three ways. **You can use all three at the same time.**
 
 The token can only be made during a meeting, and only by a host or a co-host.
 
-1. The host presses the arrow next to "Captions" in the toolbar and chooses
-   **"Copy the API token"**
-2. The host sends that token to the caption PC in the meeting chat
-3. Paste the token into **APIトークン** under **Zoom字幕** on the control page and
+1. The host presses the arrow next to "Captions" in the toolbar, opens
+   **"Manual captions setup"**, and turns manual captions on.
+   **"Copy the API token" does not appear until manual captions are on**
+2. From the same place, the host chooses **"Copy the API token"**
+3. The host sends that token to the caption PC in the meeting chat
+4. Paste the token into **APIトークン** under **Zoom字幕** on the control page and
    press **登録** (register). The field is masked, and it clears after you
    register
-4. Press **開始** (start). Three warm-up captions are sent first
+5. Press **開始** (start). Three warm-up captions are sent first
 
 **Turn off the meeting software's automatic captions.** They share the same
 four-line window with LiveCaption's captions. If the automatic captions keep
