@@ -163,7 +163,7 @@ Open a test meeting as the host, on a machine **other than** the caption PC.
 1. Toolbar, "Captions", the arrow, "Manual captions setup", then **turn manual
    captions on**. **"Copy the API token" does not appear until they are on**
 2. From the same place, choose **"Copy the API token"**
-3. Join the same meeting from a second device and turn on "Show Captions"
+3. Join the same meeting from a second device and turn manual captions on
 
 ```bash
 pixi run python scripts/zoom_cc_test.py --auto "<the token URL you copied>"
@@ -179,7 +179,7 @@ return 200 while nothing appears on the other screen. Do not start by suspecting
 
 Do it in this order.
 
-1. Turn on "Show Captions" **on a device that is not the host**.
+1. **On a device that is not the host**, turn manual captions on.
    **The host never sees the captions.**
 2. Check that the meeting's automatic captions are off
 3. Then send
@@ -203,7 +203,7 @@ pixi run caption --token "<the token URL you copied>"
 ```
 
 At start-up, three warm-up captions are sent.
-**The receiving side cannot turn on "Show Captions" until captions start
+**The receiving side cannot turn manual captions on until captions start
 flowing.** So the first few captions reach nobody. That is expected.
 
 **What to look at:**
@@ -357,7 +357,7 @@ pixi run caption --web 8090 --control-port 8091
      control page and press start**. This way you can stop and restart during
      the meeting
 7. At the start of the meeting, tell the people who will read the captions:
-   - Turn on "Show Captions"
+   - Turn manual captions on
    - **Drag the caption area to make it taller.** Four lines is not enough room
      to read
 8. When it is over, press **終了** under **アプリの終了** on the control page. **The tab and the
@@ -379,7 +379,7 @@ pixi run caption --web 8090 --control-port 8091
 | "cannot open the input" | Another app may have the device. Does the device accept 48000 Hz? Pick a different input |
 | No recognition lines | `OPENAI_API_KEY` in `.env`. The network |
 | Recognition lines but no caption lines | A translation error should be on the screen |
-| Log lines flow, but nobody sees the captions | **Are you looking at the host's screen?** The host never sees them. Did the other person turn on "Show Captions"? Is the token from this meeting? |
+| Log lines flow, but nobody sees the captions | **Are you looking at the host's screen?** The host never sees them. Did the other person turn manual captions on? Is the token from this meeting? |
 | Different captions appear when someone speaks | **Zoom's automatic captions are running.** Turn them off |
 | A term is in the glossary but the recogniser still misses it | It may be cut by `config.ASR_KEYWORD_LIMIT`. Words at the end of the table do not reach the recogniser |
 | Captions stopped part way through | The `seq` number went backwards. If you restarted the app, check `local/seq_state.json` |

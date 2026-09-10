@@ -292,7 +292,7 @@ There are three ways. **You can use all three at the same time.**
 
 | Output | Host rights | How people see it | Leaves your network |
 |---|---|---|---|
-| Zoom caption API | **Required** | Each person turns on "Show Captions" | Through Zoom |
+| Zoom caption API | **Required** | Each person turns manual captions on | Through Zoom |
 | Screen share | Not required | You share the viewer page full screen | **No** |
 | Hand out a URL | Not required | People open a URL on their own device | Through Cloudflare |
 
@@ -310,9 +310,8 @@ The token can only be made during a meeting, and only by a host or a co-host.
    register
 5. Press **開始** (start). Three warm-up captions are sent first
 
-**Turn off the meeting software's automatic captions.** They share the same
-four-line window with LiveCaption's captions. If the automatic captions keep
-running, LiveCaption's lines are pushed out of the window.
+**Turn off the meeting software's automatic captions.** If they keep running,
+LiveCaption's captions are pushed out and cannot be read.
 
 **Watch the status in the top right of the control page.**
 
@@ -361,7 +360,7 @@ Use screen share instead.
 
 Say this at the start of the meeting, to the people who will read the captions:
 
-- Turn on "Show Captions" in the meeting software
+- **Each person turns manual captions on.** Nobody sees the captions until they do
 - **Drag the caption area to make it taller.** The default is four lines. Four
   lines is not enough room to read a translation
 
@@ -628,7 +627,7 @@ ignores a bad value silently**, so read the start-up output.
 | "cannot open the input" | Another app may have the device. Does the device accept 48000 Hz? Pick a different input |
 | No recognition lines | `OPENAI_API_KEY` in `.env`. **Is `.env` in the top folder of the repository, next to `pixi.toml`? Is it named `.env.txt` by mistake?** Also check the network |
 | Recognition lines but no caption lines | A translation error should be on the screen |
-| Log lines flow, but nobody sees the captions | **Are you looking at the host's screen?** The host never sees the captions. Did the other person turn on "Show Captions"? Is the token from this meeting? |
+| Log lines flow, but nobody sees the captions | **Are you looking at the host's screen?** The host never sees the captions. Did the other person turn manual captions on? Is the token from this meeting? |
 | Different captions appear when someone speaks | **The meeting software's automatic captions are running.** Turn them off |
 | A term is in the glossary but the recogniser still misses it | It may be cut by `ASR_KEYWORD_LIMIT`. Words at the end of the table do not reach the recogniser |
 | Every term of one subject comes out wrong | That subject's table is probably not ticked |
