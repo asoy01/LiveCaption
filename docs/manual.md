@@ -379,7 +379,6 @@ The tables in `etc/glossary/` decide how well technical terms are translated.
 ### Build tables for your own field
 
 **Put one file per subject** in `etc/glossary/`, with the extension `.tsv`.
-Not in `docs/`. **These are data LiveCaption reads, not something to read yourself.**
 
 The tables that ship with the repository are examples. **Replace them with the
 words that come up in your own meetings.**
