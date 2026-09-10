@@ -360,7 +360,15 @@ URL の配布もホスト権限が要りません。Cloudflare を通る一時�
 
 **分野ごとに1ファイル置きます。** 置き場は `etc/glossary/` で、拡張子は `.tsv` です。
 
-同梱してある表は例です。**自分の会議に出る語に置き換えて使ってください。**
+見本が [glossary-example.tsv](glossary-example.tsv) にあります。これを
+`etc/glossary/` にコピーして、自分の会議に出る語に置き換えてください。
+
+```powershell
+copy docs\glossary-example.tsv etc\glossary\MyProject.tsv
+```
+
+**`etc/glossary/` は Git に入りません。** 表には人名や組織名を入れると効きますが、
+それを共有したくないためです。表は各自の手元に残ります。
 
 分けておく理由は2つあります。1つは、会議に要らない語を外せることです。もう1つは、文字起こしに
 渡せる語数に上限があることです（`config.ASR_KEYWORD_LIMIT`、既定 200）。1つの大きな表を全部の
@@ -676,4 +684,5 @@ LiveCaption は、専門用語を正しく出すために、音声認識だけ�
 
 - [test-procedure.md](test-procedure.md) — 新しい字幕PCを立ち上げるための段階試験と、
   本番当日の手順（英語）
-- [../etc/glossary/](../etc/glossary/) — 用語対訳表。分野ごとに1ファイル
+- [glossary-example.tsv](glossary-example.tsv) — 用語対訳表の見本。
+  `etc/glossary/` にコピーして使う

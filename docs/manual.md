@@ -380,8 +380,16 @@ The tables in `etc/glossary/` decide how well technical terms are translated.
 
 **Put one file per subject** in `etc/glossary/`, with the extension `.tsv`.
 
-The tables that ship with the repository are examples. **Replace them with the
-words that come up in your own meetings.**
+There is a sample at [glossary-example.tsv](glossary-example.tsv). Copy it into
+`etc/glossary/` and replace the words with the ones your own meetings use.
+
+```powershell
+copy docs\glossary-example.tsv etc\glossary\MyProject.tsv
+```
+
+**`etc/glossary/` is not in Git.** Personal names and organisation names make the
+tables work better, and you do not want to share those. Your tables stay on your
+own machine.
 
 There are two reasons to split them. First, you can leave out the words a
 meeting does not need. Second, there is a limit on how many words can be passed
@@ -719,4 +727,5 @@ Lowering the threshold only cuts more sentences in the middle.
 
 - [test-procedure.md](test-procedure.md) — the staged test for bringing up a new
   caption PC, and the checklist for the day of the meeting
-- [../etc/glossary/](../etc/glossary/) — the glossary tables, one file per subject
+- [glossary-example.tsv](glossary-example.tsv) — a sample glossary table.
+  Copy it into `etc/glossary/`

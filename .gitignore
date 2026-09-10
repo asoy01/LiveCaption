@@ -7,3 +7,9 @@ data/recordings/*
 
 # local files
 local/
+
+# 用語対訳表。**共有しない。** 人名・組織名が入るうえ、内容は各自の分野に固有である。
+# 見本は docs/glossary-example.tsv にある。
+# フォルダだけは残す。無いと、見本をコピーする先が無い。
+etc/glossary/*
+!etc/glossary/.gitkeep

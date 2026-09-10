@@ -90,10 +90,13 @@ Technical terms are handled in two steps, not one.
    the work.** Even when the recogniser produces something that only sounds
    similar, the translation step can recover the correct term.
 
-The glossary files are in `etc/glossary/`, one file per subject, and **you pick
-which ones to use for each meeting**. The files in the repository are examples:
-replace them with the words that come up in your own meetings. Growing these
-tables is the main ongoing task.
+The glossary files live in `etc/glossary/`, one file per subject, and **you pick
+which ones to use for each meeting**. Start from
+[docs/glossary-example.tsv](docs/glossary-example.tsv) and replace the words with
+the ones your own meetings use. Growing these tables is the main ongoing task.
+
+**`etc/glossary/` is not in Git.** Personal names and organisation names make the
+tables work better, and you do not want to share those.
 
 ## Documentation
 
@@ -102,7 +105,7 @@ tables is the main ongoing task.
 | [docs/manual.md](docs/manual.md) | Manual: install, run a meeting, the glossary, options, troubleshooting |
 | [docs/manual.ja.md](docs/manual.ja.md) | The same manual in Japanese |
 | [docs/test-procedure.md](docs/test-procedure.md) | Staged test for bringing up a new caption PC, and the checklist for the day |
-| [etc/glossary/](etc/glossary/) | The term tables, one file per subject |
+| [docs/glossary-example.tsv](docs/glossary-example.tsv) | A sample glossary table. Copy it into `etc/glossary/` |
 
 ## Layout
 
@@ -113,7 +116,7 @@ run.py                   start-up and command line options
 src/live_caption/        the application
 scripts/                 one-off measurement and check scripts
 docs/                    manual, test procedure
-etc/                     term tables (etc/glossary/) and the application icon
+etc/                     the application icon, and your glossary tables (not in git)
 data/recordings/         audio used for comparing recognisers (not in git)
 local/                   working files (not in git)
 ```
