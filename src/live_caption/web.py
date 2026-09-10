@@ -440,7 +440,7 @@ CONTROL_BODY = """
     <input type="checkbox" id="ja">
     <span class="track"></span>
     <!-- 出るのは認識の出力である。向きが en2ja なら英語になる。 -->
-    <span>認識文</span>
+    <span>文字起こし</span>
   </label>
 </header>
 
@@ -608,7 +608,7 @@ CONTROL_BODY = """
     <h2>アプリの終了</h2>
     <div class="row2">
       <button id="quit" class="danger">終了</button>
-      <span class="hint">音声の取り込みも認識も止まる</span>
+      <span class="hint">音声の取り込みも文字起こしも止まる</span>
     </div>
     <div class="row2"><span id="msg"></span></div>
   </div>
@@ -722,7 +722,7 @@ __FEED_JS__
     gpill.textContent = s.generating ? "生成: 中" : "生成: 停止中";
     gpill.className = "pill " + (s.generating ? "on" : "off");
     genState.textContent = s.generating
-      ? "音を取り込み、認識と翻訳をしている"
+      ? "音を取り込み、文字起こしと翻訳をしている"
       : "止まっている。音は取り込んでいない";
     gstart.disabled = !!s.generating;
     gstop.disabled = !s.generating;
@@ -928,7 +928,7 @@ __FEED_JS__
       glossSummary.querySelector(".c").textContent = g.terms + " 語";
     }
 
-    const parts = ["認識に渡す語 " + g.keywords + " / " + g.limit];
+    const parts = ["文字起こしに渡す語 " + g.keywords + " / " + g.limit];
     glossState.textContent = parts.join("　");
     // **上限で切れた語は認識に届かない。** 黙って落とすと、表に足したのに
     // 効かない、という分かりにくい失敗になる。

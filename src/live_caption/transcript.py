@@ -235,7 +235,7 @@ def render(meta: dict, records: list[dict], ended: str = "", final: bool = True)
     if meta.get("dry_run"):
         lines.append("- **--dry-run。Zoomへは送っていない。**")
     lines.append("")
-    lines.append("認識の出力（上）と、字幕として出した行（下）を並べてある。")
+    lines.append("文字起こし（上）と、字幕として出した行（下）を並べてある。")
     lines.append("**上の行の誤りは `etc/glossary/` の表の第3列に足すこと。**")
     lines.append("")
     lines.append("---")

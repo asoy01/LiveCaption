@@ -75,7 +75,7 @@ class ZoomControl:
     def set_token(self, url: str) -> dict:
         """トークンを入れる。不正なら captions.TokenError を投げる。"""
         meeting = self.sender.set_token(url)
-        print(f"[{now()}] Zoom  トークンを受け取った（会議 {meeting}、"
+        print(f"[{now()}] Zoom        トークンを受け取った（会議 {meeting}、"
               f"seq {self.sender.seq} から）")
         self._changed()
         return self.status()
@@ -92,7 +92,7 @@ class ZoomControl:
 
         was_active = self.sender.active
         self.sender.set_enabled(on)
-        print(f"[{now()}] Zoom  送信を{'開始' if on else '停止'}した")
+        print(f"[{now()}] Zoom        送信を{'開始' if on else '停止'}した")
 
         # 停止していたものを開始したときは、捨て字幕から始める。
         # 受信側は字幕が流れ始めるまで「字幕を表示」を有効にできない。
@@ -126,7 +126,7 @@ class EngineControl:
 
     def set_running(self, on: bool) -> dict:
         self.app.set_generating(on)
-        print(f"[{now()}] 生成  字幕の生成を{'開始' if on else '停止'}した")
+        print(f"[{now()}] 生成        字幕の生成を{'開始' if on else '停止'}した")
         return self.status()
 
 
@@ -198,7 +198,7 @@ class AudioControl:
 
         capture.device = index
         self.app.audio_error = ""
-        print(f"[{now()}] 音声  入力を {audio_mod.describe_device(index)} にした")
+        print(f"[{now()}] 音声        入力を {audio_mod.describe_device(index)} にした")
         if self.app.generating:
             # 生成は続けたまま、音声デバイスと認識だけを開き直す。
             self.app.request_restart()
@@ -276,7 +276,7 @@ class TuningControl:
         self.app.segmenter.idle_sec = config.IDLE_FLUSH_SEC
         self.app.segmenter.force_cut = config.FORCE_CUT_CHARS
         if checked:
-            print(f"[{now()}] 設定  " + "、".join(
+            print(f"[{now()}] 設定        " + "、".join(
                 f"{n} を {v} にした" for n, v in checked.items()))
         return self.status()
 
@@ -284,7 +284,7 @@ class TuningControl:
         """いまの値を `.env` に書く。次に起動したときも同じ値で始まる。"""
         written = {item["env"]: str(item["value"]) for item in config.tuning()}
         path = config.save_env(written)
-        print(f"[{now()}] 設定  {path} に保存した")
+        print(f"[{now()}] 設定        {path} に保存した")
         st = self.status()
         st["saved"] = str(path)
         return st
@@ -423,7 +423,7 @@ class App:
         Event は `call_soon_threadsafe` で本体のイベントループに渡す。
         Ctrl+C と同じところへ落ちる。後片付けは run.py が行う。
         """
-        print(f"[{now()}] 終了  {reason}から終了を要求された")
+        print(f"[{now()}] 終了        {reason}から終了を要求された")
         loop = self.zoom.loop
         if loop is None:
             self.stop_requested.set()
@@ -468,11 +468,11 @@ class App:
         glossary.remember(names)
 
         label = ", ".join(names) or "(なし)"
-        print(f"[{now()}] 用語  用語集を {label} にした"
-              f"（{len(entries)} 語、認識に渡す語 {len(self.keywords)}）")
+        print(f"[{now()}] 用語        用語集を {label} にした"
+              f"（{len(entries)} 語、文字起こしに渡す語 {len(self.keywords)}）")
         if self.dropped_keywords:
             print(f"       **{self.dropped_keywords} 語が上限で切り捨てられた。"
-                  "認識の段には届かない。**")
+                  "文字起こしの段には届かない。**")
         if self.generating:
             # keywords はセッションの開始時にしか送れない。繋ぎ直す。
             self.request_restart()
@@ -506,7 +506,7 @@ class App:
         self.segmenter.force_cut = config.FORCE_CUT_CHARS
         self.sender.lang = d.caption_lang
         config.remember_direction(d.name)
-        print(f"[{now()}] 向き  字幕を {d.label} にした"
+        print(f"[{now()}] 向き        字幕を {d.label} にした"
               f"（1行 {config.MAX_CAPTION_CHARS} 文字、強制分割 {config.FORCE_CUT_CHARS} 文字、"
               f"Zoomの lang={d.caption_lang}）")
 
@@ -549,7 +549,7 @@ class App:
                 # 48 kHz を受け付けない装置。ここで落とすと以後この輪は回らず、
                 # 画面には何の理由も出ない。捕まえて、止まった状態へ戻す。
                 self.audio_error = f"{type(exc).__name__}: {exc}"
-                print(f"[{now()}] 音声  入力を開けない: {self.audio_error}")
+                print(f"[{now()}] 音声        入力を開けない: {self.audio_error}")
                 print("       操作画面の「音声の入力」で別のデバイスを選ぶこと。")
                 self.generating = False
                 self._flip(False)
@@ -653,7 +653,7 @@ class App:
             cut = await self.sentences.get()
             self.stats["sentences"] += 1
             self.stats[f"cut_{cut.reason}"] = self.stats.get(f"cut_{cut.reason}", 0) + 1
-            print(f"[{now()}] 認識  {cut.text}")
+            print(f"[{now()}] 文字起こし  {cut.text}")
             if self.web is not None:
                 self.web.asr(cut.text)
             # 先回りが当たっていれば、それを使う。翻訳の時間がまるごと消える。
@@ -700,9 +700,9 @@ class App:
                 if await self.sender.send(line):
                     self.stats["lines"] += 1
                     sent += 1
-                    print(f"[{now()}] 字幕  {mark} {line}")
+                    print(f"[{now()}] 字幕        {mark} {line}")
                 else:
-                    print(f"[{now()}] 字幕  {mark} {line}   (Zoomへは送っていない)")
+                    print(f"[{now()}] 字幕        {mark} {line}   (Zoomへは送っていない)")
             # 翻訳に失敗して lines が空でも記録する。日本語だけでも残す価値がある。
             if self.transcript is not None:
                 self.transcript.add(
@@ -724,10 +724,10 @@ class App:
               f"（1行 {config.MAX_CAPTION_CHARS} 文字、強制分割 {config.FORCE_CUT_CHARS} 文字）")
         print(f"用語対訳表: {', '.join(self.glossary_names) or '**選ばれていない**'}"
               f"  {len(self.entries)} 語"
-              f"（認識に渡す語 {len(self.keywords)}、上限 {config.ASR_KEYWORD_LIMIT}）")
+              f"（文字起こしに渡す語 {len(self.keywords)}、上限 {config.ASR_KEYWORD_LIMIT}）")
         if self.dropped_keywords:
             print(f"  **{self.dropped_keywords} 語が上限で切り捨てられた。"
-                  "認識の段には届かない。**")
+                  "文字起こしの段には届かない。**")
             print("  config.ASR_KEYWORD_LIMIT を上げること。")
         print(f"音声認識:   {config.ASR_MODEL}  delay={self.settings.delay}"
               f"  languages={list(self.settings.languages)}")
@@ -759,14 +759,14 @@ class App:
             # ここでファイルを作る。会議が始まる前に、書ける場所かどうかが分かる。
             self.transcript.open()
             print(f"記録:       {self.transcript.path}")
-            print("  認識の出力と字幕を対にして、確定するたびに書く。")
+            print("  文字起こしと字幕を対にして、確定するたびに書く。")
         else:
             print("記録:       **残さない**（--no-save）")
         if start_now:
             print("字幕の生成: すぐ始める")
         else:
             print("字幕の生成: **停止中**"
-                  "（操作画面の「開始」を押すまで、録音も認識も翻訳もしない）")
+                  "（操作画面の「開始」を押すまで、録音も文字起こしも翻訳もしない）")
         if self.web is not None:
             print("Ctrl+C か、ブラウザの操作画面の「終了」で終わる。")
         else:
@@ -806,7 +806,7 @@ class App:
         # 最後の文が認識され、訳され、送られるまでの余裕
         await asyncio.sleep(12)
         for cut in self.segmenter.flush():
-            print(f"[{now()}] 認識  {cut.text}")
+            print(f"[{now()}] 文字起こし  {cut.text}")
             heard_at = time.time()
             if self.web is not None:
                 self.web.asr(cut.text)
@@ -816,7 +816,7 @@ class App:
                 if await self.sender.send(line):
                     self.stats["lines"] += 1
                     sent += 1
-                print(f"[{now()}] 字幕  {line}")
+                print(f"[{now()}] 字幕        {line}")
                 if self.web is not None:
                     self.web.caption(line)
             if self.transcript is not None:
@@ -849,7 +849,7 @@ class App:
             print(f"先回りの翻訳: {fired} 回投げて {used} 回当たった"
                   f"（捨てた {fired - used}）")
         print(f"Zoomへ送った行: {self.sender.sent}（失敗 {self.sender.failed}）")
-        print(f"認識の再接続: {self.asr.reconnects} 回")
+        print(f"文字起こしの再接続: {self.asr.reconnects} 回")
         if capture is not None:
             print(f"音声の取りこぼし: {getattr(capture, 'dropped', 0)} 回")
         if self.web is not None:

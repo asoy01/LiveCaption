@@ -83,7 +83,7 @@ class Asr:
                     # 切断中に溜まった音声は捨てる。現在から再開する。
                     capture.drain()
                     backoff = 1.0
-                    print("  [認識] 接続した")
+                    print("  [文字起こし] 接続した")
 
                     sender = asyncio.create_task(self._send_audio(ws, capture))
                     try:
@@ -96,7 +96,7 @@ class Asr:
                 if self._stop.is_set():
                     break
                 self.reconnects += 1
-                print(f"  [認識] 切断した（{type(e).__name__}: {e}）。{backoff:.0f} 秒後に繋ぎ直す")
+                print(f"  [文字起こし] 切断した（{type(e).__name__}: {e}）。{backoff:.0f} 秒後に繋ぎ直す")
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 15.0)
 
@@ -116,4 +116,4 @@ class Asr:
             if kind.endswith("input_audio_transcription.delta"):
                 on_delta(ev.get("delta", ""))
             elif kind == "error":
-                print(f"  [認識のエラー] {json.dumps(ev, ensure_ascii=False)[:300]}")
+                print(f"  [文字起こしのエラー] {json.dumps(ev, ensure_ascii=False)[:300]}")
