@@ -272,6 +272,12 @@ __FEED_JS__
 # --- 操作画面 ---------------------------------------------------------------
 
 CONTROL_BODY = """
+  /* --- 設定の欄の文字の大きさ ---------------------------------------------
+     **1か所で決める。** 以前は 11px〜13px を各所に直接書いていて、全体として
+     小さすぎた。会議中に読むものなので、読めることを優先する。
+     大きくするときは、この1行だけ変えればよい。 */
+  :root { --ui: 15px; }
+
   /* --- 左右分割 -----------------------------------------------------------
      **字幕を主にする。** 設定を上に積むと、字幕が下へ押し込められて読めない。
      左に字幕、右に設定を置き、境目をドラッグで動かせるようにする。
@@ -279,7 +285,7 @@ CONTROL_BODY = """
   #split {
     flex: 1 1 auto; min-height: 0;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 7px var(--right, 400px);
+    grid-template-columns: minmax(0, 1fr) 7px var(--right, 440px);
   }
   #sep {
     background: var(--line); cursor: col-resize; position: relative;
@@ -306,20 +312,24 @@ CONTROL_BODY = """
     overflow-y: auto; scrollbar-width: thin;
     padding: 14px 16px 20px;
     border-left: 1px solid var(--line); background: #11161d;
-    font-size: 13px; color: var(--ja);
+    font-size: var(--ui); color: var(--ja);
   }
+  /* 部品も欄と同じ大きさにする。**共通の指定（14px / 13px）のままだと、
+     まわりの文字より小さくなって、押すものだけ読みにくくなる。**
+     閲覧画面には `--ui` が無いので、#panel の中だけに効かせる。 */
+  #panel button, #panel select { font-size: var(--ui); }
   /* まとまりごとに区切る。全部が地続きだと、どこが何の設定か分からない。 */
   .grp { padding: 12px 0; border-bottom: 1px solid var(--line); }
   .grp:first-child { padding-top: 0; }
   .grp:last-child { border-bottom: 0; }
   .grp > h2 {
-    margin: 0 0 9px; font-size: 12px; font-weight: 600; letter-spacing: .08em;
-    color: #6e7681; text-transform: uppercase;
+    margin: 0 0 9px; font-size: calc(var(--ui) - 1px); font-weight: 600;
+    letter-spacing: .06em; color: #8b949e;
   }
   .row2 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 9px; }
   .row2:last-child { margin-bottom: 0; }
   /* 見出しは行を独り占めする。狭い欄で、ラベルと部品を横に並べると折り返しが汚い。 */
-  .lbl { flex: 1 0 100%; color: var(--fg); font-size: 13px; }
+  .lbl { flex: 1 0 100%; color: var(--fg); font-size: var(--ui); }
   /* 用語集は畳んでおく。**表は増えていく。** 全部を並べると、右の欄が伸びて
      「アプリの終了」が画面の外へ出る。開いた時も高さを切って中で送らせる。 */
   /* **赤字は #msg にしか効いていなかった。** 「音が来ていない」も
@@ -329,7 +339,7 @@ CONTROL_BODY = """
   .ng { color: var(--ng); }
   .fold { border: 1px solid #30363d; border-radius: 6px; background: #0d1117; }
   .fold > summary {
-    cursor: pointer; padding: 7px 10px; font-size: 13px; color: var(--fg);
+    cursor: pointer; padding: 8px 10px; font-size: var(--ui); color: var(--fg);
     list-style: none; display: flex; align-items: center; gap: 6px;
   }
   /* **既定の印は3通りの消し方が要る。** どれか1つでも残ると、こちらの三角と
@@ -354,12 +364,12 @@ CONTROL_BODY = """
   .fold .list { max-height: min(38vh, 300px); overflow-y: auto; }
   /* 用語集のチェックは1行に1つ。名前と語数を並べると横に入りきらない。 */
   .gloss { display: flex; align-items: center; gap: 6px;
-           cursor: pointer; font-size: 13px; padding: 3px 0; }
+           cursor: pointer; font-size: var(--ui); padding: 4px 0; }
   .gloss input { cursor: pointer; flex: 0 0 auto; }
   /* 名前と語数は summary の中でも使う。.gloss ではなく .fold に付ける。 */
   .fold .n { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;
              white-space: nowrap; }
-  .fold .c { flex: 0 0 auto; color: #6e7681; font-size: 12px; }
+  .fold .c { flex: 0 0 auto; color: #8b949e; font-size: calc(var(--ui) - 2px); }
   /* 選んでいる表を目立たせる。畳む前に、何にチェックが入っているかを見る。 */
   .gloss .n { color: var(--ja); }
   .gloss.on .n { color: var(--fg); font-weight: 600; }
@@ -368,47 +378,47 @@ CONTROL_BODY = """
   .tune { padding: 6px 0; border-top: 1px solid var(--line); }
   .tune:first-child { border-top: 0; }
   .tune .top { display: flex; align-items: center; gap: 8px; }
-  .tune .k { flex: 1 1 auto; font-size: 12px; color: var(--fg);
+  .tune .k { flex: 1 1 auto; font-size: calc(var(--ui) - 1px); color: var(--fg);
              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tune input[type=number] {
-    font: inherit; font-size: 13px; color: var(--fg); width: 84px; flex: 0 0 auto;
+    font: inherit; font-size: var(--ui); color: var(--fg); width: 92px; flex: 0 0 auto;
     background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
     padding: 5px 8px; text-align: right;
   }
   /* 既定と違う値は目立たせる。畳んだ後でも「触ってある」と分かるようにする。 */
   .tune.changed input[type=number] { border-color: var(--accent); }
-  .tune .d { flex: 0 0 auto; font-size: 11px; color: #6e7681; width: 66px; }
-  .tune .h { font-size: 11px; color: var(--ja); line-height: 1.45; margin: 3px 0 0; }
+  .tune .d { flex: 0 0 auto; font-size: calc(var(--ui) - 2px); color: #8b949e; width: 74px; }
+  .tune .h { font-size: calc(var(--ui) - 2px); color: var(--ja); line-height: 1.5; margin: 4px 0 0; }
   .fold input[type=search] {
-    font: inherit; font-size: 12px; color: var(--fg); width: 100%;
+    font: inherit; font-size: calc(var(--ui) - 1px); color: var(--fg); width: 100%;
     background: #11161d; border: 1px solid #30363d; border-radius: 6px;
     padding: 5px 8px; margin: 2px 0 6px;
   }
   input[type=password], input[type=text] {
-    font: inherit; font-size: 13px; color: var(--fg);
+    font: inherit; font-size: var(--ui); color: var(--fg);
     background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
     padding: 7px 10px; flex: 1 1 100%; min-width: 0;
   }
   input:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
-  #msg { font-size: 12px; }
+  #msg { font-size: calc(var(--ui) - 1px); }
   #msg.ok { color: var(--ok); }
   #msg.ng { color: var(--ng); }
-  .hint { font-size: 11.5px; color: #6e7681; line-height: 1.6; }
+  .hint { font-size: calc(var(--ui) - 2px); color: #8b949e; line-height: 1.65; }
   .url {
-    font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: var(--fg);
+    font-family: ui-monospace, Consolas, monospace; font-size: calc(var(--ui) - 2px); color: var(--fg);
     background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
     padding: 6px 8px; word-break: break-all; user-select: all; flex: 1 1 100%;
   }
   /* **URLはボタンでコピーできるようにする。** `user-select: all` はクリックで
      全選択されるが、画面にその手がかりが出ない。会議中に「コピーできない」と
      悩ませないこと。トンネルのURLは、チャットに貼って配ることがある。 */
-  .copybtn { padding: 5px 11px; font-size: 12px; }
+  .copybtn { padding: 6px 12px; }
   /* QRは白地でないと読めない端末がある。余白ごと白くする。 */
   #qrbox { display: none; }
   #qrbox.on { display: flex; }
   #qr { background: #fff; padding: 8px; border-radius: 8px; width: 150px; height: 150px; }
   pre.err {
-    white-space: pre-wrap; font-size: 12px; color: #ff9c94;
+    white-space: pre-wrap; font-size: calc(var(--ui) - 2px); color: #ff9c94;
     background: #1b1113; border: 1px solid #6e2b2b; border-radius: 6px;
     padding: 8px 10px; margin: 0; max-height: 9em; overflow: auto;
   }
@@ -645,7 +655,8 @@ __FEED_JS__
 
   // --- 左右の境目 ---------------------------------------------------------
   // **字幕が主で、設定は従である。** 幅は本人が決める。localStorage に残す。
-  const PANEL_MIN = 260, MAIN_MIN = 280, PANEL_DEFAULT = 400;
+  // 文字を大きくしたぶん、既定の幅も広げてある（CSS の --right と同じ値にすること）。
+  const PANEL_MIN = 280, MAIN_MIN = 280, PANEL_DEFAULT = 440;
   // **本人が決めた幅と、いま出せる幅を分けて持つ。** 窓が一時的に狭くなったときに
   // 縮めた値で上書きすると、窓を広げても元の幅に戻らなくなる。
   let wantW = parseInt(localStorage.getItem("panelW") || "", 10) || PANEL_DEFAULT;
