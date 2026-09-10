@@ -1,41 +1,41 @@
 # LiveCaption
 
-Real-time English subtitles for meetings held in Japanese.
+Real-time subtitles for meetings, in the other language.
 
-LiveCaption listens to the meeting audio, recognises the Japanese speech,
-translates the speech into English, and shows the English text to the people who
-need it. It was written for KAGRA meetings, where a few participants do not
-speak Japanese.
+LiveCaption listens to the meeting audio, recognises what people say, translates
+it, and shows the result to the people who need it. You choose the direction for
+each meeting: **English captions for a meeting held in Japanese**, or **Japanese
+captions for a meeting held in English**. When the other language comes up during
+the meeting, it is passed through instead of being translated.
 
 **It is not limited to Zoom.** It reads the audio from a virtual audio cable, so
 it works with any meeting software that plays sound.
 
-## How it works
+## Quick start
 
-One Windows PC is used only for captions. That PC joins the meeting as a silent
-participant, with its microphone muted.
+You need a Windows PC used only for captions,
+[VB-CABLE](https://vb-audio.com/Cable/), [pixi](https://pixi.sh), and an OpenAI
+API key.
 
-```
-[host PC]        runs the meeting as usual
-     |
-[caption PC]
-  Zoom ----- joins as a silent participant, microphone muted
-   |
-   +-- speaker output --> CABLE Input
-                             |   (VB-CABLE, a virtual audio cable)
-                          CABLE Output --> LiveCaption
-                                             |-- speech recognition (gpt-live-transcribe)
-                                             |-- translation (gpt-4.1-mini)
-                                             +-- output
+```bash
+pixi install
+cp .env.example .env          # then put your OPENAI_API_KEY in it
+pixi run python scripts/cable_loopback.py   # check the VB-CABLE path
 ```
 
-**A separate PC is required.** Zoom does not send your own microphone to your
-own speaker, so recording the speaker output on the host PC loses the host's
-own voice. The caption PC receives the mixed audio from Zoom, and that mix
-contains every participant.
+Then double-click `StartLiveCaption.bat`. The control page opens in your
+browser. Everything is done from there: start and stop caption generation,
+choose the input device and the direction, register the Zoom token, hand out a
+URL to participants, read the meeting record, and quit.
 
-Delay from speech to caption is about 1.5–2 seconds for a sentence that ends
-with an end mark, and about 4 seconds for one that trails off into silence.
+**Do not screen-share the control page.** It shows the Zoom caption token.
+Share the viewer page instead.
+
+To start it from the Start menu instead of finding this folder every time,
+double-click `InstallToStartMenu.bat` once. After that, press the Windows key,
+type "livecaption", and press Enter.
+
+Full instructions are in [docs/manual.md](docs/manual.md).
 
 ## Three ways to show the captions
 
@@ -46,6 +46,33 @@ You can use all three at the same time.
 | Zoom caption API | Required | Each person turns on "Show Captions" | Through Zoom |
 | Screen share | Not required | You share the viewer page full screen | No |
 | Hand out a URL | Not required | People open a URL on their own device | Through Cloudflare |
+
+## How it works
+
+One Windows PC is used only for captions. That PC joins the meeting as a silent
+participant, with its microphone muted.
+
+```
+[host PC]        runs the meeting as usual
+     |
+[caption PC]
+  meeting software ----- joins as a silent participant, microphone muted
+   |
+   +-- speaker output --> CABLE Input
+                             |   (VB-CABLE, a virtual audio cable)
+                          CABLE Output --> LiveCaption
+                                             |-- speech recognition (gpt-live-transcribe)
+                                             |-- translation (gpt-4.1-mini)
+                                             +-- output
+```
+
+**A separate PC is required.** Meeting software does not send your own
+microphone to your own speaker, so recording the speaker output on the host PC
+loses the host's own voice. The caption PC receives the mixed audio, and that mix
+contains every participant.
+
+Delay from speech to caption is about 1.5–2 seconds for a sentence that ends
+with an end mark, and about 4 seconds for one that trails off into silence.
 
 ## Handling technical terms
 
@@ -59,34 +86,10 @@ Technical terms are handled in two steps, not one.
    the work.** Even when the recogniser produces something that only sounds
    similar, the translation step can recover the correct term.
 
-The glossary files are in `etc/glossary/`. **You pick which ones to use for
-each meeting**, and you can combine several: `KAGRA_basic` + `Interferometer`,
-for example. Different KAGRA subsystems use different words, and a single large
-table would fill the recogniser's keyword budget with words the meeting does not
-need. Growing these tables is the main ongoing task.
-
-## Quick start
-
-You need a Windows PC, [VB-CABLE](https://vb-audio.com/Cable/),
-[pixi](https://pixi.sh), and an OpenAI API key.
-
-```bash
-pixi install
-cp .env.example .env          # then put your OPENAI_API_KEY in it
-pixi run python scripts/cable_loopback.py   # check the VB-CABLE path
-```
-
-Then double-click `StartLiveCaption.bat`. The control page opens in your
-browser. Everything is done from there: start and stop caption generation,
-choose the input device, register the Zoom token, hand out a URL to
-participants, read the meeting record, and quit.
-
-**Do not screen-share the control page.** It shows the Zoom caption token.
-Share the viewer page instead.
-
-To start it from the Start menu instead of finding this folder every time,
-double-click `InstallToStartMenu.bat` once. After that, press the Windows key,
-type "livecaption", and press Enter.
+The glossary files are in `etc/glossary/`, one file per subject, and **you pick
+which ones to use for each meeting**. The files in the repository are examples:
+replace them with the words that come up in your own meetings. Growing these
+tables is the main ongoing task.
 
 ## Documentation
 
@@ -114,25 +117,13 @@ local/                   working files (not in git)
 The record of each meeting is written to **your Downloads folder** as
 `live-caption_<date>.jsonl` and `.md`. Nothing is written inside the repository.
 
-## Status
-
-The application works. All four stages of the bring-up test passed on
-2026-09-07, and English captions were seen on a participant's screen in a real
-Zoom meeting.
-
-Not done yet:
-
-- A meeting with real non-Japanese participants. Every test so far was one
-  person speaking alone
-- A run of a full meeting, 30 minutes or longer, with participants opening the
-  handed-out URL on their own devices
-
 ## Requirements
 
 - Windows. No GPU needed
 - Python 3.12, built with pixi. The version is pinned because the audio
   libraries have wheels for it
-- An OpenAI API key. Speech recognition and translation both use it
+- An OpenAI API key. Speech recognition and translation both use it.
+  Recognition costs $0.017 per minute, and silence is billed too
 
 ## Licence
 

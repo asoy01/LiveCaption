@@ -51,13 +51,23 @@ and the live transcript.
 
 ### 4. Put the project on the PC
 
+Run this in the folder where you put the repository.
+
 ```bash
-cd C:\Users\Yoichi\Dropbox\src\projects\LiveCaption
 pixi install
 ```
 
 Check that `OPENAI_API_KEY` is set in `.env`. **The value in `.env` wins over the
 environment variable of the same name.**
+
+### 5. If you operate the caption PC remotely
+
+**Do not use RDP (Remote Desktop).** It creates a separate session, locks the
+console session, and redirects the audio to "remote audio". The path to
+`CABLE Input` is cut and the captions stop.
+
+Use a tool that drives the console session itself, such as a VNC-style remote
+desktop. Those leave the audio device setup alone.
 
 ---
 
@@ -113,8 +123,9 @@ If it says the input is almost silent, check these three in order.
 
 ## Stage 2. Recognition and translation (needs a meeting, no token)
 
-Put the caption PC into a Zoom meeting and **set the Zoom speaker to
-`CABLE Input`**. Speak Japanese from another device: the host PC or a phone.
+Put the caption PC into a meeting and **set its speaker to `CABLE Input`**.
+Speak from another device: the host PC or a phone. Use the language the meeting
+will be held in.
 
 ```bash
 pixi run caption --dry-run
@@ -133,14 +144,15 @@ needed.
 those misrecognitions to the third column of the right table in
 `etc/glossary/`. This is what decides the quality on the day.
 
-**Check which tables are ticked under 用語集 (glossary) on the control page
-before you start.** A meeting about mirror control needs `Interferometer`; the
-morning meeting may not.
+**Before you start, check two things on the control page.** The right tables are
+ticked under 用語集 (glossary) for this meeting, and **字幕の向き** (direction)
+matches the language the meeting is held in. A meeting on one subject needs that
+subject's table; another meeting may not.
 
 **You do not have to take notes during the meeting.** The record is saved in
-your Downloads folder. The Japanese text and the English caption are paired, so
-you can collect the misrecognitions afterwards. The `.md` file is easier to
-read. **If a word makes no sense, ask the speaker. Do not guess.**
+your Downloads folder. The recognised text and the caption are paired, so you
+can collect the misrecognitions afterwards. The `.md` file is easier to read.
+**If a word makes no sense, ask the speaker. Do not guess.**
 
 ---
 
@@ -160,9 +172,9 @@ pixi run python scripts/zoom_cc_test.py --auto "<the token URL you copied>"
 count is zero.
 
 **Check the receiving side first.** The numbers on the sending side (HTTP 200,
-zero failures) **are not proof that anything is displayed.** In the test on
-2026-09-07 every send returned 200 and nothing appeared. We suspected `seq` and
-went down the wrong path. The problem was on the receiving side.
+zero failures) **are not proof that anything is displayed.** Every send can
+return 200 while nothing appears on the other screen. Do not start by suspecting
+`seq`; look at the receiving side.
 
 Do it in this order.
 
@@ -223,8 +235,8 @@ The names start with `live-caption_`. The Downloads folder holds many other
 files, so a date alone would not tell you what the file is. Use `--save-dir` to
 put it somewhere else.
 
-The Japanese text and the English caption are paired. The timestamp is the time
-the recognition became final.
+The recognised text and the caption are paired. The timestamp is the time the
+recognition became final.
 
 - To read the record during the meeting, press **途中まで読む** under
   **会議の記録** on the control page
@@ -376,5 +388,5 @@ pixi run caption --web 8090 --control-port 8091
 | The recogniser reconnects again and again | The network. Turn off incoming video in Zoom on the caption PC. Try another line |
 
 **If a word makes no sense, do not guess and do not put your guess in the
-glossary.** "people parkour" turned out to be `p-pol`. Nobody could have worked
-that out from the sound alone. Ask the person who was speaking.
+glossary.** Some misrecognitions cannot be worked out from the sound alone. Ask
+the person who was speaking.
