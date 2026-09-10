@@ -2,19 +2,19 @@
 
 日本語版は [manual.ja.md](manual.ja.md) にあります。
 
-LiveCaption puts real-time subtitles on a meeting. It listens to the meeting
-audio, recognises what people say, translates it into the other language, and
-shows the result to the people who need it.
+LiveCaption puts real-time subtitles on a meeting. At the moment it translates
+between Japanese and English.
 
-You choose the direction for each meeting.
+You choose the direction.
 
 - **English captions for a meeting held in Japanese**, for people who do not
   speak Japanese
 - **Japanese captions for a meeting held in English**, for people who find it
   hard to follow spoken English
 
-**LiveCaption is not limited to Zoom.** It reads the audio from a virtual audio
-cable, so it works with any meeting software that plays sound.
+LiveCaption can send captions to Zoom, but it is not limited to Zoom. It reads
+the audio from a virtual audio cable, so it works with any meeting software that
+plays sound.
 
 **Use one Windows PC only for captions.** That PC joins the meeting as a silent
 participant. The reason is in section 9, "How it works".
@@ -29,12 +29,14 @@ participant. The reason is in section 9, "How it works".
 | VB-CABLE | A free virtual audio cable. [vb-audio.com/Cable/](https://vb-audio.com/Cable/) |
 | An OpenAI API key | Speech recognition and translation both call the OpenAI API |
 | pixi | Builds the Python environment. [pixi.sh](https://pixi.sh) |
-| An account for the caption PC in your meeting software | A free account is enough |
+| Git | Used to fetch the repository |
+| An account for the caption PC in your meeting software, such as Zoom | A free account is enough |
 | Host or co-host rights | Only if you want to use the Zoom caption API. The other ways do not need it |
 
 Speech recognition costs **$0.017 per minute**, so about one US dollar per hour.
-Translation costs less than that. **Silence is billed too**, because the app
-keeps sending audio while generation is running. Press stop during a break.
+The translation cost is small enough to ignore next to that.
+
+Silence is billed too, so press stop during a break.
 
 ---
 
@@ -60,15 +62,60 @@ After the restart, open the Windows sound settings and check these two devices.
 and the sound breaks up. LiveCaption opens the device at 48000 Hz and converts
 the audio to 24000 Hz itself.
 
-### 2.3 Install the project
+### 2.3 Install pixi
 
-Run this in the folder where you put the repository.
+pixi builds the Python environment. **You do not have to install Python
+separately.** pixi brings the version this project needs.
 
-```bash
+Open PowerShell and run one of these.
+
+```powershell
+winget install prefix-dev.pixi
+```
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm -useb https://pixi.sh/install.ps1 | iex"
+```
+
+**Open a new PowerShell window afterwards**, or the change to PATH is not
+picked up. Then check that it is there.
+
+```powershell
+pixi --version
+```
+
+Git is installed the same way. Skip this if you already have it.
+
+```powershell
+winget install Git.Git
+```
+
+### 2.4 Fetch the repository
+
+Put it anywhere you like. A path with no spaces and no non-ASCII characters is
+the safe choice.
+
+```powershell
+cd C:\src
+git clone https://github.com/asoy01/LiveCaption.git
+cd LiveCaption
+```
+
+You can also download a ZIP from the GitHub page and unpack it, but then you
+cannot update with `git pull`.
+
+### 2.5 Build the Python environment
+
+Run this inside the folder you cloned.
+
+```powershell
 pixi install
 ```
 
-### 2.4 Write the API key into `.env`
+The packages go into a `.pixi` folder there. **Your system Python is left
+alone.** The first run takes a few minutes.
+
+### 2.6 Write the API key into `.env`
 
 Copy `.env.example` to `.env` and fill in your key.
 
@@ -76,23 +123,25 @@ Copy `.env.example` to `.env` and fill in your key.
 OPENAI_API_KEY=sk-...
 ```
 
+You create the key at [platform.openai.com](https://platform.openai.com).
+
 **The value in `.env` wins over the environment variable of the same name.**
 If you set the key in both places, `.env` is the one that is used.
 
-### 2.5 Set up the meeting software on the caption PC
+### 2.7 Set up the meeting software on the caption PC
 
 - Set the display name to something like `Live Captions`. The name appears in
   the participant list, so make it clear what this PC is doing
 - Speaker: **`CABLE Input`**
-- Microphone: **muted**. This PC never speaks
+- Microphone: **muted**
 - Turning on "Hide non-video participants" saves bandwidth
 
-### 2.6 Check that the audio path works
+### 2.8 Check that the audio path works
 
 This test needs no meeting and no API key. It plays a sine wave into
 `CABLE Input` and reads it back from `CABLE Output`.
 
-```bash
+```powershell
 pixi run python scripts/cable_loopback.py
 ```
 
@@ -104,7 +153,7 @@ If the amplitude comes back, VB-CABLE is working.
   => 通っている
 ```
 
-### 2.7 Put LiveCaption in the Start menu (optional)
+### 2.9 Put LiveCaption in the Start menu (optional)
 
 Double-click **`InstallToStartMenu.bat`**. It adds a `LiveCaption` entry to the
 current user's Start menu, so you do not have to find this folder before a
@@ -127,11 +176,11 @@ The icon comes from `etc/LiveCaption.ico`. To change it, edit
 `scripts/make_icon.py`, run it, and register the shortcut again. To remove the
 entry, run the file from a terminal with `-Remove`.
 
-```bash
+```powershell
 InstallToStartMenu.bat -Remove
 ```
 
-### 2.8 If you operate the caption PC remotely
+### 2.10 If you operate the caption PC remotely
 
 You can put the caption PC in another room. **Do not use RDP (Remote Desktop).**
 
@@ -148,7 +197,7 @@ desktop. Those leave the audio device setup alone.
 
 ### Step 1. Start the app
 
-Double-click **`StartLiveCaption.bat`**. If you did step 2.7, you can use
+Double-click **`StartLiveCaption.bat`**. If you did step 2.9, you can use
 **LiveCaption** in the Start menu instead. The control page opens in your
 browser.
 
@@ -352,7 +401,7 @@ reach the recogniser. The number turns red when that happens; use fewer tables.
 **The choice is remembered.** The next start uses the same combination. You can
 also set it at start-up.
 
-```bash
+```powershell
 pixi run caption --web --glossary table1 table2
 ```
 
@@ -426,7 +475,7 @@ need them when you tune the settings.
 
 For a meeting you use the batch file. The rest is for everything else.
 
-```bash
+```powershell
 StartLiveCaption.bat                             # this is what you use for a meeting
 InstallToStartMenu.bat                           # add it to the Start menu (once)
 
@@ -469,7 +518,7 @@ Options:
 **If a port is taken, change both numbers.** Port 8081 belongs to the control
 page, so never give 8081 to the viewer page.
 
-```bash
+```powershell
 pixi run caption --web 8090 --control-port 8091
 ```
 
@@ -554,7 +603,7 @@ silently**, so read the start-up output.
 | Captions stopped part way through | The `seq` number went backwards. If you restarted the app, check `local/seq_state.json` |
 | Captions go by too fast to read | Ask the readers to make the caption area taller. Lower `config.FORCE_CUT_CHARS` |
 | The recogniser reconnects again and again | The network. Turn off incoming video in the meeting software on the caption PC. Try another line |
-| Captions stopped after you connected remotely | **Did you connect with RDP?** It cuts the audio path (see 2.8) |
+| Captions stopped after you connected remotely | **Did you connect with RDP?** It cuts the audio path (see 2.10) |
 
 **Check the receiving side first.** A successful send is not proof that anything
 is displayed. Every send can return 200 while nothing appears on the other
