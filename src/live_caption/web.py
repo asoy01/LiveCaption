@@ -399,6 +399,10 @@ CONTROL_BODY = """
     background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
     padding: 6px 8px; word-break: break-all; user-select: all; flex: 1 1 100%;
   }
+  /* **URLはボタンでコピーできるようにする。** `user-select: all` はクリックで
+     全選択されるが、画面にその手がかりが出ない。会議中に「コピーできない」と
+     悩ませないこと。トンネルのURLは、チャットに貼って配ることがある。 */
+  .copybtn { padding: 5px 11px; font-size: 12px; }
   /* QRは白地でないと読めない端末がある。余白ごと白くする。 */
   #qrbox { display: none; }
   #qrbox.on { display: flex; }
@@ -465,6 +469,7 @@ CONTROL_BODY = """
     </div>
     <div class="row2" id="publicUrlRow" style="display:none">
       <span class="url" id="publicUrl"></span>
+      <button class="copybtn" data-copy="publicUrl">URLをコピー</button>
     </div>
     <div class="row2 hint" id="tunnelHint" style="display:none">
       このURLをQRで配る。参加者はブラウザで開くだけでよい。
@@ -501,6 +506,7 @@ CONTROL_BODY = """
     </div>
     <div class="row2">
       <button id="openViewer">閲覧画面を開く</button>
+      <button class="copybtn" data-copy="viewerUrl">URLをコピー</button>
     </div>
     <div class="row2 hint">
       <b>この画面は共有しないこと。</b>共有するのは閲覧画面のほう。
@@ -515,6 +521,7 @@ CONTROL_BODY = """
     </div>
     <div class="row2" id="logPathRow" style="display:none">
       <span class="url" id="logPath"></span>
+      <button class="copybtn" data-copy="logPath">パスをコピー</button>
     </div>
   </div>
 
@@ -1153,6 +1160,57 @@ __FEED_JS__
   });
 
   openViewer.addEventListener("click", () => { window.open(viewerUrl.textContent, "_blank"); });
+
+  // --- URLのコピー --------------------------------------------------------
+  // **配るURLは、手で選ばせない。** トンネルのURLはチャットに貼ることがある。
+  // `user-select: all` だけだと、クリックで全選択されることが画面から分からない。
+  //
+  // `navigator.clipboard` は安全なオリジンでしか使えない。操作画面は
+  // http だが localhost / 127.0.0.1 は安全なオリジンとして扱われるので通る。
+  // それでも使えない場合（古いブラウザ、権限を切っている）に備えて保険を置く。
+  function selectAll(el) {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
+  async function copyText(el, btn) {
+    const text = el ? el.textContent.trim() : "";
+    if (!text) { return; }
+    let ok = true;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (e) {
+      // 古いやり方。書き込みが許されていない環境ではこれも失敗する。
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try { ok = document.execCommand("copy"); } catch (e2) { ok = false; }
+      ta.remove();
+    }
+    if (!ok) {
+      // **書けないなら、せめて選んでおく。** Ctrl+C を押すだけで済む。
+      // 「自分で選べ」と言って放り出さないこと。会議中に手間を増やさない。
+      selectAll(el);
+      say("クリップボードに書けない。選んであるので Ctrl+C を押すこと。", false);
+      return;
+    }
+    // **押したことが分かるようにする。** 何も変わらないと、押せたのか分からない。
+    const before = btn.textContent;
+    btn.textContent = "コピーした";
+    setTimeout(() => { btn.textContent = before; }, 1400);
+  }
+
+  document.addEventListener("click", (ev) => {
+    const btn = ev.target.closest(".copybtn");
+    if (!btn) { return; }
+    copyText(document.getElementById(btn.dataset.copy), btn);
+  });
 
   // --- 記録 ---------------------------------------------------------------
   // 別のタブに出す。**この画面は共有しないので、記録もここから出さない。**

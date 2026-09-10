@@ -296,7 +296,9 @@ Cloudflare and gives you a public URL and a QR code.
 1. On the control page, press **トンネルを開始** (start the tunnel) under
    **参加者への配信** (delivery to participants). The status shows
    `配信: 起動中…` and then `配信: 中`
-2. Show the QR code to the people who want captions, or send them the URL
+2. Show the QR code to the people who want captions, or send them the URL.
+   **Press URLをコピー (copy the URL) under the URL** and paste it into the Zoom
+   chat
 3. They open the URL on their own phone or laptop
 
 **The tunnel is off by default.** Captions travel through Cloudflare, so do not
