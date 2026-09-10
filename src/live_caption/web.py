@@ -139,12 +139,10 @@ STYLE = """
   .row.en { color: var(--fg); }
   .row.ja { color: var(--ja); font-size: calc(var(--size) * .62); }
   body.hide-ja .row.ja { display: none; }
-  /* 書きかけの文字起こし。**確定した行と見分けがつくようにする。** 同じ見た目だと、
-     もう決まった文だと思って読んだ直後に書き換わる。文字起こしのトグルに従う。 */
-  .row.partial { opacity: .55; }
-  .row.partial::after {
-    content: "…"; opacity: .7; margin-left: .15em;
-  }
+  /* 書きかけの文字起こし。**薄くしない。** 文字起こしの行はもともと小さく、色も
+     落としてある。そのうえ透かすと読めない。まだ伸びている途中であることは、
+     末尾の … で分かる。文字起こしのトグルに従う。 */
+  .row.partial::after { content: "…"; margin-left: .15em; }
   .row.enter { animation: in .18s ease-out; }
   @keyframes in { from { opacity: 0; } to { opacity: 1; } }
   #empty { color: var(--ja); font-size: 18px; }
