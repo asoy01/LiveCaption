@@ -371,6 +371,8 @@ class App:
         # 入力デバイスを差し替えたときに立てる。生成は続けたまま、
         # 音声デバイスと認識だけを開き直す。
         self._restart = asyncio.Event()
+        # 書きかけの文字起こしを、最後に閲覧画面へ渡した時刻（`_show_partial`）。
+        self._partial_at = 0.0
         # 会議の記録。**日本語の認識文と英語の字幕を対にして残す。**
         # 対にするために、翻訳のタスクと元の文を一緒に持ち回る（_dispatch / _post）。
         self.transcript = (
@@ -581,14 +583,42 @@ class App:
             await asyncio.gather(asr, *waits, return_exceptions=True)
             capture.stop()
             self.segmenter.reset()
+            # 溜まっていた文字を捨てたので、画面の書きかけの行も消す。
+            self._show_partial(force=True)
             # 途中の文字を捨てたので、それを訳していた先回りも捨てる。
             self._drop_speculation()
             # 差し替えで抜けたときは _gen_on が立ったままなので、そのまま開き直す。
             self._restart.clear()
 
     def _on_delta(self, delta: str) -> None:
-        for cut in self.segmenter.feed(delta):
+        cuts = self.segmenter.feed(delta)
+        for cut in cuts:
             self.sentences.put_nowait(cut)
+        # 確定した直後は間引かない。書きかけが画面に残ったままになる。
+        self._show_partial(force=bool(cuts))
+
+    def _show_partial(self, force: bool = False) -> None:
+        """書きかけの文字起こしを閲覧画面へ渡す。
+
+        **文が確定するまでの数秒、画面には何も出ない。** 話している人の言葉は
+        `Segmenter` に溜まっているだけで、読む側からは止まって見える。届いた分を
+        そのまま流しておくと、声とほぼ同時（実測 0.24秒）に文字が出る。
+
+        **翻訳とZoom字幕には流さない。** どちらも出した行を置き換えられないので、
+        書きかけを送ると訂正版と二重に残る。置き換えられるのはブラウザだけである。
+
+        delta は中央値 0.01秒 の間隔で来るので、そのまま毎回渡すと長ポーリングが
+        回りっぱなしになる。`PARTIAL_INTERVAL_SEC` ごとに間引く。
+        **確定と停止のときは `force` で必ず渡す。** 間引きのせいで、書きかけが
+        画面に残ったままになるのを防ぐ。
+        """
+        if self.web is None or not config.WEB_PARTIAL:
+            return
+        nowt = time.monotonic()
+        if not force and nowt - self._partial_at < config.PARTIAL_INTERVAL_SEC:
+            return
+        self._partial_at = nowt
+        self.web.partial(self.segmenter.buffer)
 
     # --- 先回りの翻訳 -------------------------------------------------------
 
@@ -646,6 +676,8 @@ class App:
             self._speculate()
             for cut in self.segmenter.flush_if_idle():
                 self.sentences.put_nowait(cut)
+                # 無音で確定したときも、書きかけの行を消す。
+                self._show_partial(force=True)
 
     async def _dispatch(self) -> None:
         """文を受け取って翻訳を始める。順序を保つため、タスクを順番に積む。"""

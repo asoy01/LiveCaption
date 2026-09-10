@@ -139,6 +139,12 @@ STYLE = """
   .row.en { color: var(--fg); }
   .row.ja { color: var(--ja); font-size: calc(var(--size) * .62); }
   body.hide-ja .row.ja { display: none; }
+  /* 書きかけの文字起こし。**確定した行と見分けがつくようにする。** 同じ見た目だと、
+     もう決まった文だと思って読んだ直後に書き換わる。文字起こしのトグルに従う。 */
+  .row.partial { opacity: .55; }
+  .row.partial::after {
+    content: "…"; opacity: .7; margin-left: .15em;
+  }
   .row.enter { animation: in .18s ease-out; }
   @keyframes in { from { opacity: 0; } to { opacity: 1; } }
   #empty { color: var(--ja); font-size: 18px; }
@@ -166,7 +172,7 @@ FEED_JS = """
   const lines = $("lines"), main = $("main"), dot = $("dot"), count = $("count");
   const ja = $("ja"), empty0 = $("empty"), netstate = $("netstate");
   const FEED = "__FEED__", MAX = __HISTORY__;
-  let n = 0, removedEmpty = false, ended = false, since = 0, fails = 0;
+  let n = 0, removedEmpty = false, ended = false, since = 0, fails = 0, pv = -1;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   function scrollDown() { main.scrollTop = main.scrollHeight; }
@@ -196,20 +202,43 @@ FEED_JS = """
     const div = document.createElement("div");
     div.className = "row " + (ev.type === "asr" ? "ja" : "en") + " enter";
     div.textContent = ev.text;
-    lines.appendChild(div);
-    while (lines.children.length > MAX) { lines.removeChild(lines.firstChild); }
+    lines.insertBefore(div, partialRow);
+    while (lines.children.length > MAX + 1) { lines.removeChild(lines.firstChild); }
     if (ev.type !== "asr") { n += 1; count.textContent = n + " lines"; }
+    scrollDown();
+  }
+
+  // --- 書きかけの文字起こし ---------------------------------------------
+  // **文が確定するまで数秒、画面には何も出ない。** 話している人の言葉は溜まって
+  // いるだけで、読む側からは止まって見える。届いた分をそのまま薄く出しておき、
+  // 確定したら普通の行に置き換わる。
+  //
+  // 行は常に最後尾に置く。確定した行はこの手前に挿す（`add` を見ること）。
+  const partialRow = document.createElement("div");
+  partialRow.className = "row ja partial";
+  partialRow.hidden = true;
+  lines.appendChild(partialRow);
+
+  function showPartial(text) {
+    if (partialRow.textContent === text) { return; }
+    partialRow.textContent = text;
+    // **空のときは行ごと消す。** 高さが残ると、字幕が1行ぶん上にずれて見える。
+    partialRow.hidden = !text;
+    if (text && !removedEmpty && empty0) { empty0.remove(); removedEmpty = true; }
     scrollDown();
   }
 
   async function feed() {
     while (!ended) {
       try {
-        const r = await fetch(FEED + "?since=" + since);
+        const r = await fetch(FEED + "?since=" + since + "&pv=" + pv);
         if (!r.ok) { throw new Error("HTTP " + r.status); }
         const d = await r.json();
         since = d.next;
         for (const ev of d.lines) { add(ev); }
+        // **確定した行を入れてから書きかけを更新する。** 逆にすると、確定した文が
+        // 書きかけとして一瞬もう一度出る。
+        if (typeof d.pv === "number") { pv = d.pv; showPartial(d.partial || ""); }
         dot.classList.add("on");
         fails = 0;
         netstate.textContent = "";
@@ -1331,6 +1360,11 @@ class WebCaptions:
         self._first = 0  # _events[0] の通し番号
         self._cond = threading.Condition()
         self._waiting = 0
+        # **書きかけの文字起こし。** 履歴には入れない。中身が置き換わるものなので、
+        # 追記していく `_events` に混ぜると、同じ文が何行も残ってしまう。
+        # 版番号を別に持ち、ブラウザは最後に見た版と違うときだけ描き直す。
+        self._partial = ""
+        self._partial_v = 0
         self._servers: list[ThreadingHTTPServer] = []
 
     # --- URL ---------------------------------------------------------------
@@ -1355,8 +1389,26 @@ class WebCaptions:
         self._emit({"type": "caption", "text": text, "time": time.strftime("%H:%M:%S")})
 
     def asr(self, text: str) -> None:
-        """日本語の認識結果を流す。表示するかはブラウザ側のトグルが決める。"""
+        """確定した文字起こしを1行流す。表示するかはブラウザ側のトグルが決める。"""
         self._emit({"type": "asr", "text": text, "time": time.strftime("%H:%M:%S")})
+
+    def partial(self, text: str) -> None:
+        """**書きかけの文字起こし。** 確定を待たずに、声とほぼ同時に見せる。
+
+        文が確定するまでの数秒、画面には何も出ない。話している人の言葉が
+        溜まっているだけで、読む側からは止まって見える。ここを埋める。
+
+        **翻訳とZoom字幕には流さない。** どちらも一度出した行を置き換えられないので、
+        書きかけを送ると、訂正した完成版と二重に残る。置き換えられるのは、
+        自分でDOMを持っているブラウザの画面だけである。
+        """
+        text = text.strip()
+        with self._cond:
+            if text == self._partial:
+                return
+            self._partial = text
+            self._partial_v += 1
+            self._cond.notify_all()
 
     def _emit(self, event: dict) -> None:
         with self._cond:
@@ -1369,11 +1421,14 @@ class WebCaptions:
 
     # --- 長ポーリング -------------------------------------------------------
 
-    def poll(self, since: int, wait: float) -> tuple[int, list[dict]]:
+    def poll(self, since: int, wait: float, pv: int = -1) -> tuple[int, list[dict], str, int]:
         """`since` 以降の行を返す。無ければ最大 `wait` 秒待つ。
 
         `since` が履歴から落ちるほど古ければ、残っている最古から返す。
         途中から開いた画面には `since=0` で全履歴が渡る。
+
+        **書きかけの文字起こしが変わったときも返す。** `pv` はブラウザが最後に
+        受け取った版番号で、`-1` なら版を問わず今の中身を返す。
         """
         deadline = time.monotonic() + wait
         with self._cond:
@@ -1383,11 +1438,12 @@ class WebCaptions:
                     end = self._first + len(self._events)
                     if since < self._first:
                         since = self._first
-                    if since < end:
-                        return end, self._events[since - self._first :]
+                    if since < end or self._partial_v != pv:
+                        return (end, self._events[since - self._first:],
+                                self._partial, self._partial_v)
                     left = deadline - time.monotonic()
                     if left <= 0:
-                        return end, []
+                        return end, [], self._partial, self._partial_v
                     self._cond.wait(left)
             finally:
                 self._waiting -= 1
@@ -1486,8 +1542,14 @@ class _Base(BaseHTTPRequestHandler):
             since = int(query.get("since", ["0"])[0])
         except ValueError:
             since = 0
-        nxt, lines = web.poll(max(since, 0), config.LONGPOLL_WAIT_SEC)
-        self._send_json(200, {"next": nxt, "lines": lines})
+        try:
+            pv = int(query.get("pv", ["-1"])[0])
+        except ValueError:
+            pv = -1
+        nxt, lines, partial, partial_v = web.poll(
+            max(since, 0), config.LONGPOLL_WAIT_SEC, pv)
+        self._send_json(
+            200, {"next": nxt, "lines": lines, "partial": partial, "pv": partial_v})
 
     def _read_json(self) -> dict:
         length = int(self.headers.get("Content-Length") or 0)
