@@ -169,14 +169,17 @@ FEED_JS = """
   const $ = (id) => document.getElementById(id);
   const lines = $("lines"), main = $("main"), dot = $("dot"), count = $("count");
   const ja = $("ja"), empty0 = $("empty"), netstate = $("netstate");
-  const FEED = "__FEED__", MAX = __HISTORY__;
+  const FEED = "__FEED__", MAX = __HISTORY__, SOURCE_DEFAULT = __SOURCE_DEFAULT__;
   let n = 0, removedEmpty = false, ended = false, since = 0, fails = 0, pv = -1;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   function scrollDown() { main.scrollTop = main.scrollHeight; }
 
   // --- 日本語トグル。localStorage に残す --------------------------------
-  ja.checked = localStorage.getItem("showJa") === "1";
+  // **閲覧画面は既定でオンにする。** 配ったURLを開いた人は、字幕が翻訳だけだと
+  // 話者が何と言ったのか確かめられない。操作画面は麻生が見るものなので既定で切る。
+  const showJaStored = localStorage.getItem("showJa");
+  ja.checked = showJaStored === null ? SOURCE_DEFAULT : showJaStored === "1";
   applyJa();
   ja.addEventListener("change", () => {
     localStorage.setItem("showJa", ja.checked ? "1" : "0");
@@ -269,7 +272,9 @@ def _head(title: str, lines_: int) -> str:
 
 VIEWER_BODY = """</style>
 </head>
-<body class="hide-ja">
+<!-- 文字起こしは既定で見せる。切っている人の画面で一瞬出るのを避けるため、
+     hide-ja は付けない（`applyJa()` が読み込み直後に付け直す）。 -->
+<body>
 <header>
   <span class="dot" id="dot"></span>
   <span class="title">Live Captions</span>
@@ -1572,9 +1577,9 @@ def _viewer_handler(web: WebCaptions):
         _head("Live Captions", web.lines)
         + VIEWER_BODY.replace(
             "__FEED_JS__",
-            FEED_JS.replace("__FEED__", web.viewer_path + "/lines").replace(
-                "__HISTORY__", str(HISTORY)
-            ),
+            FEED_JS.replace("__FEED__", web.viewer_path + "/lines")
+            .replace("__HISTORY__", str(HISTORY))
+            .replace("__SOURCE_DEFAULT__", "true"),
         )
     ).encode("utf-8")
 
@@ -1601,9 +1606,9 @@ def _control_handler(web: WebCaptions):
         _head("Live Captions ・ 操作", web.lines)
         + CONTROL_BODY.replace(
             "__FEED_JS__",
-            FEED_JS.replace("__FEED__", "/api/lines").replace(
-                "__HISTORY__", str(HISTORY)
-            ),
+            FEED_JS.replace("__FEED__", "/api/lines")
+            .replace("__HISTORY__", str(HISTORY))
+            .replace("__SOURCE_DEFAULT__", "false"),
         )
     ).encode("utf-8")
 
