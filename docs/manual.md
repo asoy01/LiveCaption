@@ -242,6 +242,14 @@ Check three things in the meeting software on the caption PC.
 
 Then join the meeting.
 
+**The control page can be Japanese or English.** Pick the language in the
+**日本語 / English** box in the header. The page reloads at once, and **the next
+start uses the same language.** The rest of this manual names the buttons in
+Japanese, because that is the default.
+
+Only the control page changes. The captions, the transcription, and the meeting
+record are never translated. The viewer page is in English already.
+
 ### Step 3. Check the input device
 
 On the control page, look at **音声の入力** (audio input). It should be

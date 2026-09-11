@@ -52,7 +52,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import config, tunnel as tunnel_mod
+from . import config, i18n, tunnel as tunnel_mod
 
 # 画面に残す履歴の数。これを超えた分は古いほうから捨てる。
 # 途中から開いた参加者に、直前の流れが見えるだけあればよい。
@@ -445,6 +445,12 @@ CONTROL_BODY = """
      全選択されるが、画面にその手がかりが出ない。会議中に「コピーできない」と
      悩ませないこと。トンネルのURLは、チャットに貼って配ることがある。 */
   .copybtn { padding: 6px 12px; }
+  /* 言語の選択。ヘッダに置くので、幅は内容ぶんだけにする。 */
+  .langsel {
+    font: inherit; font-size: 13px; color: var(--ja);
+    background: transparent; border: 1px solid #30363d; border-radius: 6px;
+    padding: 4px 6px; flex: 0 0 auto; width: auto; min-width: 0;
+  }
   /* QRは白地でないと読めない端末がある。余白ごと白くする。 */
   #qrbox { display: none; }
   #qrbox.on { display: flex; }
@@ -468,10 +474,15 @@ CONTROL_BODY = """
   <span class="pill off" id="zoomPill">Zoom: —</span>
   <button id="smaller" class="zoombtn" title="文字を小さく">A&minus;</button>
   <button id="bigger" class="zoombtn" title="文字を大きく">A+</button>
+  <!-- 言語の名前は訳さない。**自分の言語は、自分の言語で書いてあるほうが探せる。** -->
+  <select id="uiLang" class="langsel" title="Language">
+    <option value="ja">日本語</option>
+    <option value="en">English</option>
+  </select>
   <label class="toggle">
     <input type="checkbox" id="ja">
     <span class="track"></span>
-    <!-- 出るのは認識の出力である。向きが en2ja なら英語になる。 -->
+    <!-- 出るのは文字起こしである。向きが en2ja なら英語になる。 -->
     <span>文字起こし</span>
   </label>
 </header>
@@ -536,7 +547,7 @@ CONTROL_BODY = """
       <span id="zoomState"></span>
     </div>
     <div class="row2 hint">
-      会議中にホストが取る。「字幕」→「∧」→「手動字幕の設定」で<b>手動字幕を有効にしてから</b>、
+      会議中にホストが取る。「字幕」→「∧」→「手動字幕の設定」で<b>手動字幕を有効にしてから、</b>
       「APIトークンをコピー」。<b>有効にしないとこの項目は出ない。</b><br>
       入力欄は伏せ字で、登録すると空になる。
     </div>
@@ -1031,6 +1042,22 @@ __FEED_JS__
     }
     for (const c of glossBox.querySelectorAll("input")) { c.disabled = false; }
   }
+
+  // --- 操作画面の言語 -----------------------------------------------------
+  // **サーバ側で差し替える。** 選んだらサーバに覚えさせて、読み込み直す。
+  // 画面の文字列はページを組み立てるときに置き換わるので、ここでは何も訳さない。
+  const uiLang = $("uiLang");
+  uiLang.value = "__UI_LANG__";
+  uiLang.addEventListener("change", async () => {
+    uiLang.disabled = true;
+    try {
+      await post("/api/lang", { lang: uiLang.value });
+      location.reload();
+    } catch (e) {
+      say(String(e.message), false);
+      uiLang.disabled = false;
+    }
+  });
 
   // --- 字幕の向き ---------------------------------------------------------
   // **会議ごとに選ぶ。** 選んだ時点で切り替わる。適用ボタンは無い。
@@ -1537,7 +1564,14 @@ class _Base(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_json(self, code: int, payload: dict) -> None:
+    def _send_json(self, code: int, payload: dict, translate: bool = True) -> None:
+        """JSONを返す。**既定で操作画面の言語に合わせる。**
+
+        状態や説明はここを通るので、1か所で訳せる。**字幕そのものには使わない。**
+        会議の中身を訳してはいけないので、`_send_lines` は `translate=False` で呼ぶ。
+        """
+        if translate:
+            payload = i18n.apply_json(payload, config.UI_LANG)
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self._send_bytes(code, "application/json; charset=utf-8", body)
 
@@ -1552,8 +1586,10 @@ class _Base(BaseHTTPRequestHandler):
             pv = -1
         nxt, lines, partial, partial_v = web.poll(
             max(since, 0), config.LONGPOLL_WAIT_SEC, pv)
+        # **字幕は訳さない。** ここを通るのは会議の中身そのものである。
         self._send_json(
-            200, {"next": nxt, "lines": lines, "partial": partial, "pv": partial_v})
+            200, {"next": nxt, "lines": lines, "partial": partial, "pv": partial_v},
+            translate=False)
 
     def _read_json(self) -> dict:
         length = int(self.headers.get("Content-Length") or 0)
@@ -1600,23 +1636,32 @@ def _viewer_handler(web: WebCaptions):
     return Handler
 
 
+def _control_page(web: WebCaptions, lang: str) -> bytes:
+    """操作画面を組み立てる。
+
+    **要求のたびに組み立てる。** 言語を切り替えたら読み込み直すので、作り置きだと
+    古い言語のままになる。組み立ては文字列の置換だけで、費用は無視できる。
+    """
+    page = _head("Live Captions ・ 操作", web.lines) + CONTROL_BODY.replace(
+        "__FEED_JS__",
+        FEED_JS.replace("__FEED__", "/api/lines")
+        .replace("__HISTORY__", str(HISTORY))
+        .replace("__SOURCE_DEFAULT__", "false"),
+    )
+    # **言語の差し替えを先に済ませる。** `__UI_LANG__` は言語の名前そのものなので、
+    # 訳表に通してはいけない。
+    return i18n.apply(page, lang).replace("__UI_LANG__", lang).encode("utf-8")
+
+
 def _control_handler(web: WebCaptions):
     """操作画面。**127.0.0.1 からしか届かない。**"""
-    page = (
-        _head("Live Captions ・ 操作", web.lines)
-        + CONTROL_BODY.replace(
-            "__FEED_JS__",
-            FEED_JS.replace("__FEED__", "/api/lines")
-            .replace("__HISTORY__", str(HISTORY))
-            .replace("__SOURCE_DEFAULT__", "false"),
-        )
-    ).encode("utf-8")
 
     class Handler(_Base):
         def do_GET(self) -> None:  # noqa: N802
             u = urlparse(self.path)
             if u.path in ("/", "/index.html"):
-                self._send_bytes(200, "text/html; charset=utf-8", page)
+                self._send_bytes(200, "text/html; charset=utf-8",
+                                 _control_page(web, config.UI_LANG))
             elif u.path == "/api/lines":
                 self._send_lines(web, parse_qs(u.query))
             elif u.path == "/api/status":
@@ -1682,7 +1727,8 @@ def _control_handler(web: WebCaptions):
                 return
             if path not in ("/api/token", "/api/zoom", "/api/tunnel",
                             "/api/engine", "/api/device", "/api/glossary",
-                            "/api/tuning", "/api/tuning/save", "/api/direction"):
+                            "/api/tuning", "/api/tuning/save", "/api/direction",
+                            "/api/lang"):
                 self.send_error(404)
                 return
             try:
@@ -1722,6 +1768,19 @@ def _control_handler(web: WebCaptions):
                     self._send_json(400, {"error": str(exc)})
                     return
                 self._send_json(200, st)
+                return
+
+            if path == "/api/lang":
+                try:
+                    lang = config.apply_ui_lang(str(body.get("lang", "")))
+                except ValueError as exc:
+                    self._send_json(400, {"error": str(exc)})
+                    return
+                config.remember_ui_lang(lang)
+                print(f"[{time.strftime('%H:%M:%S')}] 言語        操作画面を "
+                      f"{'日本語' if lang == 'ja' else 'English'} にした")
+                # **訳さずに返す。** 言語の名前そのものである。
+                self._send_json(200, {"lang": lang}, translate=False)
                 return
 
             if path == "/api/direction":

@@ -152,6 +152,12 @@ DIRECTIONS: dict[str, Direction] = {
         ),
     ),
 }
+# --- 操作画面の言語 ---------------------------------------------------------
+# **閲覧画面は対象外。** あちらは元から英語で、参加者が見るものである。
+# 訳表は `i18n.py` にある。選択は覚えて、次の起動も同じ言語で始める。
+UI_LANG = "ja"
+UI_LANG_STATE_PATH = PROJECT_ROOT / "local" / "ui_lang_state.json"
+
 DIRECTION_DEFAULT = "ja2en"
 # いま選ばれている向き。`apply_direction()` が書き換える。
 DIRECTION = DIRECTION_DEFAULT
@@ -425,6 +431,39 @@ def direction_selection() -> str:
     except (OSError, ValueError, AttributeError):
         name = ""
     return name if name in DIRECTIONS else DIRECTION_DEFAULT
+
+
+def ui_lang_selection() -> str:
+    """覚えている操作画面の言語。無ければ日本語。"""
+    from . import i18n
+
+    try:
+        saved = json.loads(UI_LANG_STATE_PATH.read_text(encoding="utf-8"))
+        name = str(saved.get("lang", ""))
+    except (OSError, ValueError, AttributeError):
+        name = ""
+    return name if name in i18n.LANGS else i18n.DEFAULT
+
+
+def apply_ui_lang(name: str) -> str:
+    """操作画面の言語を切り替える。選んだ言語を返す。"""
+    from . import i18n
+
+    if name not in i18n.LANGS:
+        raise ValueError(f"言語が違う: 「{name}」。{' / '.join(i18n.LANGS)} のどちらか。")
+    globals()["UI_LANG"] = name
+    return name
+
+
+def remember_ui_lang(name: str) -> None:
+    """次の起動のために覚える。書けなくても落とさない。"""
+    try:
+        UI_LANG_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        UI_LANG_STATE_PATH.write_text(
+            json.dumps({"lang": name}, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except OSError as exc:
+        print(f"  [言語] 選択を覚えられない: {exc}")
 
 
 def remember_direction(name: str) -> None:

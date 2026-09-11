@@ -327,6 +327,9 @@ class App:
         self.direction = config.apply_direction(
             settings.direction or config.direction_selection()
         )
+        # 操作画面の言語。**字幕の向きとは無関係である。** 英語の会議に日本語字幕を
+        # 出しながら、操作画面を英語にすることもある。
+        config.apply_ui_lang(config.ui_lang_selection())
         # **使う用語集は名前で決まる。** 起動時の指定が無ければ前回の選択。
         self.glossary_names: tuple[str, ...] = tuple(
             settings.glossary_names if settings.glossary_names is not None
