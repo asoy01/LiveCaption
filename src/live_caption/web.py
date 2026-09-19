@@ -1596,8 +1596,9 @@ __FEED_JS__
       del.addEventListener("click", async () => {
         if (!confirm("この会議を消す: " + it.name + "。このURLは開けなくなる。よろしいですか。")) { return; }
         try {
+          const st = await post("/api/meetings", { action: "delete", id: it.id });
           meetEditing = "";
-          showStatus(await post("/api/meetings", { action: "delete", id: it.id }));
+          showStatus(st);
           say(last ? "会議を消した。閲覧URLが要るので、新しい会議を1つ作った。"
                    : "会議を消した: " + it.name, true);
         } catch (e) { say(String(e.message), false); }
@@ -1698,10 +1699,13 @@ __FEED_JS__
           max_min: Number(cap.value),
           auto: auto.checked,
         };
+        const st = await post("/api/meetings",
+                              { action: "schedule", id: it.id, fields });
+        // **通ってから閉じる。** 先に閉じると、断られたときに入力欄が消えて
+        // 一覧が描き直され、「保存したのに予定なしに戻った」ように見える。
         meetEditing = "";
         meetSeen = "";
-        showStatus(await post("/api/meetings",
-                              { action: "schedule", id: it.id, fields }));
+        showStatus(st);
         say("予定を保存した: " + it.name, true);
       } catch (e) { say(String(e.message), false); save.disabled = false; }
     });
@@ -1743,9 +1747,10 @@ __FEED_JS__
         re.className = "savebtn"; re.textContent = "もう一度受け付ける";
         re.addEventListener("click", async () => {
           try {
+            const st = await post("/api/meetings",
+                                  { action: "host_rearm", id: it.id });
             meetEditing = ""; meetSeen = "";
-            showStatus(await post("/api/meetings",
-                                  { action: "host_rearm", id: it.id }));
+            showStatus(st);
             say("ホスト用の受け口をもう一度開いた。", true);
           } catch (e) { say(String(e.message), false); }
         });
@@ -2332,18 +2337,44 @@ class WebCaptions:
         print(f"[{time.strftime('%H:%M:%S')}] ホスト      {what}（相手 {peer or '不明'}）")
 
     def control_urls_extra(self) -> list[str]:
-        """127.0.0.1 以外で操作画面が開けるURL。起動時の画面に出す。"""
-        return [f"http://{'[' + a + ']' if ':' in a else a}:{self.control_port}"
-                for a in self.control_extra]
+        """127.0.0.1 以外で操作画面が開けるURL。起動時の画面に出す。
+
+        **名前を先に出す。** 人が覚えて栞に入れるのは名前のほうである。
+        """
+        names = [f"http://{n}:{self.control_port}" for n in self.control_names()]
+        addrs = [f"http://{'[' + a + ']' if ':' in a else a}:{self.control_port}"
+                 for a in self.control_extra]
+        return names + addrs
 
     def allowed_origins(self) -> set[str]:
-        """この操作画面自身のURL。`Origin` の検査に使う。"""
+        """この操作画面自身のURL。`Origin` の検査に使う。
+
+        **アドレスだけでは足りない。** tailnet には MagicDNS があるので、人は
+        `http://ms-s1-max:8081` のように**名前で開く。** 名前を入れておかないと、
+        画面は見えるのにボタンが全部断られる（2026-09-19 に踏んだ）。
+        """
         out = {f"http://localhost:{self.control_port}",
                f"http://127.0.0.1:{self.control_port}"}
         for addr in self.control_extra:
             host = f"[{addr}]" if ":" in addr else addr
             out.add(f"http://{host}:{self.control_port}")
+        for name in self.control_names():
+            out.add(f"http://{name}:{self.control_port}")
         return out
+
+    def control_names(self) -> list[str]:
+        """tailnet 上でこの機体を指す名前。MagicDNS の長short両方。
+
+        **tailnet に出していないときは空。** 名前で開けるのは、そこに
+        待ち受けているときだけである。
+        """
+        if not self.control_extra:
+            return []
+        host, _ = tunnel_mod.tailscale_host()
+        if not host:
+            return []
+        short = host.split(".")[0]
+        return [host, short] if short and short != host else [host]
 
     def _serve(self, host: str, port: int, handler) -> ThreadingHTTPServer:  # noqa: ANN001
         # ThreadingHTTPServer にするのは、長ポーリングが1本ずつ居座るため。
