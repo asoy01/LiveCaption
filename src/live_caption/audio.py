@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 import numpy as np
 import sounddevice as sd
@@ -90,6 +91,9 @@ class Capture:
         # **音が来ているかを目で見るためのものである。** デバイスを選び違えても、
         # 誰かが喋るまで気づけないのでは遅い。
         self._peak = 0.0
+        # 最後に音らしい音が来た時刻（`time.monotonic`）。**読んでも消さない。**
+        # 無人で回すときの「会議が終わったらしい」の手がかりに使う。
+        self._voice_at = time.monotonic()
 
     def _callback(self, indata, frames, time_info, status) -> None:  # noqa: ANN001
         if status:
@@ -101,7 +105,12 @@ class Capture:
         reduced = mono[:n].reshape(-1, self.decim).mean(axis=1)
         pcm = np.clip(reduced * 32767.0, -32768, 32767).astype(np.int16)
         if reduced.size:
-            self._peak = max(self._peak, float(np.abs(reduced).max()))
+            level = float(np.abs(reduced).max())
+            self._peak = max(self._peak, level)
+            # **こちらは消費されない。** `_peak` は操作画面のメーターが読むたびに
+            # 0 に戻すので、他から覗くと値を奪い合う。無音の見張り用に別に持つ。
+            if level > config.VOICE_PEAK:
+                self._voice_at = time.monotonic()
         loop = self._loop
         if loop is None:
             # start() を通っていない。捨てるしかない。
@@ -157,6 +166,14 @@ class Capture:
         peak, self._peak = self._peak, 0.0
         return peak
 
+    def quiet_for(self) -> float:
+        """最後に音が来てから何秒たったか。
+
+        **`take_peak()` と違い、読んでも値を消さない。** 見張りが何度でも呼ぶので、
+        操作画面のメーターから値を奪わないよう、別に持ってある。
+        """
+        return max(0.0, time.monotonic() - self._voice_at)
+
     def drain(self) -> int:
         """溜まっている音声を捨てる。認識に繋ぎ直したときに呼ぶ。
 
@@ -200,7 +217,7 @@ async def check_level(capture, seconds: float = 20.0) -> bool:
             peak = float(np.abs(samples).max()) if samples.size else 0.0
             rms = float(np.sqrt((samples ** 2).mean())) if samples.size else 0.0
             total += 1
-            if peak > 0.01:
+            if peak > config.VOICE_PEAK:
                 loud += 1
             bar = "#" * min(int(rms * 200), 50)
             print(f"\r  peak {peak:5.3f}  rms {rms:5.3f}  |{bar:<50}|", end="", flush=True)
@@ -251,6 +268,14 @@ class FileCapture:
         pass
 
     def take_peak(self) -> float:
+        return 0.0
+
+    def quiet_for(self) -> float:
+        """ファイル再生は「ずっと音がある」ことにする。
+
+        **0 を返さないと、無音の見張りが即座に会議を畳む。** 試験は
+        `--from-file` で回すので、ここを 0.0 にすると試験そのものが成立しない。
+        """
         return 0.0
 
     def drain(self) -> int:

@@ -46,13 +46,12 @@ from __future__ import annotations
 
 import io
 import json
-import secrets
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import config, i18n, tunnel as tunnel_mod
+from . import config, i18n, meetings, tunnel as tunnel_mod
 
 # 画面に残す履歴の数。これを超えた分は古いほうから捨てる。
 # 途中から開いた参加者に、直前の流れが見えるだけあればよい。
@@ -257,6 +256,20 @@ FEED_JS = """
 """
 
 
+def _qr_filename(name: str) -> str:
+    """保存するQRのファイル名。会議の名前を入れる。
+
+    **会議ごとに別のファイルになるようにする。** 先の会議ぶんを何枚か作って
+    置いておく使い方なので、全部が `livecaption-qr.png` では区別が付かない。
+
+    ファイル名に使えない文字と、ヘッダを壊す文字（引用符・改行・非ASCII）は
+    落とす。日本語の名前は丸ごと消えるので、そのときは既定の名前に戻す。
+    """
+    safe = "".join(c for c in name if c.isascii() and (c.isalnum() or c in "-_ ")).strip()
+    safe = "-".join(safe.split())[:40]
+    return f"livecaption-qr-{safe}.png" if safe else "livecaption-qr.png"
+
+
 def _head(title: str, lines_: int) -> str:
     return (
         '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
@@ -360,6 +373,9 @@ CONTROL_BODY = """
   }
   .row2 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 9px; }
   .row2:last-child { margin-bottom: 0; }
+  /* 説明の行は地の文である。**flex にしない。** `<b>` が別の項目として
+     切り出され、前後に隙間が空いて、1つの文に見えなくなる。 */
+  .row2.hint { display: block; }
   /* 見出しは行を独り占めする。狭い欄で、ラベルと部品を横に並べると折り返しが汚い。 */
   .lbl { flex: 1 0 100%; color: var(--fg); font-size: var(--ui); }
   /* 用語集は畳んでおく。**表は増えていく。** 全部を並べると、右の欄が伸びて
@@ -451,6 +467,33 @@ CONTROL_BODY = """
     background: transparent; border: 1px solid #30363d; border-radius: 6px;
     padding: 4px 6px; flex: 0 0 auto; width: auto; min-width: 0;
   }
+  /* 会議の一覧。1行に「選ぶ / 名前 / URL / ボタン」を積む。
+     **URLは折り返して全部見せる。** 途中で切ると、目で確かめられない。
+
+     **高さを切って、中で送らせる。** 会議は増えていく一方なので、そのまま並べると
+     「Zoom字幕」から下が画面の外へ押し出される。用語集と同じ作りにしてある。 */
+  #meetList {
+    display: flex; flex-direction: column; gap: 8px; margin: 6px 0 2px;
+    max-height: min(38vh, 300px); overflow-y: auto; scrollbar-width: thin;
+    /* 中の行の `offsetTop` をこの枠からの距離にする。選んである行を枠の中へ
+       送るのに使う。 */
+    position: relative;
+  }
+  /* 送れる状態のときだけ、上下に切れ目を見せる。無いと、続きがあると気づけない。 */
+  #meetList.more { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+                   padding: 6px 4px 6px 0; }
+  /* 何件あるかを見出しの横に出す。畳まれていても数が分かる。 */
+  .grp > h2 .c { font-weight: 400; letter-spacing: 0; color: #6e7681; }
+  .meet { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+          display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+  .meet.on { border-color: var(--accent); }
+  .meet input[type=radio] { cursor: pointer; flex: 0 0 auto; }
+  .meet .nm { flex: 1 1 auto; font-size: var(--ui); color: var(--ja);
+              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meet.on .nm { color: var(--fg); font-weight: 600; }
+  .meet .when { flex: 0 0 auto; font-size: calc(var(--ui) - 3px); color: #8b949e; }
+  .meet .url { flex: 1 1 100%; }
+  .meet .none { flex: 1 1 100%; font-size: calc(var(--ui) - 2px); color: #8b949e; }
   /* QRは白地でないと読めない端末がある。余白ごと白くする。 */
   #qrbox { display: none; }
   #qrbox.on { display: flex; }
@@ -513,7 +556,15 @@ CONTROL_BODY = """
   <div class="grp">
     <h2>参加者への配信</h2>
     <div class="row2">
-      <button id="tstart" class="primary">トンネルを開始</button>
+      <label class="lbl" for="tkind">経路</label>
+      <select id="tkind">
+        <option value="cloudflare">Cloudflare（その場で配る）</option>
+        <option value="tailscale">Tailscale（前もって配る）</option>
+      </select>
+    </div>
+    <div class="row2 hint" id="tkindHint"></div>
+    <div class="row2">
+      <button id="tstart" class="primary">配信を開始</button>
       <button id="tstop" class="danger">停止</button>
     </div>
     <div class="row2"><span id="tunnelState"></span></div>
@@ -527,11 +578,24 @@ CONTROL_BODY = """
     </div>
     <div class="row2 hint" id="tunnelHint" style="display:none">
       このURLをQRで配る。参加者はブラウザで開くだけでよい。
-      <b>URLは起動のたびに変わる。</b>停止すると、その場で見られなくなる。
     </div>
     <div class="row2" id="tunnelErrBox" style="display:none">
       <pre class="err" id="tunnelErr"></pre>
     </div>
+  </div>
+
+  <div class="grp">
+    <h2>会議<span class="c" id="meetCount"></span></h2>
+    <div class="row2 hint">
+      会議ごとに別のURLを使う。<b>配信するのは選んである1つだけで、
+      他の会議のURLは開けない。</b>
+    </div>
+    <div class="row2">
+      <input type="text" id="meetName" placeholder="会議の名前（例: KAGRA朝礼 9/25）">
+      <button id="meetAdd" class="primary">追加</button>
+    </div>
+    <div class="list" id="meetList"></div>
+    <div class="row2 hint" id="meetHint"></div>
   </div>
 
   <div class="grp">
@@ -689,6 +753,11 @@ __FEED_JS__
   const tpill = $("tunnelPill"), tstate = $("tunnelState");
   const qrbox = $("qrbox"), qr = $("qr"), publicUrl = $("publicUrl");
   const qrsave = $("qrsave");
+  const tkind = $("tkind"), tkindHint = $("tkindHint");
+  const meetName = $("meetName"), meetAdd = $("meetAdd");
+  const meetList = $("meetList"), meetHint = $("meetHint"), meetCount = $("meetCount");
+  // 一覧を組み直すと、打ちかけの名前や押した場所が飛ぶ。中身が変わったときだけ描く。
+  let meetSeen = "";
   const publicUrlRow = $("publicUrlRow"), tunnelHint = $("tunnelHint");
   const split = $("split"), sep = $("sep");
   const viewerUrl = $("viewerUrl"), openViewer = $("openViewer");
@@ -824,16 +893,24 @@ __FEED_JS__
     stop.disabled = !s.active;
     save.disabled = s.dry_run;
 
-    // --- トンネル ---
+    // --- 配信 ---
     const t = s.tunnel || {};
     const st = t.state || "off";
+    const ts = (t.kind === "tailscale");
     const names = { off: "配信: 停止中", starting: "配信: 起動中…", on: "配信: 中", error: "配信: 失敗" };
     const cls2 = { off: "off", starting: "warn", on: "on", error: "bad" };
     tpill.textContent = names[st] || "配信: —";
     tpill.className = "pill " + (cls2[st] || "off");
+    // 経路を触れるのは止まっている間だけ。張ったまま持ち替えると、消せない
+    // トンネルが残る。
+    if (document.activeElement !== tkind && t.kind) { tkind.value = t.kind; }
+    tkind.disabled = (st === "on" || st === "starting");
+    tkindHint.innerHTML = ts
+      ? "ホスト名が変わらないので、<b>会議のURLを前もって配れる。</b>tailnet 側の設定が1回だけ要る。"
+      : "準備は要らないが、<b>URLは起動のたびに変わる。</b>前もって配ることはできない。";
     tstate.textContent = st === "on" ? "参加者が閲覧URLを開ける"
-                       : st === "starting" ? "cloudflared を起こしている"
-                       : t.available ? "" : "cloudflared が無い";
+                       : st === "starting" ? (ts ? "tailscale に設定させている" : "cloudflared を起こしている")
+                       : t.available ? "" : (ts ? "tailscale が使えない" : "cloudflared が無い");
     tstart.disabled = (st === "on" || st === "starting");
     tstop.disabled = (st === "off" || st === "error");
 
@@ -848,6 +925,9 @@ __FEED_JS__
     }
     if (t.error) { terr.textContent = t.error; terrBox.style.display = ""; }
     else { terrBox.style.display = "none"; }
+
+    // --- 会議 ---
+    drawMeetings(s.meetings || {}, t);
 
     viewerUrl.textContent = s.viewer_url || "";
 
@@ -1219,18 +1299,142 @@ __FEED_JS__
     catch (e) { say(String(e.message), false); }
   });
 
-  // --- トンネル -----------------------------------------------------------
+  // --- 配信 ---------------------------------------------------------------
   tstart.addEventListener("click", async () => {
     tstart.disabled = true;
     try {
       showStatus(await post("/api/tunnel", { on: true }));
-      say("トンネルを起こしている。URLが出るまで数秒かかる。", true);
+      say("配信を始めている。URLが出るまで数秒かかる。", true);
     } catch (e) { say(String(e.message), false); }
   });
   tstop.addEventListener("click", async () => {
-    try { showStatus(await post("/api/tunnel", { on: false })); say("トンネルを止めた。閲覧URLは死んだ。", true); }
+    try { showStatus(await post("/api/tunnel", { on: false })); say("配信を止めた。閲覧URLは死んだ。", true); }
     catch (e) { say(String(e.message), false); }
   });
+  // **選ぶだけでは外に出ない。** 経路を持ち替えても、開始は別に押す。
+  tkind.addEventListener("change", async () => {
+    try {
+      showStatus(await post("/api/tunnel", { kind: tkind.value }));
+      say("経路を選んだ。「配信を開始」で始める。", true);
+    } catch (e) { say(String(e.message), false); }
+  });
+
+  // --- 会議 ---------------------------------------------------------------
+  // **一覧は中身が変わったときだけ描き直す。** 毎秒組み直すと、打ちかけの名前や
+  // 押そうとしていたボタンが手の下で消える。
+  function drawMeetings(m, t) {
+    const items = m.items || [];
+    const key = JSON.stringify([m.active, items]);
+    if (key === meetSeen) { return; }
+    meetSeen = key;
+
+    meetList.textContent = "";
+    meetCount.textContent = items.length > 1 ? "（" + items.length + "）" : "";
+    let picked = null;
+    for (const it of items) {
+      const row = document.createElement("div");
+      row.className = "meet" + (it.id === m.active ? " on" : "");
+      if (it.id === m.active) { picked = row; }
+
+      const pick = document.createElement("input");
+      pick.type = "radio"; pick.name = "meet"; pick.checked = (it.id === m.active);
+      pick.title = "この会議を配信する";
+      pick.addEventListener("change", async () => {
+        try {
+          showStatus(await post("/api/meetings", { action: "select", id: it.id }));
+          say("配信する会議: " + it.name, true);
+        } catch (e) { say(String(e.message), false); }
+      });
+      row.appendChild(pick);
+
+      const nm = document.createElement("span");
+      nm.className = "nm"; nm.textContent = it.name; row.appendChild(nm);
+
+      const when = document.createElement("span");
+      when.className = "when"; when.textContent = it.created; row.appendChild(when);
+
+      if (it.url) {
+        const u = document.createElement("span");
+        u.className = "url"; u.id = "murl-" + it.id; u.textContent = it.url;
+        row.appendChild(u);
+
+        const cp = document.createElement("button");
+        cp.className = "copybtn"; cp.dataset.copy = u.id; cp.textContent = "URLをコピー";
+        row.appendChild(cp);
+
+        const sv = document.createElement("button");
+        sv.className = "savebtn"; sv.textContent = "QRコードを保存";
+        sv.addEventListener("click", () => {
+          const a = document.createElement("a");
+          a.href = "/api/qr?dl=1&id=" + encodeURIComponent(it.id)
+                 + "&name=" + encodeURIComponent(it.name);
+          a.download = "livecaption-qr.png";
+          document.body.appendChild(a); a.click(); a.remove();
+        });
+        row.appendChild(sv);
+      } else {
+        const none = document.createElement("span");
+        none.className = "none";
+        none.textContent = t.preannounce
+          ? "URLがまだ決まらない。Tailscale に繋がっているか確かめること。"
+          : "Cloudflare ではURLが毎回変わる。配信を始めると出る。";
+        row.appendChild(none);
+      }
+
+      const del = document.createElement("button");
+      del.className = "savebtn"; del.textContent = "削除";
+      // **最後の1つも消せる。** 終わった会議を全部片付けられるようにする。
+      // 閲覧URLは要るので、消したあとに代わりが1つ作られる。
+      const last = (items.length === 1);
+      del.addEventListener("click", async () => {
+        if (!confirm("この会議を消す: " + it.name + "。このURLは開けなくなる。よろしいですか。")) { return; }
+        try {
+          showStatus(await post("/api/meetings", { action: "delete", id: it.id }));
+          say(last ? "会議を消した。閲覧URLが要るので、新しい会議を1つ作った。"
+                   : "会議を消した: " + it.name, true);
+        } catch (e) { say(String(e.message), false); }
+      });
+      row.appendChild(del);
+
+      meetList.appendChild(row);
+    }
+    meetHint.innerHTML = t.preannounce
+      ? "会議のURLはいつでも作れる。Zoomのリンクと一緒に案内に載せられる。"
+      : "前もってURLを配るには、上の経路を <b>Tailscale</b> にすること。";
+
+    // **送れるようになったら、それが見えるようにする。** 枠の中に収まっている
+    // うちは、上下の線を出さない。線だけあって送れないのは、かえって紛らわしい。
+    const more = meetList.scrollHeight > meetList.clientHeight;
+    meetList.classList.toggle("more", more);
+    // **配信する会議を、隠れたままにしない。** 一覧が長くなると、選んである行が
+    // 枠の外にあることがある。当日いちばん見たいのはそこである。
+    //
+    // **`scrollIntoView` は使わない。** 親も一緒に送るので、右の欄まで動いて
+    // 「会議」から下しか見えなくなる。この枠の中だけを動かす。
+    if (more && picked) {
+      const top = picked.offsetTop;
+      const bottom = top + picked.offsetHeight;
+      if (top < meetList.scrollTop) {
+        meetList.scrollTop = top;
+      } else if (bottom > meetList.scrollTop + meetList.clientHeight) {
+        meetList.scrollTop = bottom - meetList.clientHeight;
+      }
+    }
+  }
+
+  async function addMeeting() {
+    const name = meetName.value.trim();
+    if (!name) { say("会議の名前を入れること。", false); return; }
+    meetAdd.disabled = true;
+    try {
+      showStatus(await post("/api/meetings", { action: "create", name }));
+      meetName.value = "";
+      say("会議を作った: " + name + "。配信する会議は変えていない。", true);
+    } catch (e) { say(String(e.message), false); }
+    meetAdd.disabled = false;
+  }
+  meetAdd.addEventListener("click", addMeeting);
+  meetName.addEventListener("keydown", (e) => { if (e.key === "Enter") { addMeeting(); } });
 
   openViewer.addEventListener("click", () => { window.open(viewerUrl.textContent, "_blank"); });
 
@@ -1392,13 +1596,16 @@ class WebCaptions:
         # 字幕の向き（app.DirectionControl）。
         self.direction = None
         self.on_shutdown = None
-        self.tunnel: tunnel_mod.Tunnel | None = None
+        # 配信の経路（Cloudflare / Tailscale）。`tunnel.Delivery` が両方を持つ。
+        self.tunnel: tunnel_mod.Delivery | None = None
         # 会議の記録（transcript.Transcript）。--no-save のときは None のまま。
         # **操作画面からしか見えない。** 閲覧側には出さない。
         self.transcript = None
-        # 閲覧画面の経路。トンネルのホスト名もランダムだが、経路にも入れておく。
-        self.secret = secrets.token_urlsafe(config.VIEWER_SECRET_BYTES)
-        self.viewer_path = f"/v/{self.secret}"
+        # 閲覧画面の経路。**会議ごとに変える**（meetings.py）。参加者が会議ごとに
+        # 違うので、先週の会議のURLで今日の字幕が見えてはいけない。
+        # 配信するのは選んである1つだけで、他の会議のURLは404になる。
+        self.meetings = meetings.Store()
+        self.meetings.on_change = self._meeting_changed
 
         # 字幕の履歴と、長ポーリングの待ち合わせ。
         self._events: list[dict] = []
@@ -1414,6 +1621,11 @@ class WebCaptions:
 
     # --- URL ---------------------------------------------------------------
 
+    @property
+    def viewer_path(self) -> str:
+        """いま配信している会議の経路。閲覧サーバはここしか開けない。"""
+        return self.meetings.viewer_path
+
     def viewer_url(self) -> str:
         """自分の機体から開く閲覧URL。画面共有で見せるときはこれ。"""
         host = "localhost" if self.bind in ("127.0.0.1", "0.0.0.0", "") else self.bind
@@ -1426,6 +1638,23 @@ class WebCaptions:
         """トンネル越しの閲覧URL。張っていなければ空。"""
         url = self.tunnel.url if self.tunnel is not None else ""
         return f"{url}{self.viewer_path}" if url else ""
+
+    def meetings_status(self) -> dict:
+        """会議の一覧に、いまの経路で組み立てたURLを添える。"""
+        st = self.meetings.status()
+        for item in st["items"]:
+            item["url"] = self.meeting_url(item["id"])
+        return st
+
+    def meeting_url(self, meeting_id: str) -> str:
+        """その会議の閲覧URL。土台が分からなければ空。
+
+        **Tailscale では、配信していなくても返る。** 会議の前日にURLを確定して
+        案内に載せるための道である。Cloudflare はホスト名が毎回変わるので、
+        張っている間しか返らない。
+        """
+        base = self.tunnel.base_url() if self.tunnel is not None else ""
+        return f"{base}{self.meetings.path_of(meeting_id)}" if base else ""
 
     # --- 本体から呼ぶ -------------------------------------------------------
 
@@ -1452,6 +1681,29 @@ class WebCaptions:
             if text == self._partial:
                 return
             self._partial = text
+            self._partial_v += 1
+            self._cond.notify_all()
+
+    def _meeting_changed(self) -> None:
+        """配信する会議が変わったときに呼ばれる（`meetings.Store.on_change`）。
+
+        **前の会議の字幕を捨てる。** 履歴は200行あり、新しく開いた画面には
+        `since=0` で全部渡る。捨てないと、**次の会議の参加者に、前の会議の
+        中身がそのまま見える。** 会議ごとにURLを分けている意味が無くなる。
+
+        書きかけの文字起こしも同じ理由で捨てる。版番号を進めるので、待っている
+        長ポーリングもここで起きる（古い経路はこの瞬間から404になるので、
+        待たせたままにしても意味が無い）。
+
+        ページそのものは要求のたびに組み立てるので（`_viewer_page`）、
+        ここで作り直すものは無い。
+        """
+        with self._cond:
+            # 通し番号は戻さない。戻すと、開いたままの画面が「新しい行が来た」と
+            # 誤認して、消したはずの行を取りに来る。
+            self._first += len(self._events)
+            self._events.clear()
+            self._partial = ""
             self._partial_v += 1
             self._cond.notify_all()
 
@@ -1511,8 +1763,13 @@ class WebCaptions:
         if self.tunnel is not None:
             st["tunnel"] = self.tunnel.status()
         else:
-            st["tunnel"] = {"state": "off", "url": "", "error": "",
+            st["tunnel"] = {"state": "off", "url": "", "error": "", "base_url": "",
+                            "kind": config.tunnel_kind_selection(),
+                            "kinds": list(config.TUNNEL_KINDS), "preannounce": False,
                             "available": tunnel_mod.find_cloudflared() is not None}
+        # **会議ごとの閲覧URLも一緒に返す。** 前もって配るURLは、配信していない
+        # あいだも見えていないと意味がない。
+        st["meetings"] = self.meetings_status()
         st["generating"] = bool(self.engine.status()["generating"]) if self.engine else True
         st["audio"] = self.audio.status() if self.audio else {
             "selectable": False, "name": "—", "index": None,
@@ -1624,9 +1881,15 @@ class _Base(BaseHTTPRequestHandler):
         return data
 
 
-def _viewer_handler(web: WebCaptions):
-    """閲覧画面。**ここが外に出る。字幕を返すことしかしない。**"""
-    page = (
+def _viewer_page(web: WebCaptions) -> bytes:
+    """閲覧画面を組み立てる。
+
+    **要求のたびに組み立てる。** 経路（`/v/<会議のID>`）はページの中のJSにも
+    焼き込まれる。作り置きにすると、**会議を切り替えたときに、新しい経路で
+    ページは出るのに、中のJSが古い経路を叩いて404になる。**
+    組み立ては文字列の置換だけで、費用は無視できる（`_control_page` と同じ）。
+    """
+    return (
         _head("Live Captions", web.lines)
         + VIEWER_BODY.replace(
             "__FEED_JS__",
@@ -1636,11 +1899,15 @@ def _viewer_handler(web: WebCaptions):
         )
     ).encode("utf-8")
 
+
+def _viewer_handler(web: WebCaptions):
+    """閲覧画面。**ここが外に出る。字幕を返すことしかしない。**"""
+
     class Handler(_Base):
         def do_GET(self) -> None:  # noqa: N802
             u = urlparse(self.path)
             if u.path == web.viewer_path:
-                self._send_bytes(200, "text/html; charset=utf-8", page)
+                self._send_bytes(200, "text/html; charset=utf-8", _viewer_page(web))
             elif u.path == web.viewer_path + "/lines":
                 self._send_lines(web, parse_qs(u.query))
             else:
@@ -1684,7 +1951,13 @@ def _control_handler(web: WebCaptions):
             elif u.path == "/api/status":
                 self._send_json(200, web.status())
             elif u.path == "/api/qr":
-                self._send_qr(web.public_url(), parse_qs(u.query))
+                # **どの会議のQRでも出せる。** 来週の会議のQRを今日のうちに
+                # 保存して、案内に載せるための道である。`id` が無ければ
+                # いま配信している会議のもの。
+                q = parse_qs(u.query)
+                mid = q.get("id", [""])[0]
+                target = web.meeting_url(mid) if mid else web.public_url()
+                self._send_qr(target, q)
             elif u.path == "/api/glossary":
                 if web.glossary is None:
                     self._send_json(503, {"error": "用語集の受け口が用意できていない。"})
@@ -1738,6 +2011,7 @@ def _control_handler(web: WebCaptions):
 
             q = query or {}
             download = q.get("dl", ["0"])[0] == "1"
+            name = q.get("name", [""])[0].strip()
             buf = io.BytesIO()
             if download:
                 # **保存するぶんは大きく作る。** 縮小は誰でもできるが、
@@ -1749,7 +2023,7 @@ def _control_handler(web: WebCaptions):
                 self._send_bytes(
                     200, "image/png", buf.getvalue(),
                     headers={"Content-Disposition":
-                             'attachment; filename="livecaption-qr.png"'},
+                             f'attachment; filename="{_qr_filename(name)}"'},
                 )
                 return
             # 白地・余白つき。画面共有の圧縮でも読めるように、粗い方が良い。
@@ -1766,7 +2040,7 @@ def _control_handler(web: WebCaptions):
             if path not in ("/api/token", "/api/zoom", "/api/tunnel",
                             "/api/engine", "/api/device", "/api/glossary",
                             "/api/tuning", "/api/tuning/save", "/api/direction",
-                            "/api/lang"):
+                            "/api/lang", "/api/meetings"):
                 self.send_error(404)
                 return
             try:
@@ -1776,7 +2050,11 @@ def _control_handler(web: WebCaptions):
                 return
 
             if path == "/api/tunnel":
-                self._tunnel(bool(body.get("on")))
+                self._tunnel(body)
+                return
+
+            if path == "/api/meetings":
+                self._meetings(body)
                 return
 
             if path == "/api/device":
@@ -1878,17 +2156,52 @@ def _control_handler(web: WebCaptions):
                 return
             self._send_json(200, web.status())
 
-        def _tunnel(self, on: bool) -> None:
+        def _tunnel(self, body: dict) -> None:
+            """配信の開始・停止と、経路の選び直し。
+
+            **経路を選ぶのは開始とは別の操作にする。** 選んだだけで外に出ては
+            いけない。`kind` だけが来たら、持ち替えて止まったままにする。
+            """
             if web.tunnel is None:
-                self._send_json(503, {"error": "トンネルの受け口が用意できていない。"})
+                self._send_json(503, {"error": "配信の受け口が用意できていない。"})
                 return
-            if on:
+            if "kind" in body:
+                try:
+                    web.tunnel.select(str(body["kind"]))
+                except ValueError as exc:
+                    self._send_json(400, {"error": str(exc)})
+                    return
+                if "on" not in body:
+                    self._send_json(200, web.status())
+                    return
+            if body.get("on"):
                 st = web.tunnel.start()
                 if st["state"] == "error":
                     self._send_json(400, {"error": st["error"]})
                     return
             else:
                 web.tunnel.stop()
+            self._send_json(200, web.status())
+
+        def _meetings(self, body: dict) -> None:
+            """会議を作る・選ぶ・消す。
+
+            **作るのと選ぶのは別の操作である。** 先の会議のURLを作っている最中に、
+            今日の配信が切り替わってはいけない。
+            """
+            action = str(body.get("action", ""))
+            try:
+                if action == "create":
+                    web.meetings.create(str(body.get("name", "")))
+                elif action == "select":
+                    web.meetings.select(str(body.get("id", "")))
+                elif action == "delete":
+                    web.meetings.delete(str(body.get("id", "")))
+                else:
+                    raise ValueError(f"知らない操作: 「{action}」。")
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
             self._send_json(200, web.status())
 
         def _shutdown(self) -> None:

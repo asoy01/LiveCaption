@@ -20,6 +20,10 @@ CHUNK_MS = 100
 # 取り込みは装置の実レートで行い、こちらで 24 kHz に落とす。
 # VB-CABLE は Windows のサウンド設定で 48 kHz にしてある（2:1 で間引ける）。
 CAPTURE_RATE = 48_000
+# 「音が来ている」と見なす振幅。無音の見張りと `--check-audio` が同じ値を使う。
+# **実測に基づく。** 無音は 0.003〜0.008、話し声は 0.698 まで振れた
+# （local/HANDOFF.md「実測結果」）。
+VOICE_PEAK = 0.01
 
 # --- 音声認識 ---------------------------------------------------------------
 ASR_URL = "wss://api.openai.com/v1/realtime?intent=transcription"
@@ -216,6 +220,34 @@ TUNNEL_CMD = "cloudflared"
 TUNNEL_LOCAL = PROJECT_ROOT / "local" / "bin" / "cloudflared.exe"
 # URLが出てくるまで待つ秒数。これを過ぎたら失敗として扱う。
 TUNNEL_TIMEOUT_SEC = 30.0
+
+# 配信の経路は2つある。操作画面で選び、前回の選択を覚える。
+#
+#   cloudflare  一時トンネル。**URLは起動のたびに変わる。** 準備は要らない。
+#               その場で決まった会議に向く。
+#   tailscale   Tailscale Funnel。**ホスト名が変わらない。** 会議のURLを前もって
+#               作って案内に載せられる。tailnet 側の設定が1回だけ要る。
+TUNNEL_KINDS = ("cloudflare", "tailscale")
+TUNNEL_KIND = "cloudflare"
+TUNNEL_KIND_STATE_PATH = PROJECT_ROOT / "local" / "tunnel_kind.json"
+TAILSCALE_CMD = "tailscale"
+# Windows の既定の置き場。PATH に無ければここを見る。
+TAILSCALE_LOCAL = Path(r"C:\Program Files\Tailscale\tailscale.exe")
+# Funnel が公開側で受けるポート。**443・8443・10000 しか選べない**（Tailscaleの制限）。
+FUNNEL_PUBLIC_PORT = 443
+# tailnet 上のホスト名を覚えておく秒数。**0 にすると毎回プロセスを起こす。**
+# 操作画面は2秒ごとに状態を取りに来るので、覚えないと1日に数万回になる。
+TAILSCALE_HOST_CACHE_SEC = 30.0
+
+# --- 会議ごとの閲覧URL -------------------------------------------------------
+# **会議ごとに別のURLを使う。** 参加者が会議ごとに違うので、前の会議のURLで
+# 今日の字幕が見えてはいけない。URLに載る `/v/<経路>` の部分を会議ごとに作る。
+#
+# **前もって作れる。** Tailscale ではホスト名が分かっているので、会議の前日でも
+# URLを確定できる。Zoomのリンクと一緒に案内に載せるための作りである。
+#
+# **配信するのは選んである1つだけ。** 他の会議のURLは、その日には404を返す。
+MEETINGS_STATE_PATH = PROJECT_ROOT / "local" / "meetings.json"
 
 # --- 会議の記録 -------------------------------------------------------------
 # 確定した1文ごとに、日本語の認識文と英語の字幕を対にして残す（transcript.py）。
@@ -431,6 +463,27 @@ def direction_selection() -> str:
     except (OSError, ValueError, AttributeError):
         name = ""
     return name if name in DIRECTIONS else DIRECTION_DEFAULT
+
+
+def tunnel_kind_selection() -> str:
+    """覚えている配信の経路。無ければ Cloudflare。"""
+    try:
+        saved = json.loads(TUNNEL_KIND_STATE_PATH.read_text(encoding="utf-8"))
+        kind = str(saved.get("kind", ""))
+    except (OSError, ValueError, AttributeError):
+        kind = ""
+    return kind if kind in TUNNEL_KINDS else TUNNEL_KIND
+
+
+def remember_tunnel_kind(kind: str) -> None:
+    """次の起動のために覚える。書けなくても落とさない。"""
+    try:
+        TUNNEL_KIND_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        TUNNEL_KIND_STATE_PATH.write_text(
+            json.dumps({"kind": kind}, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except OSError as exc:
+        print(f"  [配信] 経路を覚えられない: {exc}")
 
 
 def ui_lang_selection() -> str:

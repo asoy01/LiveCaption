@@ -362,6 +362,9 @@ class App:
         self.capture = None
         # 音声デバイスを開けなかったときの理由。開けたら消す。
         self.audio_error = ""
+        # 最後に1文が確定した時刻（`time.monotonic`）。無音の見張りが使う。
+        # **音量ではなく文で見る。** 理由は `_dispatch` に書いた。
+        self.last_sentence_at = time.monotonic()
         # 字幕の生成（録音・認識・翻訳）が回っているか。
         # **操作画面があるときは、停止した状態から始める。** 会議に入る前に
         # アプリを立ち上げておけるようにするため。無いときは押す手段が無いので
@@ -444,6 +447,14 @@ class App:
         """
         if on == self.generating:
             return
+        if on:
+            # **前の失敗を引きずらない。** `audio_error` は、開けたときと
+            # デバイスを差し替えたときにしか消えない。残っていると、画面には
+            # ずっと古い失敗が出たままになり、**始まったかどうかを状態から
+            # 判定できない**（無人で回すときは、これが唯一の手がかりになる）。
+            self.audio_error = ""
+            # 無音の見張りの起点。止まっているあいだの時間を数えない。
+            self.last_sentence_at = time.monotonic()
         self.generating = on
         loop = self.zoom.loop
         if loop is None:
@@ -686,6 +697,10 @@ class App:
         """文を受け取って翻訳を始める。順序を保つため、タスクを順番に積む。"""
         while True:
             cut = await self.sentences.get()
+            # **無音の見張りの基準はここである。** 音量ではなく「文になったか」で見る。
+            # Zoomのミックス音声には暗騒音が常に乗るので、振幅で黙っているかを
+            # 決めると、誰も居ない部屋に繋がったまま止まらない。
+            self.last_sentence_at = time.monotonic()
             self.stats["sentences"] += 1
             self.stats[f"cut_{cut.reason}"] = self.stats.get(f"cut_{cut.reason}", 0) + 1
             print(f"[{now()}] 文字起こし  {cut.text}")
@@ -789,7 +804,7 @@ class App:
                 print("配信URL:    起動中（URLが出たらここに表示する）")
             else:
                 print("配信URL:    **停止中**"
-                      "（操作画面の「トンネルを開始」で、参加者に配るURLが出る）")
+                      "（操作画面の「配信を開始」で、参加者に配るURLが出る）")
         if self.transcript is not None:
             # ここでファイルを作る。会議が始まる前に、書ける場所かどうかが分かる。
             self.transcript.open()

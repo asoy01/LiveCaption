@@ -19,12 +19,16 @@
 これは `--web` で起動し、操作画面をブラウザで開く。Zoomのトークンも、
 参加者に配るURLも、終了も、その画面から扱う。
 
-参加者に閲覧URLを配る（一時トンネル。ホスト権限も画面共有も要らない）:
+参加者に閲覧URLを配る（ホスト権限も画面共有も要らない）:
 
-    操作画面の「トンネルを開始」を押す。QRコードと閲覧URLが出る
+    操作画面の「配信を開始」を押す。QRコードと閲覧URLが出る
 
-**トンネルは既定では張らない。** 字幕は Cloudflare を通るので、未公開の
-観測結果を扱う会議では画面共有に留めること。起動時から張るなら --tunnel。
+経路は2つある。**Cloudflare** は準備が要らないがURLが毎回変わる。
+**Tailscale** はホスト名が変わらないので、会議のURLを前もって案内に載せられる。
+URLは会議ごとに別で、配信するのは操作画面で選んである1つだけである。
+
+**既定では配信しない。** 字幕は Cloudflare か Tailscale を通るので、未公開の
+観測結果を扱う会議では画面共有に留めること。起動時から出すなら --tunnel。
 
 **--web を付けると、字幕の生成は停止した状態で始まる。** 操作画面の「開始」を
 押すまで、音は取り込まれず、認識も翻訳もしない。会議に入る前に立ち上げてよい。
@@ -172,11 +176,12 @@ def main() -> int:
         web = web_mod.WebCaptions(
             port=args.web, control_port=args.control_port, bind=args.web_bind
         )
-        # トンネルは口だけ用意しておく。張るかどうかは別（既定では張らない）。
-        web.tunnel = tunnel_mod.Tunnel(args.web, command=args.cloudflared)
+        # 配信の口だけ用意しておく。出すかどうかは別（既定では出さない）。
+        # 経路（Cloudflare / Tailscale）は前回の選択を引き継ぐ。
+        web.tunnel = tunnel_mod.Delivery(args.web, command=args.cloudflared)
 
         def announce() -> None:
-            """トンネルの状態が変わったら端末にも出す。
+            """配信の状態が変わったら端末にも出す。
 
             **URLは起動表示より後に出てくる。** cloudflared が張り終えるまで
             数秒かかるためである。ここで出さないと、--no-browser のときに
@@ -188,10 +193,10 @@ def main() -> int:
                 print(f"[{stamp}] 配信  参加者に配るURL: {web.public_url()}")
                 print(f"[{stamp}] 配信  QRコードは操作画面に出る: {web.control_url()}")
             elif st["state"] == "error":
-                print(f"[{stamp}] 配信  トンネルが失敗した:")
+                print(f"[{stamp}] 配信  配信を始められなかった:")
                 print(st["error"])
             elif st["state"] == "off":
-                print(f"[{stamp}] 配信  トンネルを止めた。閲覧URLは死んだ。")
+                print(f"[{stamp}] 配信  配信を止めた。閲覧URLは死んだ。")
 
         web.tunnel.on_change = announce
         try:
@@ -204,12 +209,12 @@ def main() -> int:
         if args.tunnel:
             st = web.tunnel.start()
             if st["state"] == "error":
-                # トンネルが張れなくても本体は続ける。
+                # 配信できなくても本体は続ける。
                 # 画面共有とZoom字幕APIは使えるためである。
-                print("トンネルを開始できない:")
+                print("配信を開始できない:")
                 print(st["error"])
             else:
-                print("トンネルを起こしている。URLが出るまで数秒かかる。")
+                print("配信を始めている。URLが出るまで数秒かかる。")
         # ダブルクリックで起動したときに、ブラウザを自分で開かせない。
         # **開くのは操作画面である。** 閲覧画面はそこから開ける。
         if not args.no_browser:
@@ -229,7 +234,9 @@ def main() -> int:
         capture.stop()
         if web is not None:
             if web.tunnel is not None:
-                web.tunnel.stop()
+                # **選んでいない方も止める。** 経路を持ち替えた後に終わると、
+                # 片方が張りっぱなしで残る。
+                web.tunnel.stop_all()
             web.stop()
         application.report(capture)
     return 0

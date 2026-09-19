@@ -349,23 +349,65 @@ fewer lines (`config.WEB_LINES`).
 
 #### C. Hand out a URL
 
-This needs no host rights either. It opens a temporary tunnel through
-Cloudflare and gives you a public URL and a QR code.
+This needs no host rights either. The caption PC opens an outgoing tunnel and
+gives you a public URL and a QR code.
 
-1. Press **トンネルを開始** (start the tunnel) under **参加者への配信**. The status
-   shows `配信: 起動中…` and then `配信: 中`
-2. Show the QR code to the people who want captions, or send them the URL.
-   **Press URLをコピー (copy the URL) under the URL** and paste it into the
-   meeting chat
-3. To hand out the QR code as a picture, press **QRコードを保存** (save the QR
-   code). Your browser saves `livecaption-qr.png` (656 by 656 pixels) to its
-   download folder. Put that file in an e-mail or on a slide
-4. They open the URL on their own phone or laptop
+**There are two routes.** Pick one under **Route** (経路).
 
-**The tunnel is off by default.** Captions travel through Cloudflare.
-**Do not use the tunnel for meetings whose content must not leave your
-organisation.**
-Use screen share instead.
+| | Cloudflare | Tailscale |
+|---|---|---|
+| Preparation | none | one setting on the tailnet |
+| URL | **changes every time you deliver** | **never changes** |
+| Can you hand it out in advance? | no | **yes** |
+
+Use Cloudflare for a meeting decided on the spot. Use Tailscale when you want
+the URL in the invitation.
+
+##### C-1. Hand out on the spot (Cloudflare)
+
+1. Set **Route** to **Cloudflare**
+2. Press **Start delivering** (配信を開始) under **Delivery to participants**.
+   The status shows `配信: 起動中…` and then `配信: 中`
+3. Show the QR code to the people who want captions, or send them the URL.
+   **Press Copy the URL** and paste it into the meeting chat
+4. To hand out the QR code as a picture, press **Save the QR code**. Your
+   browser saves a PNG (656 by 656 pixels) to its download folder. Put that
+   file in an e-mail or on a slide
+5. They open the URL on their own phone or laptop
+
+##### C-2. Hand out in advance (Tailscale)
+
+The caption PC's host name never changes, so **the URL is fixed the day
+before.** You can put it in the invitation next to the meeting link.
+
+Prepare once. Run this on the caption PC and follow the consent page that opens
+in your browser. You need tailnet admin rights.
+
+```
+tailscale funnel 8080
+```
+
+It enables two things: HTTPS certificates, and the `funnel` attribute in the
+policy file.
+
+Then, for each meeting:
+
+1. Set **Route** to **Tailscale**
+2. Type the meeting name under **Meetings** and press **Add**. The URL for that
+   meeting appears at once
+3. Copy the URL, or save the QR code, and put it in the invitation
+4. **On the day, select that meeting.** Press the circle on the left
+5. Press **Start delivering**
+
+**Only the selected meeting is delivered.** The other meetings' URLs do not
+open that day. People from last week's meeting cannot watch today's captions.
+
+**A fixed URL is also a weakness.** The only thing protecting it is the random
+text at the end of the URL. If it leaks, delete that meeting and make a new one.
+
+**Neither route delivers anything by default.** Captions travel through
+Cloudflare or Tailscale. **Do not hand out a URL for meetings whose content
+must not leave your organisation.** Use screen share instead.
 
 ### Step 6. Tell the audience
 

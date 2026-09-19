@@ -40,14 +40,36 @@ EN: dict[str, str] = {
 
     # --- 参加者への配信 ---
     "参加者への配信": "Delivery to participants",
-    "トンネルを開始": "Start the tunnel",
+    "配信を開始": "Start delivering",
+    "経路": "Route",
+    "Cloudflare（その場で配る）": "Cloudflare (hand out on the spot)",
+    "Tailscale（前もって配る）": "Tailscale (hand out in advance)",
+    "ホスト名が変わらないので、": "The host name never changes, so ",
+    "会議のURLを前もって配れる。": "you can hand out a meeting URL in advance.",
+    "tailnet 側の設定が1回だけ要る。": " It needs one setting on the tailnet side.",
+    "準備は要らないが、": "No preparation is needed, but ",
+    "URLは起動のたびに変わる。": "the URL changes every time you start it.",
+    "前もって配ることはできない。": " You cannot hand it out in advance.",
     "閲覧URLのQRコード": "QR code for the viewer URL",
     "URLをコピー": "Copy the URL",
     "QRコードを保存": "Save the QR code",
     "このURLをQRで配る。参加者はブラウザで開くだけでよい。":
         "Hand out this URL as a QR code. People only open it in a browser.",
-    "URLは起動のたびに変わる。": "The URL changes every time you start the tunnel.",
-    "停止すると、その場で見られなくなる。": "Stopping it kills the URL at once.",
+
+    # --- 会議 ---
+    "会議": "Meetings",
+    "会議ごとに別のURLを使う。": "Each meeting gets its own URL.",
+    "配信するのは選んである1つだけで、": "Only the meeting you select is delivered, and ",
+    "他の会議のURLは開けない。": "the other meetings' URLs do not open.",
+    "会議の名前（例: KAGRA朝礼 9/25）": "Meeting name (for example: KAGRA morning 9/25)",
+    "追加": "Add",
+    "削除": "Delete",
+    "この会議を配信する": "Deliver this meeting",
+    "会議のURLはいつでも作れる。Zoomのリンクと一緒に案内に載せられる。":
+        "You can make a meeting URL at any time, and put it in the invitation "
+        "next to the meeting link.",
+    "前もってURLを配るには、上の経路を ": "To hand out a URL in advance, set the route above to ",
+    " にすること。": ".",
 
     # --- Zoom字幕 ---
     "Zoom字幕": "Zoom captions",
@@ -175,10 +197,38 @@ EN: dict[str, str] = {
     "。「開始」で送信を始める。": ". Press Start to begin sending.",
     "送信を開始した。": "Sending started.",
     "送信を停止した。": "Sending stopped.",
-    "トンネルを起こしている。URLが出るまで数秒かかる。":
-        "Starting the tunnel. The URL takes a few seconds.",
-    "トンネルを止めた。閲覧URLは死んだ。":
-        "The tunnel is stopped. The viewer URL is dead.",
+    "配信を始めている。URLが出るまで数秒かかる。":
+        "Starting the delivery. The URL takes a few seconds.",
+    "配信を止めた。閲覧URLは死んだ。":
+        "The delivery is stopped. The viewer URL is dead.",
+    "経路を選んだ。「配信を開始」で始める。":
+        "Route selected. Press Start delivering to begin.",
+    "tailscale に設定させている": "letting tailscale set it up",
+    "tailscale が使えない": "tailscale is not usable",
+
+    # --- 会議（画面の中で組み立てる文） ---
+    # **ここに二重引用符を入れてはいけない。** 訳したあとの文字列は JavaScript の
+    # 文字列リテラルの中に入る。`"` を入れるとリテラルがそこで閉じ、
+    # **操作画面のスクリプト全体が構文エラーになって、どのボタンも効かなくなる。**
+    # 同じ理由で、JavaScript の文字列に 「」 を書いてはいけない（下の記号の欄で
+    # `"` に化ける）。名前は「: 」の後ろに置いて囲まない。
+    "配信する会議: ": "Now delivering: ",
+    "会議の名前を入れること。": "Type a meeting name first.",
+    "会議を作った: ": "Meeting created: ",
+    "。配信する会議は変えていない。":
+        ". The meeting being delivered has not changed.",
+    "会議を消した: ": "Meeting deleted: ",
+    "会議を消した。閲覧URLが要るので、新しい会議を1つ作った。":
+        "Meeting deleted. A viewer URL is always needed, so a new meeting "
+        "was created.",
+    "この会議を消す: ": "Delete this meeting: ",
+    "。このURLは開けなくなる。よろしいですか。":
+        ". Its URL stops working. Are you sure?",
+    "URLがまだ決まらない。Tailscale に繋がっているか確かめること。":
+        "No URL yet. Check that Tailscale is connected.",
+    "Cloudflare ではURLが毎回変わる。配信を始めると出る。":
+        "With Cloudflare the URL changes every time. It appears once you start "
+        "delivering.",
     "クリップボードに書けない。選んであるので Ctrl+C を押すこと。":
         "Cannot write to the clipboard. The text is selected, so press Ctrl+C.",
     "コピーした": "Copied",
