@@ -505,6 +505,25 @@ CONTROL_BODY = """
      会議が始まって、そちらで失敗していても気づけない。 */
   .tabs > .tab.alert::after { content: " ●"; color: var(--ng); }
 
+  /* --- 会議の管理のタブ ----------------------------------------------------
+     **ここだけ窓いっぱいに広げる。** 日時・Zoomのリンク・3つの数値・印を並べると、
+     440px の欄には1行に1つしか入らない。それが辛いから別の窓に出したのであって
+     （2026-09-19）、そのまま欄の中に戻すと元の木阿弥になる。
+     タブにするなら、幅も一緒に連れてくること。 */
+  #meetFrame { display: block; width: 100%; height: 100%; border: 0; }
+  /* **消した2つは、格子の枠を数えるときに居なくなる。** 3列のまま
+     `display: none` にすると、欄が1列目（幅0）へ繰り上がって消える。
+     列も一緒に1つへ減らすこと。 */
+  body.manage #split { grid-template-columns: minmax(0, 1fr); }
+  body.manage #main, body.manage #sep { display: none; }
+  body.manage #panel {
+    display: flex; flex-direction: column; padding: 0; overflow: hidden;
+    border-left: 0; max-height: none;
+  }
+  body.manage .tabs { flex: 0 0 auto; width: 100%; max-width: 980px;
+                      margin: 12px auto 0; padding: 0 26px; }
+  body.manage #paneMeet { flex: 1 1 auto; min-height: 0; }
+
   /* 置き場を選ぶための一覧。**窓を重ねない。** この画面に重なる窓は1つも
      無いので、ここだけ別の作りにしない。欄の中に開く。 */
   .browse { border: 1px solid var(--line2); border-radius: 6px;
@@ -743,6 +762,7 @@ CONTROL_BODY = """
        （2026-09-20 の麻生の指摘）。 -->
   <div class="tabs">
     <button class="tab on" id="tabRun">会議</button>
+    <button class="tab" id="tabMeet">会議の管理</button>
     <button class="tab" id="tabSet">設定</button>
   </div>
 
@@ -799,11 +819,9 @@ CONTROL_BODY = """
     <div class="row2">
       <span id="dirState"></span>
     </div>
-    <div class="row2">
-      <button id="meetManage" class="primary">会議の管理</button>
-    </div>
     <div class="row2 hint">
-      予定の入力・追加・削除は別の画面で行う。<b>向きは選んだ時点で切り替わる。</b>
+      予定の入力・追加・削除は、上の「会議の管理」で行う。
+      <b>向きは選んだ時点で切り替わる。</b>
       逆の言語が混ざったときは、訳さずにそのまま出す。
     </div>
   </div>
@@ -929,6 +947,12 @@ CONTROL_BODY = """
 
 </div>
 
+<!-- **中身は `/meetings` をそのまま入れる。** 作りを2つに分けない。
+     直に埋めると、`$` も `#msg` も `#list` も操作画面とぶつかる。 -->
+<div id="paneMeet" hidden>
+  <iframe id="meetFrame" title="会議の管理"></iframe>
+</div>
+
 <div id="paneSet" hidden>
 
   <div class="grp">
@@ -1029,7 +1053,6 @@ __FEED_JS__
   const meetPick = $("meetPick"), meetCount = $("meetCount");
   const meetWhen = $("meetWhen"), meetUrl = $("meetUrl");
   const meetUrlRow = $("meetUrlRow"), meetQr = $("meetQr");
-  const meetManage = $("meetManage");
   const schedState = $("schedState"), schedNext = $("schedNext");
   const schedFail = $("schedFail"), schedFailRow = $("schedFailRow");
   const schedAck = $("schedAck"), schedStop = $("schedStop"), schedSkip = $("schedSkip");
@@ -1101,19 +1124,30 @@ __FEED_JS__
   // --- パネルのタブ -------------------------------------------------------
   // **隠すのは設定の側だけにする。** 会議中に見るもの（状態・音量・次の予定）は
   // どちらを開いていても見えていないと困るので、会議の側に集めてある。
-  const tabRun = $("tabRun"), tabSet = $("tabSet");
-  const paneRun = $("paneRun"), paneSet = $("paneSet");
+  const TABS = {
+    run:  [$("tabRun"),  $("paneRun")],
+    meet: [$("tabMeet"), $("paneMeet")],
+    set:  [$("tabSet"),  $("paneSet")],
+  };
+  const meetFrame = $("meetFrame");
   function showTab(which) {
-    const set = (which === "set");
-    paneSet.hidden = !set;
-    paneRun.hidden = set;
-    tabSet.classList.toggle("on", set);
-    tabRun.classList.toggle("on", !set);
+    if (!TABS[which]) { which = "run"; }
+    Object.keys(TABS).forEach((k) => {
+      const [btn, pane] = TABS[k];
+      pane.hidden = (k !== which);
+      btn.classList.toggle("on", k === which);
+    });
+    // 会議の管理だけは窓いっぱいに広げる。狭い欄では打てない。
+    document.body.classList.toggle("manage", which === "meet");
+    // **開かれるまで読み込まない。** 使わない人の画面で、3秒ごとの問い合わせを
+    // もう1本増やさない。一度読んだら、そのままにしておく。
+    if (which === "meet" && !meetFrame.src) { meetFrame.src = "/meetings"; }
     localStorage.setItem("panelTab", which);
   }
-  tabRun.addEventListener("click", () => showTab("run"));
-  tabSet.addEventListener("click", () => showTab("set"));
-  showTab(localStorage.getItem("panelTab") === "set" ? "set" : "run");
+  Object.keys(TABS).forEach((k) => {
+    TABS[k][0].addEventListener("click", () => showTab(k));
+  });
+  showTab(localStorage.getItem("panelTab") || "run");
 
   async function post(path, body) {
     const res = await fetch(path, {
@@ -1875,7 +1909,6 @@ __FEED_JS__
   });
 
   // **別のタブで開く。** 操作画面は会議中に見ているので、置き換えない。
-  meetManage.addEventListener("click", () => { window.open("/meetings", "_blank"); });
 
   openViewer.addEventListener("click", () => { window.open(viewerUrl.textContent, "_blank"); });
 

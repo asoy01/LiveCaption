@@ -285,18 +285,24 @@ the meeting, and the conversation during setup does not reach the recogniser.
 Captions are on the left, controls on the right. Drag the divider to change the
 width; double-click it to go back to the default.
 
-The right side has two tabs.
+The right side has three tabs.
 
 | Tab | What is in it | When you look at it |
 |---|---|---|
 | **Meetings** | Right now, this meeting, how people see it, meeting record | Every meeting |
+| **Manage meetings** | Add, edit and delete schedules | Before a meeting |
 | **Setup** | Audio input, glossary, delay tuning, quit | When you set the machine up |
 
 **Everything you touch on the day is under Meetings.** You rarely open Setup
 once it is right.
 
+**Manage meetings fills the whole window.** It lays out the time, the Zoom link,
+three numbers and a tick box, which does not fit in the width of the right
+panel. The captions are hidden while it is open, and the split comes back when
+you pick another tab.
+
 **A red dot on the Meetings tab means something there has failed.** It is there
-so you notice while Setup is open.
+so you notice while another tab is open.
 
 The three entries under "How people see it" are folded. **Even folded, the right
 of each row says `delivering` or `sending`, so you can tell how many are running.**
@@ -521,9 +527,10 @@ the host can create it, during the meeting. Section 4.4 covers how to receive it
 
 ### 4.1 Entering a schedule
 
-Press **Manage meetings** under "This meeting" on the control page. The
-management page opens in another tab. Press **Schedule** on a meeting row and an
-editor opens inside it.
+Pick the **Manage meetings** tab on the control page. Each meeting row has the
+fields laid out in it.
+
+Opening `http://localhost:8081/meetings` directly shows the same thing.
 
 | Field | Meaning |
 |---|---|

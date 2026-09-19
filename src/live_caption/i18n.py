@@ -242,8 +242,8 @@ EN: dict[str, str] = {
     "Zoomの字幕に流す": "Into the Zoom captions",
     "設定": "Setup",
     "音量メーターは会議の側に出る。": "The level meter is on the Meetings tab.",
-    "予定の入力・追加・削除は別の画面で行う。":
-        "Add, edit and delete meetings on the other page. ",
+    "予定の入力・追加・削除は、上の「会議の管理」で行う。":
+        "Add, edit and delete meetings on the Manage meetings tab above. ",
     "向きは選んだ時点で切り替わる。": "The direction changes the moment you pick it. ",
     "起動中": "starting",
     "配信の失敗": "delivery failed",
