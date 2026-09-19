@@ -17,7 +17,11 @@ the audio from a virtual audio cable, so it works with any meeting software that
 plays sound.
 
 **Use one Windows PC only for captions.** That PC joins the meeting as a silent
-participant. The reason is in section 9, "How it works".
+participant. The reason is in section 10, "How it works".
+
+**You can schedule meetings and let it run with nobody watching.** At the set
+time it joins Zoom, starts delivering, and shuts the meeting down when it ends.
+See section 4, "Scheduled meetings".
 
 ---
 
@@ -209,6 +213,45 @@ software was using, and the captions stop.**
 
 Use a tool that drives the console session itself, such as a VNC-style remote
 desktop. A VNC-style tool does not change the audio device setup.
+
+### 2.10 Reaching the control page from another machine (optional)
+
+Sending the whole screen over a remote desktop is often slow. The control page
+is a web page, so **opening it directly from another machine is faster and more
+reliable.**
+
+If you use Tailscale, start it like this and the control page also listens on
+your tailnet address.
+
+```
+pixi run caption --web --control-bind
+```
+
+With no value it finds this PC's Tailscale address by itself. At startup you
+will see:
+
+```
+操作画面:   http://localhost:8081  (yours only. Never share it)
+            http://100.x.x.x:8081  (from inside the tailnet. Restrict it with an ACL)
+```
+
+**127.0.0.1 always stays.** You can still work at the machine itself when
+Tailscale is down. Right after a reboot, if Tailscale is not up yet, it keeps
+retrying in the background until the address appears.
+
+**The control page has no authentication.** The only thing protecting it is
+where a request can come from. So:
+
+- **Never expose it outside the tailnet.** Addresses outside the Tailscale
+  ranges (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) are refused by design
+- **Restrict it with a Tailscale ACL** so only your own devices can reach it.
+  If you have invited other people into your tailnet, they can otherwise open
+  the control page — and that means quitting the app, starting delivery, and
+  **reading the meeting transcript**
+
+The connection is plain HTTP, so **the copy buttons do not work** (a browser
+restriction). The URL is selected for you; press Ctrl+C. From `localhost` at the
+machine itself they work as before.
 
 ---
 
@@ -424,7 +467,143 @@ and the terminal window both close.
 
 ---
 
-## 4. The glossary
+## 4. Scheduled meetings
+
+So far a person sits at the control page for every meeting. **If you enter a
+schedule, it runs at the set time on its own.** This assumes the caption PC
+stays powered on.
+
+It does four things by itself:
+
+1. Selects the meeting and starts delivering
+2. Joins Zoom
+3. Starts making captions
+4. Leaves and stops when the meeting is over
+
+**Only the Zoom caption token cannot be obtained automatically**, because only
+the host can create it, during the meeting. Section 4.4 covers how to receive it.
+
+### 4.1 Entering a schedule
+
+On the control page, under **Meetings**, press **Schedule** on a meeting row. An
+editor opens inside the row.
+
+| Field | Meaning |
+|---|---|
+| Start | When the meeting starts |
+| Weekly | Repeat on the same weekday at the same time |
+| Zoom | The invitation URL (`https://zoom.us/j/...`) or the meeting number. Empty: it does not join |
+| Minutes before | Start delivering and join Zoom this many minutes early |
+| Stop after silence | If no transcript appears for this long, the meeting is treated as over |
+| Hard cap | Stop after this long even if sound continues |
+| Run this meeting automatically | **Only meetings with this ticked run on their own** |
+
+**Automatic is off by default.** Running it automatically sends captions out
+with nobody watching. Do not tick it for meetings whose content must not leave.
+
+Weekly is the only repeat. There is no support for more complex schedules.
+
+### 4.2 Watching what it does
+
+**Coming up** appears at the top of the control page.
+
+```
+Coming up
+Waiting
+2026-09-25 10:00  Morning meeting    in 23 min
+2026-09-27 13:00  Collaborators      in 2 d 3 h
+[Stop now] [Skip the next one]
+```
+
+While it runs, it shows how long until the silence stop and until the hard cap.
+
+**A failure stays until you dismiss it.** With nobody watching, a failure that
+scrolls away is a failure nobody sees. Read it, then press **Got it**.
+
+**Skip the next one** sits out a single occurrence. The schedule itself stays.
+
+### 4.3 Zoom client settings
+
+If you use automatic joining, set these **once** in the Zoom client. They are
+not per-meeting.
+
+- Speaker `CABLE Input`, microphone muted (same as Step 2)
+- Mute my microphone when joining
+- Turn off my video when joining
+- **Do not show the "Join with Computer Audio" prompt**
+
+The last one matters most. **If that prompt is still shown, it joins but no
+audio arrives.** With nobody there to press it, the failure is hard to diagnose.
+
+If no sound arrives for five minutes after joining, the control page says:
+
+> No sound is coming from Zoom. The passcode may be wrong, it may be stuck in
+> the waiting room, or an update dialog may be open. Look at the screen.
+
+**Personal links (`https://zoom.us/my/...`) are not supported**, because they do
+not contain a meeting number. Use an invitation URL with a number (`/j/...`).
+
+**The only way to leave Zoom is to quit the client**, because nothing lets you
+leave a meeting from outside. **It never quits a meeting you joined yourself**
+— it only quits when it was the one that joined.
+
+### 4.4 The host URL
+
+Even when the caption PC is not the host, you can still put captions into Zoom
+if the host helps.
+
+Each meeting can have a **separate secret URL**, different from the
+participants' one. Press **Show the host URL** in the schedule editor.
+
+**Give this URL to the host only. Do not confuse it with the participants'
+URL.** Whoever holds it can push that meeting's captions into Zoom.
+
+When the host opens it in a browser, a page appears for pasting the token. Once
+sent, the caption PC starts sending captions to Zoom.
+
+**This URL exists only when the route is Tailscale.** It is never made for
+Cloudflare, because TLS ends at Cloudflare and the Zoom credential would pass
+through there in the clear.
+
+It is accepted only when all of these hold:
+
+- It is the meeting currently being delivered
+- It is within 30 minutes of the scheduled start, or the meeting is running
+- It has not been used yet (a second attempt is refused; **Accept one more** on
+  the control page opens it again)
+
+**If the URL leaks, delete that meeting and make a new one.**
+
+### 4.5 Running resident, and starting at logon
+
+Double-click `StartLiveCaptionTray.vbs` and it goes to the task tray **with no
+window at all**.
+
+| Icon colour | State |
+|---|---|
+| Blue | Waiting |
+| Green | Captions are running |
+| Red | A failure is waiting to be read |
+
+Hover to see the next meeting, or the one running now. Right-click for the
+control page, the log, and quit.
+
+There is no window, so the log goes to `local/log/` (the last 20 runs).
+
+To start it at Windows logon, run this. No administrator rights are needed.
+
+```
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install_autostart.ps1
+```
+
+Add `-Remove` to undo it.
+
+**Keep the caption PC logged in.** A locked screen is fine. It cannot run when
+you are logged out, so after a reboot nothing starts until somebody logs in.
+
+---
+
+## 5. The glossary
 
 The tables in `etc/glossary/` decide how well technical terms are translated.
 **These tables are the part of LiveCaption you maintain.**
@@ -523,7 +702,7 @@ on by running them through the translation step.
 
 ---
 
-## 5. The meeting record
+## 6. The meeting record
 
 **LiveCaption saves a record of every meeting by default.** You do not have to
 turn it on.
@@ -560,12 +739,13 @@ need them when you tune the settings.
 
 ---
 
-## 6. Commands
+## 7. Commands
 
 For a meeting you use the batch file. The commands below are for setting up, testing, and recovery.
 
 ```powershell
 StartLiveCaption.bat                             # this is what you use for a meeting
+StartLiveCaptionTray.vbs                         # go to the task tray, no window
 InstallToStartMenu.bat                           # add it to the Start menu (once)
 
 pixi run web                                     # the same thing, from a terminal
@@ -589,7 +769,9 @@ Options:
 | `--glossary <name> ...` | Which tables in `etc/glossary/` to use. Several can be given. Default: the combination you chose last |
 | `--device <name>` | Part of the input device name. Default: `CABLE Output` |
 | `--web [port]` | Show captions in a browser. The number is the viewer port, 8080 by default |
-| `--control-port <port>` | The control page port, 8081 by default. **It always listens on 127.0.0.1 only** |
+| `--control-port <port>` | The control page port, 8081 by default |
+| `--control-bind [address]` | **Also serve the control page on your tailnet address.** With no value it finds it by itself. 127.0.0.1 always stays. **Addresses outside the Tailscale ranges are refused** (see 2.10) |
+| `--tray` | **Go to the task tray.** The log is also written to `local/log/` |
 | `--web-bind <address>` | The address the **viewer page** listens on, 127.0.0.1 by default. Use 0.0.0.0 to show the viewer page directly to devices on the same LAN. The control page is not affected |
 | `--tunnel` | Open the tunnel at start-up. It is off by default |
 | `--no-browser` | Do not open the browser automatically |
@@ -604,6 +786,13 @@ Options:
 | `--list-devices` | List the input devices |
 | `--cloudflared <path>` | Where `cloudflared` is. Not needed if it is on PATH or in `local/bin` |
 
+To register and remove the logon task:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install_autostart.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -Remove
+```
+
 **If a port is taken, change both numbers.** Port 8081 belongs to the control
 page, so never give 8081 to the viewer page.
 
@@ -613,7 +802,7 @@ pixi run caption --web 8090 --control-port 8091
 
 ---
 
-## 7. Settings
+## 8. Settings
 
 The settings are in `src/live_caption/config.py`. The defaults come from
 measurement, so change them only when you have a reason.
@@ -677,7 +866,7 @@ ignores a bad value silently**, so read the start-up output.
 
 ---
 
-## 8. When something is wrong
+## 9. When something is wrong
 
 | Symptom | Where to look |
 |---|---|
@@ -695,6 +884,13 @@ ignores a bad value silently**, so read the start-up output.
 | Captions go by too fast to read | Ask the readers to make the caption area taller. Lower `config.FORCE_CUT_CHARS` |
 | The recogniser reconnects again and again | The network. Turn off incoming video in the meeting software on the caption PC. Try another line |
 | Captions stopped after you connected remotely | **Did you connect with RDP?** It cuts the audio path (see 2.9) |
+| Nothing starts at the scheduled time | **Is "Run this meeting automatically" ticked?** It is off by default. Check that the meeting is listed under Coming up |
+| It joined Zoom but no sound arrives | **Is the "Join with Computer Audio" prompt still shown?** (see 4.3). It may also be stuck in the waiting room, or the passcode may be wrong |
+| It does not leave when the meeting ends | Check the silence-stop setting. The hard cap always stops it |
+| It keeps running after the meeting ended early | If somebody left a microphone open, the sound continues and it never falls silent. Press Stop now |
+| It does not start at logon | Are you logged in? **It cannot run while you are logged out.** Check the `LiveCaption` task in Task Scheduler |
+| No tray icon appears | Read the log in `local/log/`. With no window, that is the only place to look |
+| The control page is unreachable from the tailnet | Did you start it with `--control-bind`? Is Tailscale up? Is an ACL blocking it? |
 
 **Check the receiving side first.** A successful send is not proof that anything
 is displayed. Every send can return 200 while nothing appears on the other
@@ -705,7 +901,7 @@ out. If you miss one, look again instead of sending it a second time.
 
 ---
 
-## 9. How it works
+## 10. How it works
 
 You do not need this section to use LiveCaption.
 
