@@ -298,9 +298,14 @@ class Scheduler:
         """
         if not meeting.zoom:
             return
-        # **すでに人がZoomを開いていたら、殺さない。** 麻生が開いたままの会議を
-        # 巻き添えにしないよう、こちらが起こしたときだけ覚えておく。
-        already = zoom_join.running()
+        # **すでに人が会議に入っていたら、後で切らない。** 開いたままの会議を
+        # 巻き添えにしないよう、こちらが入れたときだけ覚えておく。
+        #
+        # **`running()` で見てはいけない。** Zoomは会議を抜けても常駐の窓口を
+        # 残すので、常時起動の機体ではほぼいつでも True になる。それを
+        # 「会議中」と読むと、こちらが入れた会議から永遠に出なくなる
+        # （2026-09-19、実機で踏んだ）。
+        already = zoom_join.in_meeting()
         try:
             url = await asyncio.to_thread(
                 zoom_join.join, meeting.zoom, config.ZOOM_DISPLAY_NAME)
@@ -313,7 +318,7 @@ class Scheduler:
         self.note = "Zoomに入った"
         print(f"[{now_str()}] 予定        Zoomに入る: {url[:90]}")
         if already:
-            print(f"[{now_str()}] 予定        Zoomは既に動いていた。"
+            print(f"[{now_str()}] 予定        Zoomは既に会議に入っていた。"
                   "終わっても終了させない")
 
     async def _arm(self) -> str:

@@ -35,6 +35,12 @@ _DIGITS = re.compile(r"[0-9]")
 _JOIN_PATH = re.compile(r"/j/(\d{9,12})")
 # 個人リンク。**番号が入っていないので、こちらでは会議番号に直せない。**
 _PERSONAL = re.compile(r"/my/([A-Za-z0-9._-]+)")
+# 会議の窓のクラス名。**実測で確かめた**（Zoom 2026-09 時点、Windows）。
+# タイトルで見ないこと。表示言語で変わる（日本語では「Zoom ミーティング」）。
+MEETING_WINDOW_CLASSES = frozenset({
+    "ConfMultiTabContentWndClass",   # いまの Zoom の会議の窓
+    "ZPContentViewWndClass",         # 古い版
+})
 # Windows の既定の置き場。レジストリが読めなかったときに見る。
 _FALLBACK_EXE = os.path.expandvars(r"%APPDATA%\Zoom\bin\Zoom.exe")
 
@@ -145,21 +151,70 @@ def zoom_exe() -> str | None:
 
 
 def running() -> bool:
-    """`Zoom.exe` が動いているか。**会議に入っているかではない。**
+    """`Zoom.exe` が動いているか。
 
-    起きているのに待機室で止まっている、という状態も True になる。
-    区別する手立ては無い。
+    **これで「会議に入っているか」を判断してはいけない。** Zoomは会議を抜けても
+    常駐の窓口を残すので、常時起動の機体では**ほぼいつでも True** になる。
+    会議に入っているかは `in_meeting()` で見ること。
     """
+    return bool(_zoom_pids())
+
+
+def _zoom_pids() -> set[int]:
     try:
         out = subprocess.run(
-            ["tasklist", "/FI", "IMAGENAME eq Zoom.exe", "/NH"],
+            ["tasklist", "/FI", "IMAGENAME eq Zoom.exe", "/FO", "CSV", "/NH"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=10, stdin=subprocess.DEVNULL,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (OSError, subprocess.SubprocessError):
+        return set()
+    pids = set()
+    for line in (out.stdout or "").splitlines():
+        parts = [p.strip('"') for p in line.split('","')]
+        if len(parts) > 1 and parts[1].strip().isdigit():
+            pids.add(int(parts[1].strip()))
+    return pids
+
+
+def in_meeting() -> bool:
+    """いま会議に入っているか。
+
+    **プロセスの有無では分からない。** Zoomは会議を抜けても常駐の窓口を残す。
+    常時起動の字幕PCでは `Zoom.exe` がほぼいつでも動いているので、それを
+    「会議中」と読むと、**こちらが入れた会議から永遠に出なくなる。**
+
+    会議の窓のクラス名で見る。実測で確かめた名前である（2026-09-19）。
+    **タイトルでは見ない。** 表示言語で変わる（日本語では「Zoom ミーティング」）。
+    """
+    pids = _zoom_pids()
+    if not pids:
         return False
-    return "Zoom.exe" in (out.stdout or "")
+    try:
+        import ctypes
+        import ctypes.wintypes as wintypes
+
+        user32 = ctypes.windll.user32
+        found = []
+
+        def visit(hwnd, _lparam):  # noqa: ANN001
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value in pids and user32.IsWindowVisible(hwnd):
+                name = ctypes.create_unicode_buffer(256)
+                user32.GetClassNameW(hwnd, name, 256)
+                if name.value in MEETING_WINDOW_CLASSES:
+                    found.append(hwnd)
+            return True
+
+        proto = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+        user32.EnumWindows(proto(visit), 0)
+        return bool(found)
+    except (OSError, AttributeError, ValueError):
+        # 見分けが付かないときは「会議中」と答える。**安全側は触らないほうである。**
+        # 人が開いていた会議を、判定に失敗したせいで切ってはいけない。
+        return True
 
 
 def join(text: str, name: str = "") -> str:
@@ -195,10 +250,10 @@ def leave() -> bool:
     """Zoomを終了させる。終了させたなら True。
 
     **会議から出る口は無い。** 終了させるしかない。
-    `Zoom.exe` を全部落とすので、**こちらが起こしたときだけ呼ぶこと**
+    `Zoom.exe` を全部落とすので、**こちらが会議に入れたときだけ呼ぶこと**
     （`schedule.py` が覚えている）。
     """
-    if not running():
+    if not in_meeting():
         return False
     try:
         subprocess.run(
