@@ -357,7 +357,10 @@ Cloudflare and gives you a public URL and a QR code.
 2. Show the QR code to the people who want captions, or send them the URL.
    **Press URLをコピー (copy the URL) under the URL** and paste it into the
    meeting chat
-3. They open the URL on their own phone or laptop
+3. To hand out the QR code as a picture, press **QRコードを保存** (save the QR
+   code). Your browser saves `livecaption-qr.png` (656 by 656 pixels) to its
+   download folder. Put that file in an e-mail or on a slide
+4. They open the URL on their own phone or laptop
 
 **The tunnel is off by default.** Captions travel through Cloudflare.
 **Do not use the tunnel for meetings whose content must not leave your

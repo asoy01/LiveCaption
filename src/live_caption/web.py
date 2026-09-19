@@ -444,7 +444,7 @@ CONTROL_BODY = """
   /* **URLはボタンでコピーできるようにする。** `user-select: all` はクリックで
      全選択されるが、画面にその手がかりが出ない。会議中に「コピーできない」と
      悩ませないこと。トンネルのURLは、チャットに貼って配ることがある。 */
-  .copybtn { padding: 6px 12px; }
+  .copybtn, .savebtn { padding: 6px 12px; }
   /* 言語の選択。ヘッダに置くので、幅は内容ぶんだけにする。 */
   .langsel {
     font: inherit; font-size: 13px; color: var(--ja);
@@ -523,6 +523,7 @@ CONTROL_BODY = """
     <div class="row2" id="publicUrlRow" style="display:none">
       <span class="url" id="publicUrl"></span>
       <button class="copybtn" data-copy="publicUrl">URLをコピー</button>
+      <button class="savebtn" id="qrsave">QRコードを保存</button>
     </div>
     <div class="row2 hint" id="tunnelHint" style="display:none">
       このURLをQRで配る。参加者はブラウザで開くだけでよい。
@@ -687,6 +688,7 @@ __FEED_JS__
   const msg = $("msg"), pill = $("zoomPill"), zoomState = $("zoomState");
   const tpill = $("tunnelPill"), tstate = $("tunnelState");
   const qrbox = $("qrbox"), qr = $("qr"), publicUrl = $("publicUrl");
+  const qrsave = $("qrsave");
   const publicUrlRow = $("publicUrlRow"), tunnelHint = $("tunnelHint");
   const split = $("split"), sep = $("sep");
   const viewerUrl = $("viewerUrl"), openViewer = $("openViewer");
@@ -1283,6 +1285,18 @@ __FEED_JS__
     copyText(document.getElementById(btn.dataset.copy), btn);
   });
 
+  // --- QRコードの保存 -------------------------------------------------------
+  // **画面のQRは貼り付けられない。** スライドや案内のメールに載せるには、
+  // ファイルになったPNGが要る。サーバに大きく描き直させて、それを落とす。
+  qrsave.addEventListener("click", () => {
+    const a = document.createElement("a");
+    a.href = "/api/qr?dl=1&t=" + encodeURIComponent(publicUrl.textContent);
+    a.download = "livecaption-qr.png";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  });
+
   // --- 記録 ---------------------------------------------------------------
   // 別のタブに出す。**この画面は共有しないので、記録もここから出さない。**
   openLog.addEventListener("click", () => { window.open("/api/transcript", "_blank"); });
@@ -1556,11 +1570,14 @@ class _Base(BaseHTTPRequestHandler):
         # 本体のログに混ざると読めなくなるので、アクセスログは出さない。
         pass
 
-    def _send_bytes(self, code: int, ctype: str, body: bytes) -> None:
+    def _send_bytes(self, code: int, ctype: str, body: bytes,
+                    headers: dict | None = None) -> None:
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        for k, v in (headers or {}).items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
 
@@ -1667,7 +1684,7 @@ def _control_handler(web: WebCaptions):
             elif u.path == "/api/status":
                 self._send_json(200, web.status())
             elif u.path == "/api/qr":
-                self._send_qr(web.public_url())
+                self._send_qr(web.public_url(), parse_qs(u.query))
             elif u.path == "/api/glossary":
                 if web.glossary is None:
                     self._send_json(503, {"error": "用語集の受け口が用意できていない。"})
@@ -1707,13 +1724,34 @@ def _control_handler(web: WebCaptions):
             self._send_bytes(200, "text/plain; charset=utf-8",
                              web.transcript.markdown().encode("utf-8"))
 
-        def _send_qr(self, url: str) -> None:
+        def _send_qr(self, url: str, query: dict | None = None) -> None:
+            """閲覧URLのQRコードを返す。
+
+            画面に出すぶんは SVG で足りる。**`dl=1` を付けるとPNGを添付として
+            返す。** スライドやチャットに貼るには、画面の中のQRではなく、
+            ファイルになったQRが要る。
+            """
             if not url:
                 self.send_error(404)
                 return
             import segno
 
+            q = query or {}
+            download = q.get("dl", ["0"])[0] == "1"
             buf = io.BytesIO()
+            if download:
+                # **保存するぶんは大きく作る。** 縮小は誰でもできるが、
+                # 粗いPNGを引き伸ばすと読めなくなる。
+                segno.make(url, error="m").save(
+                    buf, kind="png", scale=16, border=4,
+                    dark="#000000", light="#ffffff",
+                )
+                self._send_bytes(
+                    200, "image/png", buf.getvalue(),
+                    headers={"Content-Disposition":
+                             'attachment; filename="livecaption-qr.png"'},
+                )
+                return
             # 白地・余白つき。画面共有の圧縮でも読めるように、粗い方が良い。
             segno.make(url, error="m").save(
                 buf, kind="svg", scale=6, border=2, dark="#000000", light="#ffffff"

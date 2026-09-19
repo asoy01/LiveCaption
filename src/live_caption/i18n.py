@@ -43,6 +43,7 @@ EN: dict[str, str] = {
     "トンネルを開始": "Start the tunnel",
     "閲覧URLのQRコード": "QR code for the viewer URL",
     "URLをコピー": "Copy the URL",
+    "QRコードを保存": "Save the QR code",
     "このURLをQRで配る。参加者はブラウザで開くだけでよい。":
         "Hand out this URL as a QR code. People only open it in a browser.",
     "URLは起動のたびに変わる。": "The URL changes every time you start the tunnel.",
