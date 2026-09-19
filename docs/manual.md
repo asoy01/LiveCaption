@@ -759,19 +759,30 @@ Downloads/live-caption_2026-09-08_143012.md      readable form, written at exit
 ### Changing the folder
 
 The setting is under **会議の記録** (meeting record) on the **Meetings** tab.
+There are three ways to choose.
 
-Press **フォルダを選ぶ** (choose a folder) and the Windows folder dialog opens.
-The change takes effect at once, and it is written to `.env`, so **the next
-launch starts with that folder.** The record that is open now is closed and
-reopened in the new folder.
+Press **フォルダを選ぶ** (choose a folder) and a folder list opens inside the
+page. Press a name to go in, **↑ 上へ** (up) to go back. When you reach the
+folder you want, press **ここにする** (use this one). **This works the same way
+from another machine.**
 
-You can also type a path and press **この場所にする** (use this path). **A folder
-that does not exist is created.** A folder that cannot be written to is refused.
+The list shows **only what is under the home folder** (`C:\Users\<name>`). The
+control page has no authentication, so there is no way to browse the whole disk
+from it.
 
-**The folder dialog opens on the caption PC screen.** It is no use when you have
-the control page open from another machine, so LiveCaption refuses it there: the
+You can also type a path and press **この場所にする** (use this path). **That
+one can point outside the home folder. A folder that does not exist is
+created.** A folder that cannot be written to is refused.
+
+Only when you sit at the caption PC, **Windowsの窓を開く** (open the Windows
+dialog) appears under the list. **That dialog opens on the caption PC screen**,
+so it is no use from another machine, and LiveCaption refuses it there: the
 person pressing the button would see nothing while a dialog sat open on the
-caption PC. Type the path instead.
+caption PC.
+
+Whichever way you choose, the change takes effect at once and is written to
+`.env`, so **the next launch starts with that folder.** The record that is open
+now is closed and reopened in the new folder.
 
 To change it per launch, use `--save-dir`. That wins over `.env`.
 

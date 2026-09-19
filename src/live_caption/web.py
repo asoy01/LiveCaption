@@ -505,6 +505,20 @@ CONTROL_BODY = """
      会議が始まって、そちらで失敗していても気づけない。 */
   .tabs > .tab.alert::after { content: " ●"; color: var(--ng); }
 
+  /* 置き場を選ぶための一覧。**窓を重ねない。** この画面に重なる窓は1つも
+     無いので、ここだけ別の作りにしない。欄の中に開く。 */
+  .browse { border: 1px solid var(--line2); border-radius: 6px;
+            background: var(--field); padding: 8px 10px; margin-bottom: 9px; }
+  .browse .list { max-height: min(32vh, 260px); overflow-y: auto; margin: 6px 0; }
+  .browse .d {
+    display: block; width: 100%; text-align: left; border: 0; background: none;
+    color: var(--fg); font-size: var(--ui); padding: 5px 6px; border-radius: 4px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .browse .d:hover { background: var(--hover); }
+  .browse .d.up { color: var(--muted); }
+  .browse .none { color: var(--muted); font-size: calc(var(--ui) - 2px); padding: 6px; }
+
   /* 見せ方の3つ。畳んだ見出しを縦に積む。 */
   .grp > .fold { margin-bottom: 7px; }
   .grp > .fold:last-child { margin-bottom: 0; }
@@ -891,6 +905,22 @@ CONTROL_BODY = """
       <button id="saveDirSet">この場所にする</button>
       <span id="saveDirState"></span>
     </div>
+    <!-- **画面の中でフォルダを辿る。** ネイティブの窓は字幕PCの画面にしか
+         出ないので、tailnet 越しには使えない。 -->
+    <div class="browse" id="browseBox" hidden>
+      <div class="row2" id="browseHead">
+        <span class="url" id="browseHere"></span>
+      </div>
+      <div class="list" id="browseList"></div>
+      <div class="row2">
+        <button id="browseTake" class="primary">ここにする</button>
+        <button id="browseClose">閉じる</button>
+      </div>
+      <div class="row2 hint" id="browseOut" style="display:none">
+        ホームフォルダの下だけを出している。
+        <button id="browseNative">Windowsの窓を開く</button>
+      </div>
+    </div>
     <div class="row2 hint" id="saveDirHint">
       選び直すと `.env` に書く。<b>次の起動もこの置き場で始まる。</b>
       いま開いている記録は、その場で閉じて新しい置き場に開き直す。
@@ -1260,12 +1290,80 @@ __FEED_JS__
     }
     saveDirPick.disabled = false; saveDirSet.disabled = false;
   }
-  saveDirPick.addEventListener("click", () =>
-    setSaveDir({ pick: true }, "字幕PCの画面で選んでいる…"));
   saveDirSet.addEventListener("click", () =>
     setSaveDir({ path: saveDir.value }, "確かめている…"));
   saveDir.addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); saveDirSet.click(); }
+  });
+
+  // --- 画面の中でフォルダを辿る -------------------------------------------
+  // **ネイティブの窓は、この機体の前でしか使えない。** 窓は字幕PCの画面に出る
+  // ので、tailnet 越しに押した人には何も見えない。こちらは、どこから開いても
+  // 同じように動く。
+  //
+  // **出すのはホームフォルダの下だけである。** その外を選ぶときは、パスを直接
+  // 入れるか、機体の前でネイティブの窓を使う。
+  const browseBox = $("browseBox"), browseList = $("browseList");
+  const browseHere = $("browseHere"), browseTake = $("browseTake");
+  const browseClose = $("browseClose"), browseOut = $("browseOut");
+  const browseNative = $("browseNative");
+  let browseAt = "";
+
+  // ネイティブの窓を出せるのは、この機体の前で開いたときだけである。
+  const atMachine = ["127.0.0.1", "localhost", "[::1]", "::1"]
+    .indexOf(location.hostname) >= 0;
+
+  async function browseTo(path) {
+    browseList.textContent = "";
+    try {
+      const r = await fetch("/api/folders?p=" + encodeURIComponent(path || ""));
+      const d = await r.json();
+      browseAt = d.path || "";
+      browseHere.textContent = browseAt;
+      if (d.up) { browseList.appendChild(dirRow("↑ 上へ", d.up, true)); }
+      (d.dirs || []).forEach((name) => {
+        // **区切りは付けずに繋ぐ。** Windows も Linux も、末尾の重複を許す。
+        browseList.appendChild(dirRow(name, browseAt + "/" + name, false));
+      });
+      if (d.error) {
+        const e = document.createElement("div");
+        e.className = "none ng"; e.textContent = d.error;
+        browseList.appendChild(e);
+      } else if (!(d.dirs || []).length) {
+        const e = document.createElement("div");
+        e.className = "none"; e.textContent = "中にフォルダが無い。";
+        browseList.appendChild(e);
+      }
+    } catch (e) {
+      browseList.textContent = "";
+      const m = document.createElement("div");
+      m.className = "none ng"; m.textContent = String(e.message);
+      browseList.appendChild(m);
+    }
+  }
+
+  function dirRow(label, path, up) {
+    const b = document.createElement("button");
+    b.className = "d" + (up ? " up" : "");
+    b.textContent = label;
+    b.addEventListener("click", () => browseTo(path));
+    return b;
+  }
+
+  saveDirPick.addEventListener("click", () => {
+    if (!browseBox.hidden) { browseBox.hidden = true; return; }
+    browseBox.hidden = false;
+    browseOut.style.display = atMachine ? "" : "none";
+    browseTo(saveDir.value);
+  });
+  browseClose.addEventListener("click", () => { browseBox.hidden = true; });
+  browseTake.addEventListener("click", async () => {
+    await setSaveDir({ path: browseAt }, "確かめている…");
+    browseBox.hidden = true;
+  });
+  browseNative.addEventListener("click", async () => {
+    await setSaveDir({ pick: true }, "字幕PCの画面で選んでいる…");
+    browseBox.hidden = true;
   });
 
   // --- 字幕の生成 ---------------------------------------------------------
@@ -2711,6 +2809,15 @@ def _control_handler(web: WebCaptions):
                     self._send_json(503, {"error": "字幕の向きの受け口が用意できていない。"})
                 else:
                     self._send_json(200, web.direction.status())
+            elif u.path == "/api/folders":
+                # **遠くからでも置き場を選べるようにする。** ネイティブの窓は
+                # 字幕PCの画面にしか出ないので、tailnet 越しには使えない
+                # （2026-09-20 の麻生の指示）。画面の中で辿れるようにする。
+                #
+                # **返すのはホームフォルダの下だけである。** 操作画面には認証が
+                # 無いので、ディスク全体を見せる口をここに足さない。
+                want = parse_qs(u.query).get("p", [""])[0]
+                self._send_json(200, config.browse(want))
             elif u.path == "/api/devices":
                 if web.audio is None:
                     self._send_json(503, {"error": "音声の受け口が用意できていない。"})

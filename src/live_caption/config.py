@@ -358,6 +358,85 @@ TRANSCRIPT_PREFIX = "live-caption_"
 SAVE_DIR_ENV = "LIVECAPTION_SAVE_DIR"
 
 
+# 画面から辿れる範囲。**ホームフォルダの外へは出さない。**
+# 操作画面には認証が無く、守っているのは「どこから届くか」だけである
+# （tailnet の中なら誰でも開ける）。ディスク全体を見せる口を、そこに足さない。
+def browse_root() -> Path:
+    return Path.home()
+
+
+# Windows のファイル属性。stat の st_file_attributes に立つ。
+_FILE_HIDDEN = 0x2
+_FILE_SYSTEM = 0x4
+
+# 1回に返すフォルダの数。**上限を付ける。** 数千個入ったフォルダを開いたときに、
+# 画面が固まるのと、送る量が膨らむのを防ぐ。
+BROWSE_LIMIT = 400
+
+
+def browse(path: str | Path = "") -> dict:
+    """ホームフォルダの下を辿る。1階層ぶんのフォルダ名を返す。
+
+    **範囲の外は、黙ってホームフォルダに戻す。** 断り書きを出しても、画面から
+    行けない場所なので意味が無い。`..` を並べた要求もここで吸収される。
+
+    **シンボリックリンクと接合点を追った後で判定する。** `resolve()` の前に
+    文字列で見ると、ホームの下に置いたリンクから外へ出られる。
+    """
+    root = browse_root()
+    try:
+        root = root.resolve()
+    except OSError:
+        pass
+    text = str(path).strip().strip('"')
+    try:
+        target = Path(os.path.expandvars(text)).expanduser().resolve() if text else root
+    except OSError:
+        target = root
+    if target != root and root not in target.parents:
+        target = root
+    if not target.is_dir():
+        target = root
+
+    names: list[str] = []
+    error = ""
+    try:
+        with os.scandir(target) as it:
+            for entry in it:
+                if len(names) >= BROWSE_LIMIT:
+                    error = "フォルダが多いので、途中までしか出せない。"
+                    break
+                # 隠しフォルダは出さない。**探しているものは、まず入っていない。**
+                if entry.name.startswith("."):
+                    continue
+                try:
+                    if not entry.is_dir():
+                        continue
+                    # Windows の「隠し」「システム」も落とす。ホームフォルダには
+                    # `Application Data` や `Cookies` のような、昔との互換のための
+                    # 接合点が並んでいる。**開いても中身は見えない。**
+                    # 一覧に出すと、押しても何も起きない行になる。
+                    attrs = getattr(entry.stat(follow_symlinks=False),
+                                    "st_file_attributes", 0)
+                    if attrs & (_FILE_HIDDEN | _FILE_SYSTEM):
+                        continue
+                    names.append(entry.name)
+                except OSError:
+                    continue
+    except OSError as exc:
+        error = f"そのフォルダは読めない: {exc}"
+    names.sort(key=str.casefold)
+
+    up = "" if target == root else str(target.parent)
+    return {
+        "root": str(root),
+        "path": str(target),
+        "up": up,
+        "dirs": names,
+        "error": error,
+    }
+
+
 def check_save_dir(path: str | Path) -> Path:
     """記録の置き場として使えるか確かめる。使える絶対パスを返す。
 

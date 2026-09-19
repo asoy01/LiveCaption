@@ -205,6 +205,17 @@ EN: dict[str, str] = {
     "置き場": "Folder",
     "フォルダを選ぶ": "Choose a folder",
     "この場所にする": "Use this path",
+    "↑ 上へ": "↑ Up",
+    "ここにする": "Use this one",
+    "閉じる": "Close",
+    "ホームフォルダの下だけを出している。":
+        "Only folders under the home folder are listed. ",
+    "Windowsの窓を開く": "Open the Windows dialog",
+    "中にフォルダが無い。": "No folders in here.",
+    "フォルダが多いので、途中までしか出せない。":
+        "Too many folders to list them all.",
+    "そのフォルダは読めない: ": "That folder cannot be read: ",
+
     "置き場を変えた": "Folder changed",
     "字幕PCの画面で選んでいる…": "Choosing on the caption PC screen…",
     "確かめている…": "Checking…",
