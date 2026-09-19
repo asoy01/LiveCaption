@@ -855,6 +855,14 @@ CONTROL_BODY = """
         <div class="row2 hint" id="tunnelHint" style="display:none">
           このURLをQRで配る。参加者はブラウザで開くだけでよい。
         </div>
+        <div class="row2">
+          <button id="chatPost">Zoomのチャットに投げる</button>
+          <span id="chatState"></span>
+        </div>
+        <div class="row2 hint">
+          いま入っている会議のチャットに、URLとQRを投げる。
+          <b>参加者全員に見える。</b>予定の会議で毎回投げるなら、会議の管理で印を付ける。
+        </div>
         <div class="row2" id="tunnelErrBox" style="display:none">
           <pre class="err" id="tunnelErr"></pre>
         </div>
@@ -1323,6 +1331,28 @@ __FEED_JS__
     }
     saveDirPick.disabled = false; saveDirSet.disabled = false;
   }
+  // --- Zoomのチャットに投げる -------------------------------------------
+  // **画面操作で投げている。** Zoom に会議中のチャットへ投稿する API は無い。
+  // 押した結果は、その場に出す。届いたかどうかは、こちらからは見えない。
+  const chatPost = $("chatPost"), chatState = $("chatState");
+  chatPost.addEventListener("click", async () => {
+    chatPost.disabled = true;
+    chatState.textContent = "投げている…";
+    try {
+      const st = await post("/api/chat", {});
+      showStatus(st);
+      const c = st.chat || {};
+      chatState.textContent = !c.text ? ""
+        : c.files ? "URLとQRを投げた" : "URLを投げた（QRは送れなかった）";
+      if (!c.text) {
+        chatState.innerHTML = '<span class="ng">' + (c.why || "投げられない") + "</span>";
+      }
+    } catch (e) {
+      chatState.innerHTML = '<span class="ng">' + e.message + "</span>";
+    }
+    chatPost.disabled = false;
+  });
+
   saveDirSet.addEventListener("click", () =>
     setSaveDir({ path: saveDir.value }, "確かめている…"));
   saveDir.addEventListener("keydown", (e) => {
@@ -2920,7 +2950,7 @@ def _control_handler(web: WebCaptions):
                             "/api/engine", "/api/device", "/api/glossary",
                             "/api/tuning", "/api/tuning/save", "/api/direction",
                             "/api/lang", "/api/meetings", "/api/schedule",
-                            "/api/savedir"):
+                            "/api/savedir", "/api/chat"):
                 self.send_error(404)
                 return
             try:
@@ -2943,6 +2973,10 @@ def _control_handler(web: WebCaptions):
 
             if path == "/api/savedir":
                 self._savedir(body)
+                return
+
+            if path == "/api/chat":
+                self._chat()
                 return
 
             if path == "/api/device":
@@ -3047,6 +3081,30 @@ def _control_handler(web: WebCaptions):
                 self._send_json(400, {"error": str(exc)})
                 return
             self._send_json(200, web.status())
+
+        def _chat(self) -> None:
+            """いま入っている会議のチャットに、字幕のURLとQRを投げる。
+
+            **押した人が見ていることが前提の口である。** 予定で自動に投げるのは
+            `schedule.py` のほうで、会議ごとの印が要る。
+            """
+            url = web.public_url() or web.viewer_url()
+            if not url:
+                self._send_json(400, {"error": "投げる先のURLがまだ無い。"})
+                return
+            try:
+                from . import zoom_chat
+
+                live = web.meetings.active_id
+                name = next((m.name for m in web.meetings.items()
+                             if m.id == live), "")
+                shot = zoom_chat.qr_file(url, name)
+                done = zoom_chat.post(zoom_chat.compose(url),
+                                      [shot] if shot else [])
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(500, {"error": f"{type(exc).__name__}: {exc}"})
+                return
+            self._send_json(200, dict(web.status(), chat=done))
 
         def _savedir(self, body: dict) -> None:
             """会議の記録の置き場を選び直す。

@@ -258,6 +258,24 @@ BODY = """</style>
       + "外に出せない内容の会議では印を付けないこと。";
     box.appendChild(warn);
 
+    // **Zoomのチャットに投げる印。** これも既定は切りである。押すと、会議の
+    // 参加者全員に字幕のURLが見える。
+    const chatrow = document.createElement("label");
+    chatrow.className = "autorow";
+    const chat = document.createElement("input");
+    chat.type = "checkbox"; chat.checked = !!it.chat;
+    chat.addEventListener("change", mark);
+    chatrow.appendChild(chat);
+    chatrow.appendChild(document.createTextNode(
+      "字幕が出たら、ZoomのチャットにURLとQRを投げる"));
+    box.appendChild(chatrow);
+
+    const chatWarn = document.createElement("div");
+    chatWarn.className = "warn";
+    chatWarn.textContent = "参加者全員にURLが見える。"
+      + "ホストがファイル送信を切っている会議では、URLだけが届く。";
+    box.appendChild(chatWarn);
+
     // --- URL ---
     const urls = document.createElement("div");
     urls.className = "urls";
@@ -337,6 +355,7 @@ BODY = """</style>
           silence_min: Number(silence.value),
           max_min: Number(cap.value),
           auto: auto.checked,
+          chat: chat.checked,
         }});
         // **通ってから、触った印を消す。** 先に消すと、断られたときに描き直されて
         // 「保存したのに戻った」ように見える。

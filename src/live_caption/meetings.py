@@ -56,6 +56,9 @@ class Meeting:
     silence_min: float = 10.0  # 無音がこれだけ続いたら畳む
     max_min: int = 180         # 安全上限。無音でなくてもここで必ず止める
     auto: bool = False         # **自動で回す印。既定は切り。** 理由は下
+    # **Zoomのチャットに字幕のURLを投げる印。既定は切り。**
+    # 投げると、会議の参加者全員にURLが見える。外に出せない会議では付けないこと。
+    chat: bool = False
     last_fired: str = ""       # 済ませた回の `start`。**時刻ではなく回を書く**
     host_id: str = ""          # ホストがトークンを貼るURLの経路（Phase 6）
 
@@ -64,7 +67,7 @@ class Meeting:
             "id": self.id, "name": self.name, "created": self.created,
             "start": self.start, "repeat": self.repeat, "zoom": self.zoom,
             "lead_min": self.lead_min, "silence_min": self.silence_min,
-            "max_min": self.max_min, "auto": self.auto,
+            "max_min": self.max_min, "auto": self.auto, "chat": self.chat,
             "last_fired": self.last_fired, "host_id": self.host_id,
         }
 
@@ -125,6 +128,7 @@ def _meeting_from(m: dict) -> Meeting:
         silence_min=_num(m.get("silence_min"), 0.5, 240, 10.0),
         max_min=int(_num(m.get("max_min"), 5, 24 * 60, 180)),
         auto=bool(m.get("auto", False)),
+        chat=bool(m.get("chat", False)),
         last_fired=str(m.get("last_fired", "")),
         host_id=str(m.get("host_id", "")),
     )
@@ -313,6 +317,8 @@ class Store:
             clean["max_min"] = value
         if "auto" in fields:
             clean["auto"] = bool(fields["auto"])
+        if "chat" in fields:
+            clean["chat"] = bool(fields["chat"])
 
         with self._lock:
             found = [m for m in self._items if m.id == meeting_id]

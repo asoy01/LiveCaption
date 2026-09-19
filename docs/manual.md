@@ -185,7 +185,7 @@ current user's Start menu, so you do not have to find this folder before a
 meeting.
 
 **That entry opens no window.** It goes to the task tray; right-click the icon
-for the control page, the log, and quit (see 4.5). To watch it start up, run
+for the control page, the log, and quit (see 4.6). To watch it start up, run
 `StartLiveCaption.bat` by hand — that one keeps a console.
 
 ```
@@ -296,13 +296,10 @@ The right side has three tabs.
 **Everything you touch on the day is under This meeting.** You rarely open Setup
 once it is right.
 
-**Manage meetings widens the right panel.** It lays out the time, the Zoom link,
-three numbers and a tick box, which does not fit in the usual width. **The
-captions stay on the left.** Pick another tab and the panel goes back to its
-normal width.
+**Manage meetings opens inside the right panel.** The captions stay on the left.
 
-You can still drag the divider. **Each tab remembers its own width**, so a wide
-Manage meetings does not change the width of the other tabs.
+**The panel width does not change when you switch tabs.** If the management page
+is too narrow, drag the divider. Its contents grow to the width you set.
 
 **A red dot on the This meeting tab means something there has failed.** It is
 there so you notice while another tab is open.
@@ -570,7 +567,46 @@ scrolls away is a failure nobody sees. Read it, then press **Got it**.
 
 **Skip the next one** sits out a single occurrence. The schedule itself stays.
 
-### 4.3 Zoom client settings
+### 4.3 Posting to the Zoom chat
+
+**Once captions start, LiveCaption can post the caption URL and a QR code to the
+meeting chat.** Tick the box on the Manage meetings tab. **It is off by default.**
+
+The message is always in English.
+
+```
+Live captions for this meeting (Japanese to English):
+https://ms-s1-max.tail4b88d2.ts.net/v/xxxxxxxx
+Open the link in any browser. No app or sign-in needed.
+```
+
+**The URL goes first, the QR code second.** In a meeting where the host has
+turned file sending off, the QR code is rejected, but **the URL has already
+arrived**.
+
+**It posts after the captions have started**, so that nobody opens the link onto
+an empty page.
+
+To post by hand, press **Zoomのチャットに投げる** (post to the Zoom chat) inside
+**ブラウザで見てもらう** (in a browser) under **How people see it**. It posts to
+the meeting you are in right now.
+
+#### How it works, and where it is weak
+
+**Zoom has no API for posting into the chat of a live meeting.** LiveCaption
+drives the Zoom windows on the caption PC instead. That brings these weaknesses.
+
+- **It will stop working silently if Zoom changes.** It finds the windows by
+  their class names
+- **There is no way to confirm the message arrived.** We only know it was sent
+- **It borrows the clipboard.** Text is saved and put back, but **an image or a
+  file you had on the clipboard is lost**
+- While posting, the Zoom chat window comes to the front on the caption PC.
+  **If you are sharing the caption PC's screen, it shows for a moment**
+
+A failure here does not stop the captions. The result is written to the log.
+
+### 4.4 Zoom client settings
 
 If you use automatic joining, set these **once** in the Zoom client. They are
 not per-meeting.
@@ -595,7 +631,7 @@ not contain a meeting number. Use an invitation URL with a number (`/j/...`).
 leave a meeting from outside. **It never quits a meeting you joined yourself**
 — it only quits when it was the one that joined.
 
-### 4.4 The host URL
+### 4.5 The host URL
 
 Even when the caption PC is not the host, you can still put captions into Zoom
 if the host helps.
@@ -622,7 +658,7 @@ It is accepted only when all of these hold:
 
 **If the URL leaks, delete that meeting and make a new one.**
 
-### 4.5 Running resident, and starting at logon
+### 4.6 Running resident, and starting at logon
 
 Double-click `StartLiveCaptionTray.vbs` and it goes to the task tray **with no
 window at all**.
@@ -966,7 +1002,7 @@ ignores a bad value silently**, so read the start-up output.
 | The recogniser reconnects again and again | The network. Turn off incoming video in the meeting software on the caption PC. Try another line |
 | Captions stopped after you connected remotely | **Did you connect with RDP?** It cuts the audio path (see 2.9) |
 | Nothing starts at the scheduled time | **Is "Start this meeting automatically" ticked?** It is off by default. Check that the meeting is listed under Right now |
-| It joined Zoom but no sound arrives | **Is the "Join with Computer Audio" prompt still shown?** (see 4.3). It may also be stuck in the waiting room, or the passcode may be wrong |
+| It joined Zoom but no sound arrives | **Is the "Join with Computer Audio" prompt still shown?** (see 4.4). It may also be stuck in the waiting room, or the passcode may be wrong |
 | It does not leave when the meeting ends | Check the silence-stop setting. The hard cap always stops it |
 | It keeps running after the meeting ended early | If somebody left a microphone open, the sound continues and it never falls silent. Press Stop now |
 | It does not start at logon | Are you logged in? **It cannot run while you are logged out.** Check the `LiveCaption` task in Task Scheduler |

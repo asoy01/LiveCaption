@@ -120,6 +120,30 @@ EN: dict[str, str] = {
     "何分前から": "Minutes before",
     "無音で終了（分）": "Stop after silence (min)",
     "安全上限（分）": "Hard cap (min)",
+    "Zoomのチャットに投げる": "Post to the Zoom chat",
+    "投げている…": "Posting…",
+    "URLとQRを投げた": "Posted the URL and the QR code",
+    "URLを投げた（QRは送れなかった）": "Posted the URL (the QR code did not go)",
+    "投げられない": "Cannot post",
+    "投げる先のURLがまだ無い。": "There is no URL to post yet.",
+    "いま入っている会議のチャットに、URLとQRを投げる。":
+        "Post the URL and a QR code to the chat of the meeting you are in. ",
+    "参加者全員に見える。": "Everyone in the meeting sees it. ",
+    "予定の会議で毎回投げるなら、会議の管理で印を付ける。":
+        "To post it every time for a scheduled meeting, tick the box on the Manage meetings tab.",
+    "チャットの窓を出せない。会議に入っているか確かめること。":
+        "Cannot open the chat window. Check that you are in a meeting.",
+    "Zoomの会議の窓が無い。": "There is no Zoom meeting window.",
+    "貼り付けの途中で、前面の窓が入れ替わった。":
+        "Another window came to the front while pasting.",
+    "ファイルを貼れなかった。URLだけは届いている。":
+        "The file could not be pasted. The URL did arrive.",
+    "字幕が出たら、ZoomのチャットにURLとQRを投げる":
+        "Post the URL and a QR code to the Zoom chat once captions start",
+    "参加者全員にURLが見える。":
+        "Everyone in the meeting sees the URL. ",
+    "ホストがファイル送信を切っている会議では、URLだけが届く。":
+        "In a meeting where the host has turned file sending off, only the URL arrives.",
     "この会議を自動で開始する（時刻が来たら配信を始める）":
         "Start this meeting automatically (deliver from the set time)",
     "自動で開始すると、人が見ていなくても字幕が外に出る。":

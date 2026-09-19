@@ -289,6 +289,43 @@ class Scheduler:
         self.note = "字幕を出している"
         print(f"[{now_str()}] 予定        「{meeting.name}」の字幕を出している")
 
+        # 6. Zoomのチャットに、字幕のURLを投げる。**印が付いた会議だけ。**
+        #    **字幕が出てから投げる。** 先に投げると、開いた人が空の画面を見る。
+        self._post_chat(meeting)
+
+    def _post_chat(self, meeting) -> None:  # noqa: ANN001
+        """会議のチャットに字幕のURLを投げる。**失敗しても字幕は止めない。**
+
+        画面操作でやっているので、Zoomの作りが変われば黙って効かなくなる。
+        **結果は必ず記録に残すこと。** 無人なので、ここが唯一の痕跡になる。
+        """
+        if not meeting.chat:
+            return
+        web = self.app.web
+        if web is None:
+            return
+        url = web.public_url() or web.viewer_url()
+        if not url:
+            print(f"[{now_str()}] 予定        チャットに投げる先のURLが無い")
+            return
+        try:
+            from . import zoom_chat
+
+            shot = zoom_chat.qr_file(url, meeting.name)
+            done = zoom_chat.post(zoom_chat.compose(url), [shot] if shot else [])
+        except Exception as exc:  # noqa: BLE001
+            print(f"[{now_str()}] 予定        チャットに投げられない: "
+                  f"{type(exc).__name__}: {exc}")
+            return
+        if done["text"]:
+            extra = "（QRも）" if done["files"] else ""
+            print(f"[{now_str()}] 予定        チャットにURLを投げた{extra}")
+        else:
+            print(f"[{now_str()}] 予定        チャットに投げられない: {done['why']}")
+        if done["text"] and not done["files"]:
+            # ホストがファイル送信を切っていると、こうなる。**URLは届いている。**
+            print(f"[{now_str()}] 予定        QRは送れなかった。URLだけ届いている。")
+
     async def _join_zoom(self, meeting) -> None:  # noqa: ANN001
         """Zoomに入る。**入れたかどうかは、ここでは分からない。**
 
