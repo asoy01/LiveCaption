@@ -201,6 +201,27 @@ EN: dict[str, str] = {
 
     # --- 会議の記録 ---
     "会議の記録": "Meeting record",
+    # --- 記録の置き場 ---
+    "置き場": "Folder",
+    "フォルダを選ぶ": "Choose a folder",
+    "この場所にする": "Use this path",
+    "置き場を変えた": "Folder changed",
+    "字幕PCの画面で選んでいる…": "Choosing on the caption PC screen…",
+    "確かめている…": "Checking…",
+    "選び直すと `.env` に書く。": "The choice is written to `.env`. ",
+    "次の起動もこの置き場で始まる。": "The next launch starts with this folder.",
+    "いま開いている記録は、その場で閉じて新しい置き場に開き直す。":
+        "The record that is open now is closed and reopened in the new folder.",
+    "フォルダを選ぶ窓は字幕PCの画面に出る。別の機体からは使えない。パスを直接入れること。":
+        "The folder dialog opens on the caption PC screen, so it is no use from "
+        "another machine. Type the path instead.",
+    "記録の受け口が用意できていない。": "The record control is not available.",
+    "フォルダを指定すること。": "Give a folder.",
+    "絶対パスで指定すること。": "Give an absolute path.",
+    "フォルダではない。": "That is not a folder.",
+    "そのフォルダは作れない: ": "That folder cannot be created: ",
+    "そのフォルダには書けない: ": "That folder cannot be written to: ",
+
     # --- パネルのタブと、まとめ直した見出し ---
     "いまの状態": "Right now",
     "この会議": "This meeting",
@@ -414,6 +435,15 @@ EN: dict[str, str] = {
 
     # --- 単独で出る短い語。**長い鍵を先に置き換えたあとに残ったものだけが当たる** ---
     "元の言語を表示": "Show original language",
+    # --- 停止は出口も閉じる ---
+    "配信とZoom字幕も一緒に止まる": "Delivery and the Zoom captions stop with it",
+    "字幕の生成・配信・Zoom字幕を止めた。":
+        "Stopped caption generation, delivery and the Zoom captions.",
+    "字幕の生成と配信を止めた。閲覧URLは死んだ。":
+        "Stopped caption generation and delivery. The viewer URL is dead.",
+    "字幕の生成とZoom字幕を止めた。":
+        "Stopped caption generation and the Zoom captions.",
+
     "訳す前の言葉を、訳文の上に小さく出す":
         "Show the words as spoken, small, above each translation",
     " 語": " terms",

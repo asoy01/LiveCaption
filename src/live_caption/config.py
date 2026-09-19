@@ -354,6 +354,40 @@ def downloads_dir() -> Path:
 TRANSCRIPT_DIR = downloads_dir()
 TRANSCRIPT_PREFIX = "live-caption_"
 
+# 操作画面から選び直した置き場。`.env` のこの名前に書く。
+SAVE_DIR_ENV = "LIVECAPTION_SAVE_DIR"
+
+
+def check_save_dir(path: str | Path) -> Path:
+    """記録の置き場として使えるか確かめる。使える絶対パスを返す。
+
+    **無ければ作る。** 会議の前に「フォルダが無い」で止まるより、作ってしまう
+    ほうがよい。作れない場所（権限、存在しないドライブ）はここで弾く。
+
+    **書けるかどうかは、実際に書いて確かめる。** Windows では、読めるのに
+    書けないフォルダ（ドライブの直下、OneDrive の同期中）がある。属性を見るだけ
+    では通ってしまい、会議の最中に記録だけが静かに落ちる。
+    """
+    text = str(path).strip().strip('"')
+    if not text:
+        raise ValueError("フォルダを指定すること。")
+    target = Path(os.path.expandvars(text)).expanduser()
+    if not target.is_absolute():
+        raise ValueError("絶対パスで指定すること。")
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise ValueError(f"そのフォルダは作れない: {exc}") from exc
+    if not target.is_dir():
+        raise ValueError("フォルダではない。")
+    probe = target / ".livecaption_write_test"
+    try:
+        probe.write_text("", encoding="utf-8")
+        probe.unlink()
+    except OSError as exc:
+        raise ValueError(f"そのフォルダには書けない: {exc}") from exc
+    return target
+
 # --- その他 -----------------------------------------------------------------
 # 用語対訳表は etc/glossary/ に置いた .tsv である。**会議ごとに組み合わせを変える。**
 # docs/ ではない。**これは読み物ではなく、アプリが読むデータである。**

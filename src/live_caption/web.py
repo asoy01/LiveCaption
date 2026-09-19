@@ -56,7 +56,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from . import captions as captions_mod
-from . import config, i18n, meetings, tunnel as tunnel_mod
+from . import config, folder_pick, i18n, meetings, tunnel as tunnel_mod
 from . import meetings_page
 
 # 画面に残す履歴の数。これを超えた分は古いほうから捨てる。
@@ -69,9 +69,32 @@ MAX_BODY = 64 * 1024
 # --- 見た目（閲覧と操作で共通） ---------------------------------------------
 
 STYLE = """
+  /* --- 配色 ---------------------------------------------------------------
+     **明るい地に濃い字にする。** 暗い配色は見にくい（2026-09-20、麻生の指摘）。
+
+     **色はここにしか書かない。** 以前は各所に直接書いていたので、配色を変えるには
+     50か所を追いかける必要があった。暗い配色に戻すなら、この block だけを
+     入れ替えればよい。 */
   :root {
-    --bg: #0d1117; --fg: #f0f6fc; --ja: #7d8590; --line: #21262d;
-    --accent: #2f81f7; --ok: #3fb950; --ng: #f85149;
+    /* **これを書かないと、選択欄・日付の窓・スクロールバーだけが暗いままになる。**
+       OSが暗い配色の機体で、そこだけ黒く残る。 */
+    color-scheme: light;
+    --bg:      #ffffff;   /* 地 */
+    --panel:   #f6f8fa;   /* 右の欄の地 */
+    --field:   #ffffff;   /* 入力欄・URL欄の地 */
+    --btn:     #f6f8fa;   /* ボタンの地 */
+    --hover:   #eaeef2;   /* 触れたときの地 */
+    --fg:      #1f2328;   /* 本文 */
+    --ja:      #59636e;   /* 元の言語の行 */
+    --muted:   #59636e;   /* 見出しと注記 */
+    --dim:     #848d97;   /* さらに薄い印 */
+    --line:    #d8dee4;   /* 細い罫 */
+    --line2:   #c2cad2;   /* 部品の枠 */
+    --accent:  #0969da; --accent-h: #0a58ca; --on-accent: #ffffff;
+    --knob:    #ffffff;   /* トグルのつまみ */
+    --ok:      #1a7f37; --ng: #cf222e;
+    --warn:    #9a6700; --warn-line: #d4a72c;
+    --ng-fg:   #a40e26; --ng-bg: #fff5f5; --ng-line: #f3c2c2;
     --lines: __LINES__;
     --size: calc(clamp(20px, 2.7vw, 44px) * var(--zoom, 1));
   }
@@ -95,24 +118,24 @@ STYLE = """
 
   .pill {
     padding: 3px 11px; border-radius: 999px;
-    border: 1px solid var(--line); background: #161b22;
+    border: 1px solid var(--line); background: var(--hover);
     font-size: 13px; white-space: nowrap;
   }
   .pill.on { border-color: var(--ok); color: var(--ok); }
-  .pill.off { border-color: #30363d; color: var(--ja); }
+  .pill.off { border-color: var(--line2); color: var(--ja); }
   .pill.bad { border-color: var(--ng); color: var(--ng); }
-  .pill.warn { border-color: #9e6a03; color: #d29922; }
+  .pill.warn { border-color: var(--warn-line); color: var(--warn); }
 
   .toggle { display: flex; align-items: center; gap: 9px; cursor: pointer; user-select: none; }
   .toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
   .track {
     width: 42px; height: 24px; border-radius: 12px;
-    background: #30363d; position: relative; transition: background .15s; flex: 0 0 auto;
+    background: var(--line2); position: relative; transition: background .15s; flex: 0 0 auto;
   }
   .track::after {
     content: ""; position: absolute; top: 3px; left: 3px;
     width: 18px; height: 18px; border-radius: 50%;
-    background: var(--fg); transition: transform .15s;
+    background: var(--knob); transition: transform .15s;
   }
   .toggle input:checked + .track { background: var(--accent); }
   .toggle input:checked + .track::after { transform: translateX(18px); }
@@ -120,14 +143,15 @@ STYLE = """
 
   button {
     font: inherit; font-size: 14px; color: var(--fg);
-    background: #21262d; border: 1px solid #30363d; border-radius: 6px;
+    background: var(--btn); border: 1px solid var(--line2); border-radius: 6px;
     padding: 7px 14px; cursor: pointer;
   }
-  button:hover { background: #30363d; }
+  button:hover { background: var(--line2); }
   button:disabled { opacity: .45; cursor: default; }
-  button.primary { background: var(--accent); border-color: var(--accent); }
-  button.primary:hover { background: #4a91f9; }
-  button.danger { border-color: #6e2b2b; color: #ff9c94; }
+  button.primary { background: var(--accent); border-color: var(--accent);
+                   color: var(--on-accent); }
+  button.primary:hover { background: var(--accent-h); }
+  button.danger { border-color: var(--ng-line); color: var(--ng-fg); }
   .zoombtn { padding: 6px 11px; font-size: 15px; line-height: 1; }
 
   main {
@@ -153,14 +177,14 @@ STYLE = """
   #empty { color: var(--ja); font-size: 18px; }
   /* 入力の音量。**音が来ているかを目で見るためのもの。** */
   .meter {
-    width: 110px; height: 9px; border-radius: 5px; background: #21262d;
-    border: 1px solid #30363d; overflow: hidden; flex: 0 0 auto;
+    width: 110px; height: 9px; border-radius: 5px; background: var(--hover);
+    border: 1px solid var(--line2); overflow: hidden; flex: 0 0 auto;
   }
   .meter > i { display: block; height: 100%; width: 0; background: var(--ok); }
   .meter.hot > i { background: var(--ng); }
   select {
     font: inherit; font-size: 13px; color: var(--fg);
-    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+    background: var(--field); border: 1px solid var(--line2); border-radius: 6px;
     padding: 7px 8px; flex: 1 1 100%; min-width: 0; max-width: 100%;
   }
   .netstate { color: var(--ng); font-size: 13px; }
@@ -461,7 +485,7 @@ CONTROL_BODY = """
   #panel {
     overflow-y: auto; scrollbar-width: thin;
     padding: 14px 16px 20px;
-    border-left: 1px solid var(--line); background: #11161d;
+    border-left: 1px solid var(--line); background: var(--panel);
     font-size: var(--ui); color: var(--ja);
   }
   /* 部品も欄と同じ大きさにする。**共通の指定（14px / 13px）のままだと、
@@ -472,10 +496,11 @@ CONTROL_BODY = """
      選んだ側は localStorage に残す。次の起動も同じ側で開く。 */
   .tabs { display: flex; gap: 6px; margin: 0 0 14px; }
   .tabs > .tab {
-    flex: 1 1 0; padding: 7px 10px; color: #8b949e; background: #0d1117;
+    flex: 1 1 0; padding: 7px 10px; color: var(--muted); background: transparent;
   }
-  .tabs > .tab:hover { background: #161b22; }
-  .tabs > .tab.on { color: var(--fg); background: #21262d; border-color: #4a5560; }
+  .tabs > .tab:hover { background: var(--hover); }
+  .tabs > .tab.on { color: var(--fg); background: var(--bg);
+                    border-color: var(--accent); font-weight: 600; }
   /* **隠した側で起きた失敗を見落とさないようにする。** 設定を開いたまま
      会議が始まって、そちらで失敗していても気づけない。 */
   .tabs > .tab.alert::after { content: " ●"; color: var(--ng); }
@@ -490,7 +515,7 @@ CONTROL_BODY = """
   .grp:last-child { border-bottom: 0; }
   .grp > h2 {
     margin: 0 0 9px; font-size: calc(var(--ui) - 1px); font-weight: 600;
-    letter-spacing: .06em; color: #8b949e;
+    letter-spacing: .06em; color: var(--muted);
   }
   .row2 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 9px; }
   .row2:last-child { margin-bottom: 0; }
@@ -506,7 +531,7 @@ CONTROL_BODY = """
      いなかった。一番見てほしい警告なので、どこでも効くようにする。 */
   .ok { color: var(--ok); }
   .ng { color: var(--ng); }
-  .fold { border: 1px solid #30363d; border-radius: 6px; background: #0d1117; }
+  .fold { border: 1px solid var(--line2); border-radius: 6px; background: var(--field); }
   .fold > summary {
     cursor: pointer; padding: 8px 10px; font-size: var(--ui); color: var(--fg);
     list-style: none; display: flex; align-items: center; gap: 6px;
@@ -521,13 +546,13 @@ CONTROL_BODY = """
      絵文字のフォントに落ちることもある。罫線なら、どの環境でも同じ形になる。 */
   .fold > summary::before {
     content: ""; flex: 0 0 auto; width: 0; height: 0; margin-right: 2px;
-    border-left: 5px solid #6e7681;
+    border-left: 5px solid var(--dim);
     border-top: 4px solid transparent;
     border-bottom: 4px solid transparent;
     transition: transform .12s;
   }
   .fold[open] > summary::before { transform: rotate(90deg); }
-  .fold > summary:hover { background: #161b22; }
+  .fold > summary:hover { background: var(--hover); }
   .fold .body { padding: 0 10px 8px; }
   /* 高さの上限。**画面の高さで決める。** 行数で決めると、低い画面で溢れる。 */
   .fold .list { max-height: min(38vh, 300px); overflow-y: auto; }
@@ -538,7 +563,7 @@ CONTROL_BODY = """
   /* 名前と語数は summary の中でも使う。.gloss ではなく .fold に付ける。 */
   .fold .n { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;
              white-space: nowrap; }
-  .fold .c { flex: 0 0 auto; color: #8b949e; font-size: calc(var(--ui) - 2px); }
+  .fold .c { flex: 0 0 auto; color: var(--muted); font-size: calc(var(--ui) - 2px); }
   /* 選んでいる表を目立たせる。畳む前に、何にチェックが入っているかを見る。 */
   .gloss .n { color: var(--ja); }
   .gloss.on .n { color: var(--fg); font-weight: 600; }
@@ -551,31 +576,31 @@ CONTROL_BODY = """
              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tune input[type=number] {
     font: inherit; font-size: var(--ui); color: var(--fg); width: 92px; flex: 0 0 auto;
-    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+    background: var(--field); border: 1px solid var(--line2); border-radius: 6px;
     padding: 5px 8px; text-align: right;
   }
   /* 既定と違う値は目立たせる。畳んだ後でも「触ってある」と分かるようにする。 */
   .tune.changed input[type=number] { border-color: var(--accent); }
-  .tune .d { flex: 0 0 auto; font-size: calc(var(--ui) - 2px); color: #8b949e; width: 74px; }
+  .tune .d { flex: 0 0 auto; font-size: calc(var(--ui) - 2px); color: var(--muted); width: 74px; }
   .tune .h { font-size: calc(var(--ui) - 2px); color: var(--ja); line-height: 1.5; margin: 4px 0 0; }
   .fold input[type=search] {
     font: inherit; font-size: calc(var(--ui) - 1px); color: var(--fg); width: 100%;
-    background: #11161d; border: 1px solid #30363d; border-radius: 6px;
+    background: var(--field); border: 1px solid var(--line2); border-radius: 6px;
     padding: 5px 8px; margin: 2px 0 6px;
   }
   input[type=password], input[type=text] {
     font: inherit; font-size: var(--ui); color: var(--fg);
-    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+    background: var(--field); border: 1px solid var(--line2); border-radius: 6px;
     padding: 7px 10px; flex: 1 1 100%; min-width: 0;
   }
   input:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
   #msg { font-size: calc(var(--ui) - 1px); }
   #msg.ok { color: var(--ok); }
   #msg.ng { color: var(--ng); }
-  .hint { font-size: calc(var(--ui) - 2px); color: #8b949e; line-height: 1.65; }
+  .hint { font-size: calc(var(--ui) - 2px); color: var(--muted); line-height: 1.65; }
   .url {
     font-family: ui-monospace, Consolas, monospace; font-size: calc(var(--ui) - 2px); color: var(--fg);
-    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+    background: var(--field); border: 1px solid var(--line2); border-radius: 6px;
     padding: 6px 8px; word-break: break-all; user-select: all; flex: 1 1 100%;
   }
   /* **URLはボタンでコピーできるようにする。** `user-select: all` はクリックで
@@ -585,7 +610,7 @@ CONTROL_BODY = """
   /* 言語の選択。ヘッダに置くので、幅は内容ぶんだけにする。 */
   .langsel {
     font: inherit; font-size: 13px; color: var(--ja);
-    background: transparent; border: 1px solid #30363d; border-radius: 6px;
+    background: transparent; border: 1px solid var(--line2); border-radius: 6px;
     padding: 4px 6px; flex: 0 0 auto; width: auto; min-width: 0;
   }
   /* 会議の一覧。1行に「選ぶ / 名前 / URL / ボタン」を積む。
@@ -604,7 +629,7 @@ CONTROL_BODY = """
   #meetList.more { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
                    padding: 6px 4px 6px 0; }
   /* 何件あるかを見出しの横に出す。畳まれていても数が分かる。 */
-  .grp > h2 .c { font-weight: 400; letter-spacing: 0; color: #6e7681; }
+  .grp > h2 .c { font-weight: 400; letter-spacing: 0; color: var(--dim); }
   .meet { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
           display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
   .meet.on { border-color: var(--accent); }
@@ -612,11 +637,11 @@ CONTROL_BODY = """
   .meet .nm { flex: 1 1 auto; font-size: var(--ui); color: var(--ja);
               overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .meet.on .nm { color: var(--fg); font-weight: 600; }
-  .meet .when { flex: 0 0 auto; font-size: calc(var(--ui) - 3px); color: #8b949e; }
+  .meet .when { flex: 0 0 auto; font-size: calc(var(--ui) - 3px); color: var(--muted); }
   .meet .url { flex: 1 1 100%; }
-  .meet .none { flex: 1 1 100%; font-size: calc(var(--ui) - 2px); color: #8b949e; }
+  .meet .none { flex: 1 1 100%; font-size: calc(var(--ui) - 2px); color: var(--muted); }
   /* 予定の要約。行の中で、名前の下に小さく敷く。 */
-  .meet .when2 { flex: 1 1 100%; font-size: calc(var(--ui) - 3px); color: #8b949e; }
+  .meet .when2 { flex: 1 1 100%; font-size: calc(var(--ui) - 3px); color: var(--muted); }
   .meet.armed .when2 { color: var(--ok); }
   /* 予定の入力欄。**行の中に開く。** この画面に重ねる窓は1つも無いので、
      ここだけ別の作りにしない。 */
@@ -626,12 +651,12 @@ CONTROL_BODY = """
                  display: flex; align-items: center; gap: 5px; }
   .sched input[type=datetime-local], .sched input[type=text] {
     font: inherit; font-size: calc(var(--ui) - 1px); color: var(--fg);
-    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+    background: var(--field); border: 1px solid var(--line2); border-radius: 6px;
     padding: 5px 8px; min-width: 0;
   }
   .sched input[type=number] {
     font: inherit; font-size: calc(var(--ui) - 1px); color: var(--fg); width: 68px;
-    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+    background: var(--field); border: 1px solid var(--line2); border-radius: 6px;
     padding: 5px 6px; text-align: right;
   }
   .sched .wide { flex: 1 1 100%; }
@@ -643,7 +668,7 @@ CONTROL_BODY = """
              align-items: center; border-top: 1px solid var(--line);
              margin-top: 6px; padding-top: 8px; }
   .hostrow .warn2 { flex: 1 1 100%; font-size: calc(var(--ui) - 3px); color: var(--ng); }
-  .hostrow .url { border-color: #6e2b2b; }
+  .hostrow .url { border-color: var(--ng-line); }
   /* 次の予定の一覧。 */
   #schedNext { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 8px; }
   #schedNext .row { font-size: calc(var(--ui) - 2px); color: var(--ja);
@@ -657,8 +682,8 @@ CONTROL_BODY = """
   #qrbox.on { display: flex; }
   #qr { background: #fff; padding: 8px; border-radius: 8px; width: 150px; height: 150px; }
   pre.err {
-    white-space: pre-wrap; font-size: calc(var(--ui) - 2px); color: #ff9c94;
-    background: #1b1113; border: 1px solid #6e2b2b; border-radius: 6px;
+    white-space: pre-wrap; font-size: calc(var(--ui) - 2px); color: var(--ng-fg);
+    background: var(--ng-bg); border: 1px solid var(--ng-line); border-radius: 6px;
     padding: 8px 10px; margin: 0; max-height: 9em; overflow: auto;
   }
 </style>
@@ -717,7 +742,7 @@ CONTROL_BODY = """
     </div>
     <div class="row2">
       <button id="gstart" class="primary">開始</button>
-      <button id="gstop" class="danger">停止</button>
+      <button id="gstop" class="danger" title="配信とZoom字幕も一緒に止まる">停止</button>
       <span id="genState"></span>
     </div>
     <!-- **音量メーターは、入力デバイスの欄ではなくここに置く。** 会議中に見る
@@ -857,6 +882,19 @@ CONTROL_BODY = """
       <span class="url" id="logPath"></span>
       <button class="copybtn" data-copy="logPath">パスをコピー</button>
     </div>
+    <div class="row2">
+      <label class="lbl" for="saveDir">置き場</label>
+      <input type="text" id="saveDir" spellcheck="false" autocomplete="off">
+    </div>
+    <div class="row2">
+      <button id="saveDirPick" class="primary">フォルダを選ぶ</button>
+      <button id="saveDirSet">この場所にする</button>
+      <span id="saveDirState"></span>
+    </div>
+    <div class="row2 hint" id="saveDirHint">
+      選び直すと `.env` に書く。<b>次の起動もこの置き場で始まる。</b>
+      いま開いている記録は、その場で閉じて新しい置き場に開き直す。
+    </div>
   </div>
 
 </div>
@@ -953,6 +991,8 @@ __FEED_JS__
   const msg = $("msg"), pill = $("zoomPill"), zoomState = $("zoomState");
   const tpill = $("tunnelPill"), tstate = $("tunnelState");
   const wayNetState = $("wayNetState"), wayZoomState = $("wayZoomState");
+  const saveDir = $("saveDir"), saveDirPick = $("saveDirPick");
+  const saveDirSet = $("saveDirSet"), saveDirState = $("saveDirState");
   const qrbox = $("qrbox"), qr = $("qr"), publicUrl = $("publicUrl");
   const qrsave = $("qrsave");
   const tkind = $("tkind"), tkindHint = $("tkindHint");
@@ -1189,15 +1229,59 @@ __FEED_JS__
     }
     // 空のパス欄は、中身の無い箱として見えてしまう。出さない。
     logPathRow.style.display = logPath.textContent ? "" : "none";
+
+    // --- 記録の置き場 ---
+    // **入力中は上書きしない。** 2秒ごとに状態を取りに行くので、書き換えると
+    // 手で打っている途中のパスが消える。
+    const rc = s.records || {};
+    if (document.activeElement !== saveDir && !saveDirDirty) {
+      saveDir.value = rc.dir || "";
+    }
+    saveDirPick.style.display = rc.can_pick ? "" : "none";
   }
+
+  // --- 記録の置き場 -------------------------------------------------------
+  // **窓は字幕PCの画面に出る。** 別の機体から開いた操作画面では使えないので、
+  // そのときはサーバが断り、手入力に落ちる。
+  let saveDirDirty = false;
+  saveDir.addEventListener("input", () => { saveDirDirty = true; });
+
+  async function setSaveDir(body, busy) {
+    saveDirPick.disabled = true; saveDirSet.disabled = true;
+    saveDirState.textContent = busy;
+    try {
+      const st = await post("/api/savedir", body);
+      showStatus(st);
+      saveDirDirty = false;
+      saveDir.value = (st.records || {}).dir || saveDir.value;
+      saveDirState.textContent = st.records_cancelled ? "" : "置き場を変えた";
+    } catch (e) {
+      saveDirState.innerHTML = '<span class="ng">' + e.message + "</span>";
+    }
+    saveDirPick.disabled = false; saveDirSet.disabled = false;
+  }
+  saveDirPick.addEventListener("click", () =>
+    setSaveDir({ pick: true }, "字幕PCの画面で選んでいる…"));
+  saveDirSet.addEventListener("click", () =>
+    setSaveDir({ path: saveDir.value }, "確かめている…"));
+  saveDir.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); saveDirSet.click(); }
+  });
 
   // --- 字幕の生成 ---------------------------------------------------------
   async function setGen(on) {
     const b = on ? gstart : gstop;
     b.disabled = true;
     try {
-      showStatus(await post("/api/engine", { on: on }));
-      say(on ? "字幕の生成を開始した。" : "字幕の生成を停止した。", true);
+      const st = await post("/api/engine", { on: on });
+      showStatus(st);
+      // **何を止めたかを、そのつど書く。** 停止は生成だけでなく出口も閉じる。
+      const al = st.also || {};
+      say(on ? "字幕の生成を開始した。"
+             : (al.tunnel && al.zoom) ? "字幕の生成・配信・Zoom字幕を止めた。"
+             : al.tunnel ? "字幕の生成と配信を止めた。閲覧URLは死んだ。"
+             : al.zoom ? "字幕の生成とZoom字幕を止めた。"
+             : "字幕の生成を停止した。", true);
     } catch (e) { say(String(e.message), false); b.disabled = false; }
   }
   gstart.addEventListener("click", () => setGen(true));
@@ -1820,6 +1904,8 @@ class WebCaptions:
         # 会議の記録（transcript.Transcript）。--no-save のときは None のまま。
         # **操作画面からしか見えない。** 閲覧側には出さない。
         self.transcript = None
+        # 記録の置き場の選び直し（app.RecordControl）。
+        self.records = None
         # 閲覧画面の経路。**会議ごとに変える**（meetings.py）。参加者が会議ごとに
         # 違うので、先週の会議のURLで今日の字幕が見えてはいけない。
         # 配信するのは選んである1つだけで、他の会議のURLは404になる。
@@ -2032,6 +2118,9 @@ class WebCaptions:
             }
         else:
             st["transcript"] = {"on": False, "path": "", "count": 0, "error": ""}
+        # 記録の置き場。**--no-save でも返す。** どこに出ないのかが分かる。
+        st["records"] = self.records.status() if self.records else {
+            "dir": str(config.TRANSCRIPT_DIR), "saving": False, "can_pick": False}
         return st
 
     # --- 起動と停止 ---------------------------------------------------------
@@ -2355,25 +2444,27 @@ def _host_page(meeting_name: str) -> bytes:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Zoom caption token</title>
 <style>
-  :root {{ color-scheme: dark; }}
-  body {{ margin: 0; padding: 24px 18px; background: #0d1117; color: #e6edf3;
+  /* **このページは単独で立っている。** 操作画面の配色（`STYLE`）は読み込まれない
+     ので、色はここに直接書く。操作画面と同じ明るい配色に合わせてある。 */
+  :root {{ color-scheme: light; }}
+  body {{ margin: 0; padding: 24px 18px; background: #ffffff; color: #1f2328;
          font-family: "Segoe UI", "Yu Gothic UI", system-ui, sans-serif;
          line-height: 1.7; }}
   main {{ max-width: 620px; margin: 0 auto; }}
   h1 {{ font-size: 19px; margin: 0 0 4px; }}
-  .meet {{ color: #58a6ff; font-weight: 600; }}
-  p {{ font-size: 15px; color: #c9d1d9; margin: 10px 0; }}
-  .en {{ color: #8b949e; font-size: 14px; }}
-  ol {{ font-size: 15px; color: #c9d1d9; padding-left: 22px; }}
+  .meet {{ color: #0969da; font-weight: 600; }}
+  p {{ font-size: 15px; color: #424a53; margin: 10px 0; }}
+  .en {{ color: #59636e; font-size: 14px; }}
+  ol {{ font-size: 15px; color: #424a53; padding-left: 22px; }}
   input {{ width: 100%; box-sizing: border-box; font: inherit; font-size: 15px;
-           color: #e6edf3; background: #161b22; border: 1px solid #30363d;
+           color: #1f2328; background: #ffffff; border: 1px solid #c2cad2;
            border-radius: 8px; padding: 11px 12px; margin: 10px 0; }}
-  button {{ font: inherit; font-size: 16px; color: #fff; background: #1f6feb;
+  button {{ font: inherit; font-size: 16px; color: #ffffff; background: #0969da;
             border: 0; border-radius: 8px; padding: 11px 26px; cursor: pointer; }}
   button:disabled {{ opacity: .5; cursor: default; }}
   #msg {{ font-size: 15px; margin-top: 14px; min-height: 1.6em; }}
-  .ok {{ color: #3fb950; }}
-  .ng {{ color: #ff9c94; }}
+  .ok {{ color: #1a7f37; }}
+  .ng {{ color: #cf222e; }}
 </style>
 </head>
 <body>
@@ -2689,7 +2780,8 @@ def _control_handler(web: WebCaptions):
             if path not in ("/api/token", "/api/zoom", "/api/tunnel",
                             "/api/engine", "/api/device", "/api/glossary",
                             "/api/tuning", "/api/tuning/save", "/api/direction",
-                            "/api/lang", "/api/meetings", "/api/schedule"):
+                            "/api/lang", "/api/meetings", "/api/schedule",
+                            "/api/savedir"):
                 self.send_error(404)
                 return
             try:
@@ -2708,6 +2800,10 @@ def _control_handler(web: WebCaptions):
 
             if path == "/api/schedule":
                 self._schedule(body)
+                return
+
+            if path == "/api/savedir":
+                self._savedir(body)
                 return
 
             if path == "/api/device":
@@ -2791,8 +2887,12 @@ def _control_handler(web: WebCaptions):
                 if web.engine is None:
                     self._send_json(503, {"error": "生成の受け口が用意できていない。"})
                     return
-                web.engine.set_running(bool(body.get("on")))
-                self._send_json(200, web.status())
+                on = bool(body.get("on"))
+                web.engine.set_running(on)
+                st = web.status()
+                if not on:
+                    st["also"] = self._stop_outputs()
+                self._send_json(200, st)
                 return
 
             if web.control is None:
@@ -2808,6 +2908,69 @@ def _control_handler(web: WebCaptions):
                 self._send_json(400, {"error": str(exc)})
                 return
             self._send_json(200, web.status())
+
+        def _savedir(self, body: dict) -> None:
+            """会議の記録の置き場を選び直す。
+
+            `pick` が来たらフォルダ選択の窓を出す。`path` が来たらそれを使う。
+
+            **窓は字幕PCの画面に出る。** 遠くの機体から開いた操作画面では、
+            押した人には何も見えないまま、字幕PCの画面に窓が残る。無人で回す
+            機体でそれをやると、予定の会議がその窓の後ろで始まる。
+            **127.0.0.1 から来た要求でなければ、窓は開かない。**
+            """
+            if web.records is None:
+                self._send_json(503, {"error": "記録の受け口が用意できていない。"})
+                return
+            if body.get("pick"):
+                peer = self.client_address[0] if self.client_address else ""
+                if peer not in ("127.0.0.1", "::1"):
+                    self._send_json(400, {"error":
+                        "フォルダを選ぶ窓は字幕PCの画面に出る。"
+                        "別の機体からは使えない。パスを直接入れること。"})
+                    return
+                chosen = folder_pick.pick(
+                    web.records.status().get("dir", ""), "LiveCaption")
+                if not chosen:
+                    # 取り消し。**失敗ではない。** 画面に赤い字を出さない。
+                    self._send_json(200, dict(web.status(), records_cancelled=True))
+                    return
+                body = {"path": chosen}
+            try:
+                web.records.set_dir(str(body.get("path", "")))
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
+            self._send_json(200, web.status())
+
+        def _stop_outputs(self) -> dict:
+            """字幕の生成を止めるとき、出口も一緒に閉じる。
+
+            **止めたつもりで流れ続けるのが一番困る**（2026-09-20 の麻生の指摘）。
+            生成だけ止めても、トンネルは張られたままで、参加者のURLは開ける。
+            Zoom側も「送信中」のまま残る。次の会議の字幕が前のトークンへ流れる
+            入口にもなる。
+
+            **どちらかが失敗しても、もう片方は必ず試す。** 生成はすでに
+            止まっているので、ここで例外を投げても得るものが無い。
+            何を実際に止めたかを返す。画面に出す一言をそれで決める。
+            """
+            done = {"tunnel": False, "zoom": False}
+            if web.tunnel is not None:
+                try:
+                    if web.tunnel.status().get("state") in ("on", "starting"):
+                        web.tunnel.stop()
+                        done["tunnel"] = True
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[停止] 配信を止められない: {exc}")
+            if web.control is not None:
+                try:
+                    if web.status().get("active"):
+                        web.control.set_enabled(False)
+                        done["zoom"] = True
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[停止] Zoom字幕を止められない: {exc}")
+            return done
 
         def _tunnel(self, body: dict) -> None:
             """配信の開始・停止と、経路の選び直し。

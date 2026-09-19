@@ -37,6 +37,7 @@ from . import asr as asr_mod
 from . import audio as audio_mod
 from . import captions as captions_mod
 from . import config, glossary
+from . import folder_pick
 from . import schedule as schedule_mod
 from . import segmenter as segmenter_mod
 from . import transcript as transcript_mod
@@ -319,6 +320,58 @@ class DirectionControl:
         return self.status()
 
 
+class RecordControl:
+    """会議の記録の置き場。**操作画面から選び直す。**
+
+    既定はダウンロードフォルダだが、会議のたびにそこへ落ちると他のファイルと
+    混ざる。置き場を決めておきたい（2026-09-20 の麻生の指示）。
+
+    選び直すと `.env` に書くので、**次の起動もその置き場で始まる。**
+
+    呼ぶのはHTTPサーバのスレッドである。
+    """
+
+    def __init__(self, app: "App") -> None:
+        self.app = app
+
+    def status(self) -> dict:
+        return {
+            "dir": str(self.app.settings.transcript_dir),
+            "saving": self.app.settings.save,
+            # 窓を出せない機体（画面の無い Linux、tkinter の無い環境）では、
+            # 手入力だけを見せる。**押しても何も起きないボタンを置かない。**
+            "can_pick": folder_pick.available(),
+        }
+
+    def set_dir(self, path: str) -> dict:
+        """置き場を選び直す。使えないパスは `ValueError` で弾く。
+
+        **いま開いている記録は、その場で閉じて開き直す。** 閉じないと、
+        この会議の続きが前の置き場に書かれ、どちらにも半分ずつ残る。
+
+        **閉じ直しは本体のイベントループに渡す。** ここで直に閉じると、
+        字幕を書いている最中のファイルを別のスレッドから閉じることになり、
+        `_write` が拾わない `ValueError` を投げる（拾うのは `OSError` だけ）。
+        """
+        target = config.check_save_dir(path)
+        if target == self.app.settings.transcript_dir:
+            return self.status()
+        self.app.settings.transcript_dir = target
+        loop = self.app.zoom.loop
+        if self.app.transcript is not None:
+            if loop is None:
+                self.app.roll_transcript()
+            else:
+                loop.call_soon_threadsafe(self.app.roll_transcript)
+        print(f"[{now()}] 記録        置き場を変えた: {target}")
+        # **`.env` に書けなくても、この起動では効かせる。** 会議は止めない。
+        try:
+            config.save_env({config.SAVE_DIR_ENV: str(target)})
+        except OSError as exc:
+            print(f"[{now()}] 記録        .env に書けない: {exc}")
+        return self.status()
+
+
 class App:
     def __init__(self, settings: config.Settings, web=None) -> None:  # noqa: ANN001
         self.settings = settings
@@ -407,6 +460,8 @@ class App:
             web.on_shutdown = self.request_stop
             # 記録が溜まっていることを操作画面に出す。
             web.transcript = self.transcript
+            # 記録の置き場。フォルダ選択の窓もここから開く。
+            web.records = RecordControl(self)
             # 予定の状態と、止める・飛ばす・失敗を消す、の操作。
             web.scheduler = self.scheduler
         self.sentences: asyncio.Queue[segmenter_mod.Cut] = asyncio.Queue()

@@ -40,7 +40,9 @@ See section 4, "Scheduled meetings".
 Speech recognition costs **$0.017 per minute**, so about one US dollar per hour.
 The translation cost is much smaller than that.
 
-Silence is billed too, so press stop during a break.
+Silence is billed too, so press stop during a break. **Stop also stops delivery
+and the Zoom captions** (see step 4 in section 3), so for a short break it is
+simpler to leave it running.
 
 ---
 
@@ -356,6 +358,12 @@ covers a meeting that is English in the first half and Japanese in the second.**
 choice.
 
 Then press **開始** (start) at the top, under **いまの状態** (right now).
+
+**Stop stops all three.** It closes caption generation, the delivery to
+participants (the viewer URL), and the sending to the Zoom captions. **The worst
+case is thinking you stopped and having captions keep flowing.** Stopping
+delivery kills the viewer URL, so this is not a button to press at every break.
+What was stopped is written on the spot.
 
 **Watch the level meter just below it.** If nobody has spoken yet, the meter does not move.
 Ask someone to speak. If the meter stays flat while a person is speaking, the
@@ -741,12 +749,31 @@ on by running them through the translation step.
 **LiveCaption saves a record of every meeting by default.** You do not have to
 turn it on.
 
-The files go to **your Downloads folder**.
+The files start out in **your Downloads folder**.
 
 ```
 Downloads/live-caption_2026-09-08_143012.jsonl   appended one sentence at a time
 Downloads/live-caption_2026-09-08_143012.md      readable form, written at exit
 ```
+
+### Changing the folder
+
+The setting is under **会議の記録** (meeting record) on the **Meetings** tab.
+
+Press **フォルダを選ぶ** (choose a folder) and the Windows folder dialog opens.
+The change takes effect at once, and it is written to `.env`, so **the next
+launch starts with that folder.** The record that is open now is closed and
+reopened in the new folder.
+
+You can also type a path and press **この場所にする** (use this path). **A folder
+that does not exist is created.** A folder that cannot be written to is refused.
+
+**The folder dialog opens on the caption PC screen.** It is no use when you have
+the control page open from another machine, so LiveCaption refuses it there: the
+person pressing the button would see nothing while a dialog sat open on the
+caption PC. Type the path instead.
+
+To change it per launch, use `--save-dir`. That wins over `.env`.
 
 The recognised text and the caption are paired. The timestamp is the time the
 recognition became final.
@@ -768,7 +795,6 @@ need them when you tune the settings.
 - **The `.md` file is written at exit.** If the PC loses power, rebuild it from
   the `.jsonl` with `pixi run python scripts/transcript_to_md.py`
 - To keep no record, start with `--no-save`
-- To write the record somewhere else, use `--save-dir`
 - If no sentence was produced, no file is written
 
 ---
@@ -810,7 +836,7 @@ Options:
 | `--tunnel` | Open the tunnel at start-up. It is off by default |
 | `--no-browser` | Do not open the browser automatically |
 | `--no-save` | Keep no record of the meeting |
-| `--save-dir <folder>` | Where to write the record. Default: your Downloads folder |
+| `--save-dir <folder>` | Where to write the record. **Wins over the folder chosen on the control page.** Default: your Downloads folder |
 | `--dry-run` | Send nothing to Zoom; print to the screen only |
 | `--from-file <wav>` | Play a WAV in real time instead of using a device. 24 kHz mono |
 | `--loop` | Repeat the `--from-file` file |

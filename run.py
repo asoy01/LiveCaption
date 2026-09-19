@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 import time
 import webbrowser
@@ -123,8 +124,11 @@ def parse_args() -> argparse.Namespace:
                         "ログは local/log/ にも残す（窓を消して起動するときに要る）")
     p.add_argument("--no-save", action="store_true",
                    help="会議の記録を残さない（既定では残す）")
-    p.add_argument("--save-dir", metavar="フォルダ", default=config.TRANSCRIPT_DIR,
-                   help=f"記録の置き場（既定: {config.TRANSCRIPT_DIR}）")
+    # **既定を None にしておく。** `.env` を読むのは parse_args の後なので、
+    # ここで既定を埋めると、操作画面から選んだ置き場が上書きされてしまう。
+    p.add_argument("--save-dir", metavar="フォルダ", default=None,
+                   help=f"記録の置き場（既定: {config.TRANSCRIPT_DIR}"
+                        f"、または .env の {config.SAVE_DIR_ENV}）")
     p.add_argument("--list-devices", action="store_true", help="入力デバイスの一覧を出す")
     p.add_argument("--check-audio", nargs="?", type=float, const=20.0, default=None,
                    metavar="秒",
@@ -203,6 +207,18 @@ def main() -> int:
         print("会議を開かずに試すなら --dry-run を付ける。")
         return 1
 
+    # 記録の置き場。優先順は --save-dir、.env、ダウンロードフォルダ。
+    # **使えない置き場でも起動は止めない。** 会議の当日に、フォルダが消えて
+    # いるというだけで字幕が出ないのは困る。断ってダウンロードフォルダに落とす。
+    save_dir = Path(args.save_dir or os.environ.get(config.SAVE_DIR_ENV, "").strip()
+                    or config.TRANSCRIPT_DIR)
+    if not args.no_save:
+        try:
+            save_dir = config.check_save_dir(save_dir)
+        except ValueError as exc:
+            print(f"記録の置き場が使えない（{exc}）ので、ダウンロードフォルダに落とす。")
+            save_dir = config.downloads_dir()
+
     # トークンは会議が始まらないと取れない。無いまま起動してよい。
     # --web を付けてあれば、ブラウザの操作画面から後で入れられる。
     settings = config.Settings(
@@ -212,7 +228,7 @@ def main() -> int:
         translate_model=args.model,
         dry_run=args.dry_run,
         save=not args.no_save,
-        transcript_dir=Path(args.save_dir),
+        transcript_dir=save_dir,
         glossary_names=None if args.glossary is None else tuple(args.glossary),
         direction=args.direction,
     )

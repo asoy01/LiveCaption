@@ -28,7 +28,7 @@ BODY = """</style>
   .head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
           margin-bottom: 12px; }
   .head .nm { font-size: 17px; font-weight: 600; color: var(--fg); }
-  .head .made { font-size: 12px; color: #8b949e; margin-left: auto; }
+  .head .made { font-size: 12px; color: var(--muted); margin-left: auto; }
   .badge { font-size: 12px; padding: 2px 9px; border-radius: 999px;
            border: 1px solid var(--accent); color: var(--accent); }
   .grid { display: grid; grid-template-columns: auto 1fr; gap: 9px 12px;
@@ -42,7 +42,7 @@ BODY = """</style>
                       font-size: 13px; color: var(--ja); cursor: pointer; }
   .grid input[type=text], .grid input[type=datetime-local] {
     width: 100%; box-sizing: border-box; font: inherit; font-size: 14px;
-    color: var(--fg); background: #0d1117; border: 1px solid #30363d;
+    color: var(--fg); background: var(--field); border: 1px solid var(--line2);
     border-radius: 6px; padding: 7px 9px;
   }
   .nums { display: flex; gap: 16px; flex-wrap: wrap; align-items: center;
@@ -50,7 +50,7 @@ BODY = """</style>
   .nums label { font-size: 13px; color: var(--ja); display: flex;
                 align-items: center; gap: 6px; }
   .nums input { width: 74px; font: inherit; font-size: 14px; color: var(--fg);
-                background: #0d1117; border: 1px solid #30363d;
+                background: var(--field); border: 1px solid var(--line2);
                 border-radius: 6px; padding: 5px 7px; text-align: right; }
   .autorow { display: flex; align-items: center; gap: 8px; margin: 14px 0 4px;
              font-size: 15px; color: var(--fg); cursor: pointer; }
