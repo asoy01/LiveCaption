@@ -44,8 +44,10 @@ Zoom字幕APIはホスト権限（トークンのコピー）が要る。自分�
 
 from __future__ import annotations
 
+import hmac
 import io
 import json
+import re
 import socket
 import threading
 import time
@@ -53,6 +55,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+from . import captions as captions_mod
 from . import config, i18n, meetings, tunnel as tunnel_mod
 
 # 画面に残す履歴の数。これを超えた分は古いほうから捨てる。
@@ -256,6 +259,43 @@ FEED_JS = """
   }
   feed();
 """
+
+
+def check_zoom_token(url: str) -> None:
+    """外から受け取るトークンを、`captions.parse_token` より厳しく見る。
+
+    **`parse_token` を厳しくしてはいけない。** あちらは手元の操作画面と
+    `--token` も通る道で、そこは既に信用してよい相手である。
+    厳しくするのは、外から届くこの口だけにする。
+
+    `parse_token` が見るのは「http か https」「経路に closedcaption がある」
+    「`id=` がある」の3つだけである。**宛先を見ていない。**
+    ここを塞がないと、**この口のURLを得た人が自分のサーバのURLを貼って、
+    会議の翻訳文をまるごと受け取れる。** ここでいちばん重い穴である。
+    """
+    text = str(url or "").strip()
+    if not text:
+        raise captions_mod.TokenError("トークンが空である。")
+    if len(text) > 2048:
+        raise captions_mod.TokenError("トークンが長すぎる。")
+    if any(ord(c) < 32 for c in text):
+        raise captions_mod.TokenError("トークンに使えない文字が入っている。")
+
+    parsed = urlparse(text)
+    if parsed.scheme != "https":
+        # http だと字幕の中身が平文で流れる。
+        raise captions_mod.TokenError("https のトークンだけを受け付ける。")
+    host = (parsed.hostname or "").lower()
+    # **部分一致で見ない。** `evil.com/zoom.us/closedcaption` が通ってしまう。
+    if host != "zoom.us" and not host.endswith(".zoom.us"):
+        raise captions_mod.TokenError(
+            f"Zoom のトークンではない（宛先が {host or '不明'}）。")
+    query = parse_qs(parsed.query)
+    meeting = (query.get("id") or [""])[0]
+    if not re.fullmatch(r"\d{9,12}", meeting or ""):
+        raise captions_mod.TokenError("会議IDの形がおかしい。")
+    # 最後に、本体と同じ検査も通す。
+    captions_mod.parse_token(text)
 
 
 def _qr_filename(name: str) -> str:
@@ -519,6 +559,12 @@ CONTROL_BODY = """
   /* **自動で回す印は目立たせる。** これを押すと、無人で外に配信が始まる。 */
   .sched .auto { flex: 1 1 100%; color: var(--fg); font-size: var(--ui); }
   .sched .auto input { cursor: pointer; }
+  /* ホスト用URLは畳んでおく。**参加者用と取り違えて配るのがいちばん怖い。** */
+  .hostrow { flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 6px 8px;
+             align-items: center; border-top: 1px solid var(--line);
+             margin-top: 6px; padding-top: 8px; }
+  .hostrow .warn2 { flex: 1 1 100%; font-size: calc(var(--ui) - 3px); color: var(--ng); }
+  .hostrow .url { border-color: #6e2b2b; }
   /* 次の予定の一覧。 */
   #schedNext { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 8px; }
   #schedNext .row { font-size: calc(var(--ui) - 2px); color: var(--ja);
@@ -1668,6 +1714,46 @@ __FEED_JS__
     });
     box.appendChild(cancel);
 
+    // ホスト用URL。**参加者用と取り違えて配るのが、この機能でいちばん怖い。**
+    // 畳んでおき、赤で囲って、反射で押させない。
+    const host = document.createElement("div");
+    host.className = "hostrow";
+    const show = document.createElement("button");
+    show.className = "savebtn"; show.textContent = "ホスト用URLを出す";
+    show.addEventListener("click", () => {
+      show.remove();
+      const w = document.createElement("div");
+      w.className = "warn2";
+      w.textContent = "ホストにだけ送ること。参加者用のURLと取り違えないこと。"
+        + "このURLを持つ人は、この会議の字幕をZoomに流し込める。";
+      host.appendChild(w);
+      const u = document.createElement("span");
+      u.className = "url"; u.id = "hurl-" + it.id;
+      u.textContent = it.host_url
+        || "経路を Tailscale にすると出る（Cloudflare では出さない）。";
+      host.appendChild(u);
+      if (it.host_url) {
+        const cp = document.createElement("button");
+        cp.className = "copybtn"; cp.dataset.copy = u.id;
+        cp.textContent = "URLをコピー";
+        host.appendChild(cp);
+      }
+      if (it.host_taken) {
+        const re = document.createElement("button");
+        re.className = "savebtn"; re.textContent = "もう一度受け付ける";
+        re.addEventListener("click", async () => {
+          try {
+            meetEditing = ""; meetSeen = "";
+            showStatus(await post("/api/meetings",
+                                  { action: "host_rearm", id: it.id }));
+            say("ホスト用の受け口をもう一度開いた。", true);
+          } catch (e) { say(String(e.message), false); }
+        });
+        host.appendChild(re);
+      }
+    });
+    host.appendChild(show);
+    box.appendChild(host);
     return box;
   }
 
@@ -1860,6 +1946,12 @@ class WebCaptions:
         # 配信するのは選んである1つだけで、他の会議のURLは404になる。
         self.meetings = meetings.Store()
         self.meetings.on_change = self._meeting_changed
+        # ホストの受け口。会議ごとに、失敗の数と「もう受け取った」印を持つ。
+        self._host_attempts: dict[str, int] = {}
+        self._host_done: set[str] = set()
+        self._host_last_try = 0.0
+        # 受け口に何があったか。操作画面に出す。**トークンそのものは入れない。**
+        self.host_log: list[str] = []
 
         # 字幕の履歴と、長ポーリングの待ち合わせ。
         self._events: list[dict] = []
@@ -1905,6 +1997,9 @@ class WebCaptions:
         st = self.meetings.status()
         for item in st["items"]:
             item["url"] = self.meeting_url(item["id"])
+            # **ホスト用URLは、Tailscale のときだけ出る。** 出ないときは空。
+            item["host_url"] = self.host_url(item["id"])
+            item["host_taken"] = item["id"] in self._host_done
         return st
 
     def meeting_url(self, meeting_id: str) -> str:
@@ -2096,6 +2191,111 @@ class WebCaptions:
         # 「開ける」と出すと、繋がらない理由を探すことになる。
         self.control_extra = tuple(bound)
 
+    # --- ホストがトークンを貼る受け口 ---------------------------------------
+    # **トンネル越しに出る、唯一の書き込み口である。** 狭く作る。
+
+    def host_path(self, meeting_id: str, host_id: str) -> str:
+        return f"/h/{meeting_id}/{host_id}"
+
+    def host_url(self, meeting_id: str) -> str:
+        """ホストに渡すURL。開いていなければ空。
+
+        **Cloudflare では作らない。** TLS が Cloudflare の入口で終わるので、
+        Zoom の資格情報がそこを平文で通る。
+        """
+        if self.tunnel is None or self.tunnel.kind not in config.HOST_TOKEN_KINDS:
+            return ""
+        base = self.tunnel.base_url()
+        if not base:
+            return ""
+        try:
+            host_id = self.meetings.ensure_host_id(meeting_id)
+        except ValueError:
+            return ""
+        return f"{base}{self.host_path(meeting_id, host_id)}"
+
+    def host_window_open(self, meeting_id: str) -> bool:
+        """いまトークンを受け付けてよい時間かどうか。
+
+        **恒久的な口にしない。** 開けておくのは、その会議を回している間と、
+        予定の前後 `HOST_TOKEN_WINDOW_MIN` 分だけにする。**これがこの設計で
+        いちばん効く歯止めである。** 会議1本あたり1時間ほどに絞られる。
+        """
+        sched = self.scheduler
+        if sched is not None and sched.meeting_id == meeting_id and sched.state != "idle":
+            return True
+        for m in self.meetings.items():
+            if m.id != meeting_id or not m.start:
+                continue
+            when = self.meetings.next_occurrence(m, datetime.now())
+            if when is None:
+                return False
+            gap = abs((datetime.now() - when).total_seconds())
+            return gap <= config.HOST_TOKEN_WINDOW_MIN * 60
+        return False
+
+    def host_take_token(self, meeting_id: str, host_id: str, token: str,
+                        peer: str = "") -> tuple[int, str]:
+        """トークンを受け取る。`(HTTPの符号, 画面に出す文)` を返す。
+
+        **断るときは、経路違いと同じ404にする。** 「鍵は合っているが時間外」と
+        分かると、そこに口があることを教えることになる。
+        """
+        now = time.monotonic()
+        if now - self._host_last_try < config.HOST_MIN_INTERVAL_SEC:
+            return 429, "続けて送りすぎ。少し待つこと。"
+        self._host_last_try = now
+
+        active = self.meetings.active_id
+        known = {m.id: m for m in self.meetings.items()}
+        meeting = known.get(meeting_id)
+        # **いま配信している会議だけ。** 先週の鍵は通らない。
+        if meeting is None or meeting_id != active or not meeting.host_id:
+            return 404, ""
+        if not hmac.compare_digest(str(host_id), str(meeting.host_id)):
+            self._host_note(meeting_id, peer, "経路が違う")
+            return 404, ""
+        if not self.host_window_open(meeting_id):
+            self._host_note(meeting_id, peer, "受付の時間外")
+            return 404, ""
+        if self._host_attempts.get(meeting_id, 0) >= config.HOST_MAX_ATTEMPTS:
+            self._host_note(meeting_id, peer, "失敗が続いたので閉じた")
+            return 404, ""
+        if meeting_id in self._host_done:
+            # **1回だけ。** 2度目は、間違いか、そうでなければ誰かである。
+            return 409, "もう受け取っている。入れ直すなら操作画面から。"
+
+        if self.control is None:
+            return 503, "Zoom字幕の受け口が用意できていない。"
+        try:
+            check_zoom_token(token)
+            self.control.set_token(token)
+            self.control.set_enabled(True)
+        except captions_mod.TokenError as exc:
+            self._host_attempts[meeting_id] = self._host_attempts.get(meeting_id, 0) + 1
+            self._host_note(meeting_id, peer, f"断った: {exc}")
+            return 400, str(exc)
+        self._host_done.add(meeting_id)
+        self._host_note(meeting_id, peer, "受け取った")
+        return 200, "受け取った。字幕をZoomに送り始める。"
+
+    def host_rearm(self, meeting_id: str) -> None:
+        """操作画面から、受け口をもう一度開く。"""
+        self._host_done.discard(meeting_id)
+        self._host_attempts.pop(meeting_id, None)
+
+    def _host_note(self, meeting_id: str, peer: str, what: str) -> None:
+        """**何があったかを必ず残す。** 無人の機体では、記録が唯一の痕跡である。
+
+        **トークンそのものは絶対に書かない。** 先頭だけでも、会議IDと合わせれば
+        ほとんど復元できる。
+        """
+        line = (f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {what}"
+                f"（会議 {meeting_id[:6]}…, 相手 {peer or '不明'}）")
+        self.host_log.append(line)
+        del self.host_log[:-20]
+        print(f"[{time.strftime('%H:%M:%S')}] ホスト      {what}（相手 {peer or '不明'}）")
+
     def control_urls_extra(self) -> list[str]:
         """127.0.0.1 以外で操作画面が開けるURL。起動時の画面に出す。"""
         return [f"http://{'[' + a + ']' if ':' in a else a}:{self.control_port}"
@@ -2180,11 +2380,12 @@ class _Base(BaseHTTPRequestHandler):
             200, {"next": nxt, "lines": lines, "partial": partial, "pv": partial_v},
             translate=False)
 
-    def _read_json(self) -> dict:
+    def _read_json(self, limit: int | None = None) -> dict:
+        cap = MAX_BODY if limit is None else limit
         length = int(self.headers.get("Content-Length") or 0)
         if length <= 0:
             return {}
-        if length > MAX_BODY:
+        if length > cap:
             raise ValueError("要求が大きすぎる。")
         raw = self.rfile.read(length)
         try:
@@ -2194,6 +2395,97 @@ class _Base(BaseHTTPRequestHandler):
         if not isinstance(data, dict):
             raise ValueError("JSONのオブジェクトではない。")
         return data
+
+
+def _host_page(meeting_name: str) -> bytes:
+    """ホストがトークンを貼るページ。
+
+    **操作画面とは別物にする。** 見るのは会議のホストで、麻生ではない。
+    操作画面の言語設定とも関係が無いので、日本語と英語を並べて出す。
+    **ここから他のことは何もできない。** 貼る欄と送るボタンだけである。
+    """
+    name = (meeting_name or "").replace("&", "&amp;").replace("<", "&lt;")
+    return f"""<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zoom caption token</title>
+<style>
+  :root {{ color-scheme: dark; }}
+  body {{ margin: 0; padding: 24px 18px; background: #0d1117; color: #e6edf3;
+         font-family: "Segoe UI", "Yu Gothic UI", system-ui, sans-serif;
+         line-height: 1.7; }}
+  main {{ max-width: 620px; margin: 0 auto; }}
+  h1 {{ font-size: 19px; margin: 0 0 4px; }}
+  .meet {{ color: #58a6ff; font-weight: 600; }}
+  p {{ font-size: 15px; color: #c9d1d9; margin: 10px 0; }}
+  .en {{ color: #8b949e; font-size: 14px; }}
+  ol {{ font-size: 15px; color: #c9d1d9; padding-left: 22px; }}
+  input {{ width: 100%; box-sizing: border-box; font: inherit; font-size: 15px;
+           color: #e6edf3; background: #161b22; border: 1px solid #30363d;
+           border-radius: 8px; padding: 11px 12px; margin: 10px 0; }}
+  button {{ font: inherit; font-size: 16px; color: #fff; background: #1f6feb;
+            border: 0; border-radius: 8px; padding: 11px 26px; cursor: pointer; }}
+  button:disabled {{ opacity: .5; cursor: default; }}
+  #msg {{ font-size: 15px; margin-top: 14px; min-height: 1.6em; }}
+  .ok {{ color: #3fb950; }}
+  .ng {{ color: #ff9c94; }}
+</style>
+</head>
+<body>
+<main>
+  <h1>Zoom字幕トークン <span class="meet">{name}</span></h1>
+  <p class="en">Zoom caption token</p>
+  <ol>
+    <li>Zoomの<b>「字幕」→「∧」→「手動字幕の設定」</b>で、手動字幕を有効にする<br>
+      <span class="en">Turn manual captions on: Captions → ∧ → Manual captions setup</span></li>
+    <li><b>「APIトークンをコピー」</b>を選ぶ<br>
+      <span class="en">Choose “Copy the API token”</span></li>
+    <li>下に貼って送る<br>
+      <span class="en">Paste it below and send</span></li>
+  </ol>
+  <input id="t" type="text" placeholder="https://....zoom.us/closedcaption?id=..."
+         autocomplete="off" spellcheck="false">
+  <button id="go">送信 / Send</button>
+  <div id="msg"></div>
+</main>
+<script>
+  const t = document.getElementById("t");
+  const go = document.getElementById("go");
+  const msg = document.getElementById("msg");
+  async function send() {{
+    const value = t.value.trim();
+    if (!value) {{ msg.textContent = "トークンを貼ること。/ Paste the token.";
+                   msg.className = "ng"; return; }}
+    go.disabled = true;
+    try {{
+      const r = await fetch(location.pathname, {{
+        method: "POST", headers: {{ "Content-Type": "application/json" }},
+        body: JSON.stringify({{ token: value }}),
+      }});
+      const d = await r.json().catch(() => ({{}}));
+      if (r.ok) {{
+        msg.textContent = d.ok || "受け取った。/ Received.";
+        msg.className = "ok";
+        t.value = "";                      // 画面に残さない
+      }} else {{
+        msg.textContent = d.error || ("送れない（" + r.status + "）");
+        msg.className = "ng";
+        go.disabled = false;
+      }}
+    }} catch (e) {{
+      msg.textContent = "送れない。/ Could not send.";
+      msg.className = "ng";
+      go.disabled = false;
+    }}
+  }}
+  go.addEventListener("click", send);
+  t.addEventListener("keydown", (e) => {{ if (e.key === "Enter") {{ send(); }} }});
+</script>
+</body>
+</html>
+""".encode("utf-8")
 
 
 def _viewer_page(web: WebCaptions) -> bytes:
@@ -2216,21 +2508,78 @@ def _viewer_page(web: WebCaptions) -> bytes:
 
 
 def _viewer_handler(web: WebCaptions):
-    """閲覧画面。**ここが外に出る。字幕を返すことしかしない。**"""
+    """閲覧画面。**ここが外に出る。**
+
+    出す経路は次の4つだけである。**増やさないこと。**
+
+        GET  /v/<会議>          字幕のページ
+        GET  /v/<会議>/lines    字幕の中身
+        GET  /h/<会議>/<鍵>     ホストがトークンを貼るページ
+        POST /h/<会議>/<鍵>     トークンを受け取る
+
+    最後の1つが、**外から状態を変えられる唯一の口**である。ここに何かを足すと、
+    操作画面を 127.0.0.1 に縛ってある意味が薄れる。足す前に `web.py` の
+    冒頭の説明を読むこと。
+    """
 
     class Handler(_Base):
+        def _host_parts(self, path: str) -> tuple[str, str] | None:
+            parts = path.strip("/").split("/")
+            if len(parts) == 3 and parts[0] == "h":
+                return parts[1], parts[2]
+            return None
+
         def do_GET(self) -> None:  # noqa: N802
             u = urlparse(self.path)
             if u.path == web.viewer_path:
                 self._send_bytes(200, "text/html; charset=utf-8", _viewer_page(web))
-            elif u.path == web.viewer_path + "/lines":
+                return
+            if u.path == web.viewer_path + "/lines":
                 self._send_lines(web, parse_qs(u.query))
-            else:
-                # 経路を知らなければ何も見えない。`/` も404にする。
-                self.send_error(404)
+                return
+            found = self._host_parts(u.path)
+            if found is not None:
+                meeting_id, host_id = found
+                items = {m.id: m for m in web.meetings.items()}
+                meeting = items.get(meeting_id)
+                ok = (meeting is not None
+                      and meeting_id == web.meetings.active_id
+                      and meeting.host_id
+                      and hmac.compare_digest(host_id, meeting.host_id)
+                      and web.host_window_open(meeting_id))
+                if not ok:
+                    # **経路違いと同じ404にする。** 「鍵は合っているが時間外」と
+                    # 分かると、そこに口があることを教えることになる。
+                    self.send_error(404)
+                    return
+                self._send_bytes(200, "text/html; charset=utf-8",
+                                 _host_page(meeting.name))
+                return
+            # 経路を知らなければ何も見えない。`/` も404にする。
+            self.send_error(404)
 
         def do_POST(self) -> None:  # noqa: N802
-            self.send_error(404)
+            u = urlparse(self.path)
+            found = self._host_parts(u.path)
+            if found is None:
+                self.send_error(404)
+                return
+            meeting_id, host_id = found
+            try:
+                # **上限を小さくする。** 来るのはURL1本だけである。
+                body = self._read_json(limit=config.HOST_MAX_BODY)
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)}, translate=False)
+                return
+            peer = self.client_address[0] if self.client_address else ""
+            code, message = web.host_take_token(
+                meeting_id, host_id, str(body.get("token", "")), peer)
+            if code == 404:
+                self.send_error(404)
+                return
+            # **訳さない。** この画面を見るのはホストで、操作画面の言語とは関係ない。
+            self._send_json(code, {"error" if code >= 400 else "ok": message},
+                            translate=False)
 
     return Handler
 
@@ -2570,6 +2919,8 @@ def _control_handler(web: WebCaptions):
                     web.meetings.set_schedule(str(body.get("id", "")), **fields)
                 elif action == "host_key":
                     web.meetings.ensure_host_id(str(body.get("id", "")), renew=True)
+                elif action == "host_rearm":
+                    web.host_rearm(str(body.get("id", "")))
                 else:
                     raise ValueError(f"知らない操作: 「{action}」。")
             except ValueError as exc:

@@ -126,6 +126,17 @@ EN: dict[str, str] = {
         "Running it automatically sends captions out with nobody watching.",
     "外に出せない内容の会議では印を付けないこと。":
         "Do not tick this for meetings whose content must not leave.",
+    # --- ホスト用URL ---
+    "ホスト用URLを出す": "Show the host URL",
+    "ホストにだけ送ること。参加者用のURLと取り違えないこと。":
+        "Send it to the host only. Do not confuse it with the participants' URL.",
+    "このURLを持つ人は、この会議の字幕をZoomに流し込める。":
+        "Whoever holds this URL can push this meeting's captions into Zoom.",
+    "経路を Tailscale にすると出る（Cloudflare では出さない）。":
+        "It appears when the route is Tailscale (never with Cloudflare).",
+    "もう一度受け付ける": "Accept one more",
+    "ホスト用の受け口をもう一度開いた。": "The host page accepts a token again.",
+
     "　自動で回す": "  automatic",
     "　自動は切り": "  automatic off",
     "　Zoomに入る": "  joins Zoom",
