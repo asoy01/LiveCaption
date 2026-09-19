@@ -28,7 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from live_caption import i18n, web  # noqa: E402
+from live_caption import i18n, schedule, web  # noqa: E402
 
 HISTORY = 300
 
@@ -77,6 +77,20 @@ def check_syntax(page: str) -> list[str]:
     return bad
 
 
+def check_scheduler_strings() -> list[str]:
+    """見張りが状態に載せる一言の訳し残し。
+
+    **これらはページのマークアップに現れない。** `/api/status` に載って画面へ
+    行くので、ページだけを見ていると英語表示のときだけ日本語が混ざる。
+    2026-09-19 に「本体を組み立てているところ」がこれで漏れた。
+    """
+    left = []
+    for text in schedule.UI_STRINGS:
+        if i18n.remaining_japanese(i18n.apply(text, "en")):
+            left.append(text)
+    return left
+
+
 def main() -> int:
     page = build_page()
 
@@ -93,13 +107,20 @@ def main() -> int:
     print("スクリプトの構文: 日本語・英語ともに通る。")
 
     left = i18n.remaining_japanese(strip_comments(i18n.apply(page, "en")))
-    if not left:
+    notes = check_scheduler_strings()
+    if not left and not notes:
         print("訳し残しは無い。")
         return 0
 
-    print(f"訳し残し: {len(left)} 件")
-    for word in left:
-        print(f"    {word}")
+    if left:
+        print(f"画面の訳し残し: {len(left)} 件")
+        for word in left:
+            print(f"    {word}")
+    if notes:
+        print(f"見張りの一言の訳し残し: {len(notes)} 件"
+              "（schedule.UI_STRINGS）")
+        for word in notes:
+            print(f"    {word}")
     print()
     print("src/live_caption/i18n.py の EN に足すこと。")
     return 1

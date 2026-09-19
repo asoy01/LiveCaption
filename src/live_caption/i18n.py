@@ -56,6 +56,72 @@ EN: dict[str, str] = {
     "このURLをQRで配る。参加者はブラウザで開くだけでよい。":
         "Hand out this URL as a QR code. People only open it in a browser.",
 
+    # --- 次にやること（予定の見張り） ---
+    # **ここも二重引用符を入れてはいけない。** JavaScript の文字列に入る。
+    "次にやること": "Coming up",
+    "了解": "Got it",
+    "いま止める": "Stop now",
+    "次の予定を飛ばす": "Skip the next one",
+    "待機中（予定は入っていない）": "Waiting (nothing scheduled)",
+    "待機中": "Waiting",
+    "動作中: ": "Running: ",
+    "始めているところ: ": "Starting: ",
+    "片付けているところ": "Shutting the meeting down",
+    "無音まで ": "silence stop in ",
+    "上限まで ": "cap in ",
+    "（Zoomには入らない）": " (does not join Zoom)",
+    "過ぎている": "overdue",
+    "まもなく": "very soon",
+    "あと ": "in ",
+    " 時間 ": " h ",
+    " 分": " min",
+    "いま回している会議を止めた。": "Stopped the meeting that was running.",
+    "次の予定を飛ばした。": "Skipped the next one.",
+    "飛ばす予定が無い。": "There is nothing to skip.",
+
+    # --- 見張りが出す一言（schedule.py から状態に載ってくる） ---
+    # **数字を混ぜた文はここに置けない。** 置き換えは固定の文にしか効かない。
+    # 数字は端末のログにだけ出す。
+    "本体を組み立てているところ": "Still starting up",
+    "会議を選んだ": "Meeting selected",
+    "配信を始めた": "Delivery started",
+    "配信を始められなかった": "Could not start delivering",
+    "Zoomへの自動参加はまだ入っていない": "Joining Zoom automatically is not built yet",
+    "字幕を出している": "Captions are running",
+    "生成が止められた": "Caption generation was stopped",
+    "操作画面から止めた": "Stopped from the control page",
+    "例外が出たので片付けた": "An error came up, so the meeting was shut down",
+    "始まらなかったので片付けた": "It never started, so the meeting was shut down",
+    "安全上限で止めた": "Stopped at the hard cap",
+    "無音が続いたので止めた": "Stopped after a long silence",
+    "音声の入力を開けない: ": "Cannot open the audio input: ",
+    "生成が始まらない。": "Caption generation does not start.",
+    "会議を選べない: ": "Cannot select the meeting: ",
+    "見張りで例外: ": "Error in the scheduler: ",
+
+    # --- 予定の入力 ---
+    "予定を保存した: ": "Schedule saved: ",
+    "予定を保存": "Save the schedule",
+    "予定なし": "not scheduled",
+    "予定": "Schedule",
+    "やめる": "Cancel",
+    "毎週 ": "weekly ",
+    "毎週": "Weekly",
+    "Zoomの招待URLか会議番号（空なら自分では入らない）":
+        "Zoom invitation URL or meeting number (empty: do not join)",
+    "何分前から": "Minutes before",
+    "無音で終了（分）": "Stop after silence (min)",
+    "安全上限（分）": "Hard cap (min)",
+    "この会議を自動で回す（時刻が来たら配信を始める）":
+        "Run this meeting automatically (start delivering at the set time)",
+    "自動で回すと、人が見ていなくても字幕が外に出る。":
+        "Running it automatically sends captions out with nobody watching.",
+    "外に出せない内容の会議では印を付けないこと。":
+        "Do not tick this for meetings whose content must not leave.",
+    "　自動で回す": "  automatic",
+    "　自動は切り": "  automatic off",
+    "　Zoomに入る": "  joins Zoom",
+
     # --- 会議 ---
     "会議": "Meetings",
     "会議ごとに別のURLを使う。": "Each meeting gets its own URL.",

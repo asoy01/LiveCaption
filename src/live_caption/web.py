@@ -48,6 +48,7 @@ import io
 import json
 import threading
 import time
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -494,6 +495,37 @@ CONTROL_BODY = """
   .meet .when { flex: 0 0 auto; font-size: calc(var(--ui) - 3px); color: #8b949e; }
   .meet .url { flex: 1 1 100%; }
   .meet .none { flex: 1 1 100%; font-size: calc(var(--ui) - 2px); color: #8b949e; }
+  /* 予定の要約。行の中で、名前の下に小さく敷く。 */
+  .meet .when2 { flex: 1 1 100%; font-size: calc(var(--ui) - 3px); color: #8b949e; }
+  .meet.armed .when2 { color: var(--ok); }
+  /* 予定の入力欄。**行の中に開く。** この画面に重ねる窓は1つも無いので、
+     ここだけ別の作りにしない。 */
+  .sched { flex: 1 1 100%; border-top: 1px solid var(--line); margin-top: 4px;
+           padding-top: 8px; display: flex; flex-wrap: wrap; gap: 6px 8px; }
+  .sched label { font-size: calc(var(--ui) - 2px); color: var(--ja);
+                 display: flex; align-items: center; gap: 5px; }
+  .sched input[type=datetime-local], .sched input[type=text] {
+    font: inherit; font-size: calc(var(--ui) - 1px); color: var(--fg);
+    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+    padding: 5px 8px; min-width: 0;
+  }
+  .sched input[type=number] {
+    font: inherit; font-size: calc(var(--ui) - 1px); color: var(--fg); width: 68px;
+    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+    padding: 5px 6px; text-align: right;
+  }
+  .sched .wide { flex: 1 1 100%; }
+  /* **自動で回す印は目立たせる。** これを押すと、無人で外に配信が始まる。 */
+  .sched .auto { flex: 1 1 100%; color: var(--fg); font-size: var(--ui); }
+  .sched .auto input { cursor: pointer; }
+  /* 次の予定の一覧。 */
+  #schedNext { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 8px; }
+  #schedNext .row { font-size: calc(var(--ui) - 2px); color: var(--ja);
+                    display: flex; gap: 8px; }
+  #schedNext .row .t { color: var(--fg); flex: 0 0 auto; }
+  #schedNext .row .n { flex: 1 1 auto; overflow: hidden;
+                       text-overflow: ellipsis; white-space: nowrap; }
+  #schedFailRow { align-items: flex-start; }
   /* QRは白地でないと読めない端末がある。余白ごと白くする。 */
   #qrbox { display: none; }
   #qrbox.on { display: flex; }
@@ -581,6 +613,20 @@ CONTROL_BODY = """
     </div>
     <div class="row2" id="tunnelErrBox" style="display:none">
       <pre class="err" id="tunnelErr"></pre>
+    </div>
+  </div>
+
+  <div class="grp" id="schedGrp">
+    <h2>次にやること</h2>
+    <div class="row2" id="schedFailRow" style="display:none">
+      <pre class="err" id="schedFail"></pre>
+      <button id="schedAck">了解</button>
+    </div>
+    <div class="row2"><span id="schedState"></span></div>
+    <div class="list" id="schedNext"></div>
+    <div class="row2">
+      <button id="schedStop" class="danger">いま止める</button>
+      <button id="schedSkip">次の予定を飛ばす</button>
     </div>
   </div>
 
@@ -756,6 +802,12 @@ __FEED_JS__
   const tkind = $("tkind"), tkindHint = $("tkindHint");
   const meetName = $("meetName"), meetAdd = $("meetAdd");
   const meetList = $("meetList"), meetHint = $("meetHint"), meetCount = $("meetCount");
+  const schedState = $("schedState"), schedNext = $("schedNext");
+  const schedFail = $("schedFail"), schedFailRow = $("schedFailRow");
+  const schedAck = $("schedAck"), schedStop = $("schedStop"), schedSkip = $("schedSkip");
+  // 予定を開いている会議のID。**開いている間は一覧を描き直さない。**
+  // 描き直すと、打ちかけの値が手の下で消える。
+  let meetEditing = "";
   // 一覧を組み直すと、打ちかけの名前や押した場所が飛ぶ。中身が変わったときだけ描く。
   let meetSeen = "";
   const publicUrlRow = $("publicUrlRow"), tunnelHint = $("tunnelHint");
@@ -926,8 +978,11 @@ __FEED_JS__
     if (t.error) { terr.textContent = t.error; terrBox.style.display = ""; }
     else { terrBox.style.display = "none"; }
 
+    // --- 予定 ---
+    drawSchedule(s.schedule || {});
+
     // --- 会議 ---
-    drawMeetings(s.meetings || {}, t);
+    drawMeetings(s.meetings || {}, t, s.schedule || {});
 
     viewerUrl.textContent = s.viewer_url || "";
 
@@ -1319,11 +1374,95 @@ __FEED_JS__
     } catch (e) { say(String(e.message), false); }
   });
 
+  // --- 予定 ---------------------------------------------------------------
+  // **無人で回すものは、次に何が起きるかが先に読めないと怖い。**
+  function mmss(sec) {
+    if (sec < 0) { return ""; }
+    const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
+    return m + ":" + String(s).padStart(2, "0");
+  }
+  function inWords(sec) {
+    if (sec < 0) { return "過ぎている"; }
+    if (sec < 90) { return "まもなく"; }
+    const m = Math.round(sec / 60);
+    if (m < 60) { return "あと " + m + " 分"; }
+    return "あと " + Math.floor(m / 60) + " 時間 " + (m % 60) + " 分";
+  }
+
+  function drawSchedule(sc) {
+    const st = sc.state || "idle";
+    const parts = [];
+    if (st === "running") {
+      parts.push("動作中: " + (sc.meeting || ""));
+      if (sc.silence_left_sec >= 0) { parts.push("無音まで " + mmss(sc.silence_left_sec)); }
+      if (sc.max_left_sec >= 0) { parts.push("上限まで " + mmss(sc.max_left_sec)); }
+    } else if (st === "joining" || st === "arming") {
+      parts.push("始めているところ: " + (sc.meeting || ""));
+      if (sc.note) { parts.push(sc.note); }
+    } else if (st === "stopping") {
+      parts.push("片付けているところ");
+    } else {
+      const up = sc.upcoming || [];
+      parts.push(up.length ? "待機中" : "待機中（予定は入っていない）");
+      if (sc.note) { parts.push(sc.note); }
+    }
+    schedState.textContent = parts.join("　");
+
+    // **失敗は押して消すまで残す。** 無人の機体では、流れた失敗は誰も見ない。
+    if (sc.failure) {
+      schedFail.textContent = (sc.failure_at || "") + "　" + sc.failure;
+      schedFailRow.style.display = "";
+    } else {
+      schedFailRow.style.display = "none";
+    }
+
+    const up = sc.upcoming || [];
+    const key = JSON.stringify(up);
+    if (key !== schedNext.dataset.seen) {
+      schedNext.dataset.seen = key;
+      schedNext.textContent = "";
+      for (const it of up) {
+        const row = document.createElement("div");
+        row.className = "row";
+        const t = document.createElement("span");
+        t.className = "t"; t.textContent = it.at;
+        const n = document.createElement("span");
+        n.className = "n"; n.textContent = it.name + (it.zoom ? "" : "（Zoomには入らない）");
+        const w = document.createElement("span");
+        w.textContent = inWords(it.in_sec);
+        row.appendChild(t); row.appendChild(n); row.appendChild(w);
+        schedNext.appendChild(row);
+      }
+    }
+    schedStop.disabled = (st === "idle");
+    schedSkip.disabled = !up.length;
+  }
+
+  schedAck.addEventListener("click", async () => {
+    try { showStatus(await post("/api/schedule", { action: "ack" })); }
+    catch (e) { say(String(e.message), false); }
+  });
+  schedStop.addEventListener("click", async () => {
+    try {
+      showStatus(await post("/api/schedule", { action: "stop" }));
+      say("いま回している会議を止めた。", true);
+    } catch (e) { say(String(e.message), false); }
+  });
+  schedSkip.addEventListener("click", async () => {
+    try {
+      showStatus(await post("/api/schedule", { action: "skip" }));
+      say("次の予定を飛ばした。", true);
+    } catch (e) { say(String(e.message), false); }
+  });
+
   // --- 会議 ---------------------------------------------------------------
   // **一覧は中身が変わったときだけ描き直す。** 毎秒組み直すと、打ちかけの名前や
   // 押そうとしていたボタンが手の下で消える。
-  function drawMeetings(m, t) {
+  function drawMeetings(m, t, sc) {
     const items = m.items || [];
+    // **予定を開いている間は描き直さない。** 打ちかけの日時や会議番号が
+    // 手の下で消える。閉じた時点で描き直される。
+    if (meetEditing) { return; }
     const key = JSON.stringify([m.active, items]);
     if (key === meetSeen) { return; }
     meetSeen = key;
@@ -1353,6 +1492,17 @@ __FEED_JS__
       const when = document.createElement("span");
       when.className = "when"; when.textContent = it.created; row.appendChild(when);
 
+      // 予定の要約。無人で回す印が立っている会議は、ここで見分ける。
+      if (it.auto && it.start) { row.classList.add("armed"); }
+      const sum = document.createElement("span");
+      sum.className = "when2";
+      sum.textContent = it.start
+        ? (it.repeat === "weekly" ? "毎週 " : "") + it.start
+          + (it.auto ? "　自動で回す" : "　自動は切り")
+          + (it.zoom ? "　Zoomに入る" : "")
+        : "予定なし";
+      row.appendChild(sum);
+
       if (it.url) {
         const u = document.createElement("span");
         u.className = "url"; u.id = "murl-" + it.id; u.textContent = it.url;
@@ -1381,6 +1531,16 @@ __FEED_JS__
         row.appendChild(none);
       }
 
+      const edit = document.createElement("button");
+      edit.className = "savebtn"; edit.textContent = "予定";
+      edit.addEventListener("click", () => {
+        if (meetEditing === it.id) { meetEditing = ""; meetSeen = ""; refresh(); return; }
+        meetEditing = it.id;
+        row.appendChild(buildEditor(it));
+        edit.disabled = true;
+      });
+      row.appendChild(edit);
+
       const del = document.createElement("button");
       del.className = "savebtn"; del.textContent = "削除";
       // **最後の1つも消せる。** 終わった会議を全部片付けられるようにする。
@@ -1389,6 +1549,7 @@ __FEED_JS__
       del.addEventListener("click", async () => {
         if (!confirm("この会議を消す: " + it.name + "。このURLは開けなくなる。よろしいですか。")) { return; }
         try {
+          meetEditing = "";
           showStatus(await post("/api/meetings", { action: "delete", id: it.id }));
           say(last ? "会議を消した。閲覧URLが要るので、新しい会議を1つ作った。"
                    : "会議を消した: " + it.name, true);
@@ -1420,6 +1581,93 @@ __FEED_JS__
         meetList.scrollTop = bottom - meetList.clientHeight;
       }
     }
+  }
+
+  // 予定の入力欄。**行の中に開く。** この画面に重ねる窓は1つも無い。
+  function buildEditor(it) {
+    const box = document.createElement("div");
+    box.className = "sched";
+
+    function field(labelText, node) {
+      const l = document.createElement("label");
+      l.appendChild(document.createTextNode(labelText));
+      l.appendChild(node);
+      box.appendChild(l);
+      return node;
+    }
+    function num(labelText, value, min, max, step) {
+      const i = document.createElement("input");
+      i.type = "number"; i.value = value; i.min = min; i.max = max;
+      if (step) { i.step = step; }
+      return field(labelText, i);
+    }
+
+    const start = document.createElement("input");
+    start.type = "datetime-local";
+    // 画面の値は "2026-09-25T09:30"。送るときに T を空白へ直す。
+    start.value = it.start ? it.start.replace(" ", "T") : "";
+    field("開始", start);
+
+    const rep = document.createElement("input");
+    rep.type = "checkbox"; rep.checked = (it.repeat === "weekly");
+    field("毎週", rep);
+
+    const zoom = document.createElement("input");
+    zoom.type = "text"; zoom.className = "wide";
+    zoom.placeholder = "Zoomの招待URLか会議番号（空なら自分では入らない）";
+    zoom.value = it.zoom || "";
+    field("Zoom", zoom);
+
+    const lead = num("何分前から", it.lead_min, 0, 60);
+    const silence = num("無音で終了（分）", it.silence_min, 0.5, 240, "0.5");
+    const cap = num("安全上限（分）", it.max_min, 5, 1440);
+
+    const autoWrap = document.createElement("label");
+    autoWrap.className = "auto";
+    const auto = document.createElement("input");
+    auto.type = "checkbox"; auto.checked = !!it.auto;
+    autoWrap.appendChild(auto);
+    autoWrap.appendChild(document.createTextNode(
+      "この会議を自動で回す（時刻が来たら配信を始める）"));
+    box.appendChild(autoWrap);
+
+    const warn = document.createElement("div");
+    warn.className = "warn2";
+    warn.textContent = "自動で回すと、人が見ていなくても字幕が外に出る。"
+      + "外に出せない内容の会議では印を付けないこと。";
+    box.appendChild(warn);
+
+    const save = document.createElement("button");
+    save.className = "primary savebtn"; save.textContent = "予定を保存";
+    save.addEventListener("click", async () => {
+      save.disabled = true;
+      try {
+        const fields = {
+          start: start.value,
+          repeat: rep.checked ? "weekly" : "",
+          zoom: zoom.value,
+          lead_min: Number(lead.value),
+          silence_min: Number(silence.value),
+          max_min: Number(cap.value),
+          auto: auto.checked,
+        };
+        meetEditing = "";
+        meetSeen = "";
+        showStatus(await post("/api/meetings",
+                              { action: "schedule", id: it.id, fields }));
+        say("予定を保存した: " + it.name, true);
+      } catch (e) { say(String(e.message), false); save.disabled = false; }
+    });
+    box.appendChild(save);
+
+    const cancel = document.createElement("button");
+    cancel.className = "savebtn"; cancel.textContent = "やめる";
+    cancel.addEventListener("click", () => {
+      meetEditing = ""; meetSeen = ""; refresh();
+    });
+    box.appendChild(cancel);
+
+    return box;
   }
 
   async function addMeeting() {
@@ -1641,6 +1889,13 @@ class WebCaptions:
         url = self.tunnel.url if self.tunnel is not None else ""
         return f"{url}{self.viewer_path}" if url else ""
 
+    def _upcoming(self) -> list[dict]:
+        """これから来る回。**予定の表示が見張りに依存しないようにする。**"""
+        try:
+            return self.meetings.upcoming(datetime.now(), limit=3)
+        except Exception:  # noqa: BLE001
+            return []
+
     def meetings_status(self) -> dict:
         """会議の一覧に、いまの経路で組み立てたURLを添える。"""
         st = self.meetings.status()
@@ -1774,10 +2029,16 @@ class WebCaptions:
         st["meetings"] = self.meetings_status()
         # 予定の見張りの状態。**2秒ごとの状態取得に相乗りさせる。**
         # 無人で回すものは、次に何が起きるかが先に読めないと怖い。
+        #
+        # **次の予定は、見張りが居なくても出す。** 起動直後、本体が組み上がるまでの
+        # 短い間は `scheduler` がまだ入っていない。そこで予定が空に見えると、
+        # 「予定が消えた」と誤解させる。予定は会議の一覧が持っているので、
+        # そちらから直に読む。
         st["schedule"] = self.scheduler.status() if self.scheduler else {
-            "state": "idle", "meeting": "", "occurrence": "", "note": "",
-            "failure": "", "failure_at": "", "silence_left_sec": -1.0,
-            "max_left_sec": -1.0, "upcoming": []}
+            "state": "idle", "meeting": "", "occurrence": "",
+            "note": "本体を組み立てているところ", "failure": "", "failure_at": "",
+            "silence_left_sec": -1.0, "max_left_sec": -1.0,
+            "upcoming": self._upcoming()}
         st["generating"] = bool(self.engine.status()["generating"]) if self.engine else True
         st["audio"] = self.audio.status() if self.audio else {
             "selectable": False, "name": "—", "index": None,

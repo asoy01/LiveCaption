@@ -43,6 +43,31 @@ STOPPING = "stopping"
 # 文字として残し、状態は `idle` に戻す。
 
 
+# **画面に出る一言は、ここに全部並べる。** これらは `/api/status` に載って
+# 操作画面へ行くので、訳表に無いと英語表示のときだけ日本語が混ざる。
+# ページのマークアップには現れないため、`scripts/check_ui_lang.py` は
+# この一覧を見て訳し残しを調べる。文を足したら、ここにも足すこと。
+UI_STRINGS = (
+    "会議を選んだ",
+    "配信を始めた",
+    "配信を始められなかった",
+    "Zoomへの自動参加はまだ入っていない",
+    "字幕を出している",
+    "生成が止められた",
+    "操作画面から止めた",
+    "例外が出たので片付けた",
+    "始まらなかったので片付けた",
+    "安全上限で止めた",
+    "無音が続いたので止めた",
+    "飛ばす予定が無い。",
+    "次の予定を飛ばした。",
+    "生成が始まらない。",
+    "音声の入力を開けない: ",
+    "会議を選べない: ",
+    "見張りで例外: ",
+)
+
+
 def now_str() -> str:
     return time.strftime("%H:%M:%S")
 
@@ -136,8 +161,9 @@ class Scheduler:
             self.note = "飛ばす予定が無い。"
             return self.status()
         store.mark_fired(nxt[0]["id"], nxt[0]["at"])
-        self.note = f"{nxt[0]['at']} の「{nxt[0]['name']}」を飛ばした。"
-        print(f"[{now_str()}] 予定        {self.note}")
+        self.note = "次の予定を飛ばした。"
+        print(f"[{now_str()}] 予定        {nxt[0]['at']} の"
+              f"「{nxt[0]['name']}」を飛ばした")
         return self.status()
 
     # --- 見張り -------------------------------------------------------------
@@ -291,19 +317,26 @@ class Scheduler:
         elapsed = time.monotonic() - self.started_at
         if elapsed > self._max_limit():
             # **無音でなくても必ず止める。** 課金が止まらないのを防ぐ最後の砦。
-            self._teardown(f"安全上限（{self._max_min}分）で止めた")
+            self._teardown("安全上限で止めた", detail=f"{self._max_min}分")
             return
         quiet = time.monotonic() - self.app.last_sentence_at
         if quiet > self._silence_limit():
-            self._teardown(f"無音が{self._silence_min:g}分続いたので止めた")
+            self._teardown("無音が続いたので止めた",
+                           detail=f"{self._silence_min:g}分")
 
     # --- 片付け -------------------------------------------------------------
 
-    def _teardown(self, why: str) -> None:
-        """会議1本ぶんを畳む。**プロセスは終わらせない。**"""
+    def _teardown(self, why: str, detail: str = "") -> None:
+        """会議1本ぶんを畳む。**プロセスは終わらせない。**
+
+        `why` は画面に出す一言で、**数字を混ぜない固定の文にする。**
+        訳表は固定の文しか置き換えられない。数字は `detail` に入れて
+        端末のログにだけ残す。診断はそちらで足りる。
+        """
         self.state = STOPPING
         name = self.meeting_name
-        print(f"[{now_str()}] 予定        「{name}」を畳む: {why}")
+        extra = f"（{detail}）" if detail else ""
+        print(f"[{now_str()}] 予定        「{name}」を畳む: {why}{extra}")
         try:
             self.app.engine.set_running(False)
         except Exception as exc:  # noqa: BLE001
