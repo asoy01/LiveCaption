@@ -117,6 +117,10 @@ def parse_args() -> argparse.Namespace:
                    help="cloudflared の場所。PATH と local/bin にあれば要らない")
     p.add_argument("--no-browser", action="store_true",
                    help="--web のときにブラウザを自動で開かない")
+    p.add_argument("--tray", action="store_true",
+                   help="**タスクトレイに常駐する。** アイコンの色で状態が分かり、"
+                        "右クリックで操作画面・ログ・終了。"
+                        "ログは local/log/ にも残す（窓を消して起動するときに要る）")
     p.add_argument("--no-save", action="store_true",
                    help="会議の記録を残さない（既定では残す）")
     p.add_argument("--save-dir", metavar="フォルダ", default=config.TRANSCRIPT_DIR,
@@ -144,11 +148,12 @@ def _control_extra(value: str) -> tuple[str, ...] | None:
     if value == "auto":
         addrs = tunnel_mod.tailscale_addrs()
         if not addrs:
-            # **ここで起動を止める。** 出るつもりで出ていないのが、いちばん困る。
-            print("--control-bind: Tailscale のアドレスが分からない。")
-            print("  Tailscale が動いてサインインしているか確かめること"
-                  "（tailscale status）。")
-            return None
+            # **起動は止めない。** 自動起動では、Tailscale がまだ上がっていない
+            # ことがある。再起動の直後に数十秒遅れただけで字幕アプリが立ち
+            # 上がらないのでは困る。127.0.0.1 で立てて、背景で繰り返す。
+            print("操作画面:   Tailscale のアドレスがまだ分からない。"
+                  "取れたら足す（背景で繰り返す）")
+            return ()
         return tuple(addrs)
 
     if not tunnel_mod.is_tailscale_addr(value):
@@ -175,6 +180,12 @@ def main() -> int:
             stream.reconfigure(errors="replace")
 
     args = parse_args()
+    # **ログを最初に開く。** 窓が無い起動では、ここから先の print だけが手がかりになる。
+    log_path = None
+    if args.tray:
+        from live_caption import tray as tray_mod
+
+        log_path = tray_mod.start_logging()
     config.load_env()
 
     if args.list_devices:
@@ -212,6 +223,7 @@ def main() -> int:
         capture = audio_mod.Capture(device=audio_mod.find_device(args.device))
 
     web = None
+    tray = None
     if args.web is not None:
         from live_caption import tunnel as tunnel_mod
         from live_caption import web as web_mod
@@ -225,6 +237,8 @@ def main() -> int:
             if extra is None:
                 return 1
             web.control_extra = extra
+            # 取れていなくても起動する。取れるまで背景で試し直す。
+            web.control_retry = True
         # 配信の口だけ用意しておく。出すかどうかは別（既定では出さない）。
         # 経路（Cloudflare / Tailscale）は前回の選択を引き継ぐ。
         web.tunnel = tunnel_mod.Delivery(args.web, command=args.cloudflared)
@@ -269,6 +283,14 @@ def main() -> int:
         if not args.no_browser:
             webbrowser.open(web.control_url())
 
+        # **トレイは窓の代わりである。** 窓を消して常駐させると、生きているのか
+        # 死んでいるのかが分からなくなる。色で状態を出し、右クリックで操作できる
+        # ようにする。出せなくても本体は続ける。
+        if args.tray:
+            tray = tray_mod.Tray(web, log_path)
+            if tray.start():
+                print(f"トレイ:     常駐している。ログ: {log_path}")
+
     application = app_mod.App(settings, web=web)
     # **操作画面があるときは、停止した状態から始める。** 会議に入る前にアプリを
     # 立ち上げておけるようにするためである。準備中の雑談を認識に流さない。
@@ -280,6 +302,8 @@ def main() -> int:
         print()
         print("終了する。")
     finally:
+        if tray is not None:
+            tray.stop()
         capture.stop()
         if web is not None:
             if web.tunnel is not None:

@@ -1920,6 +1920,9 @@ class WebCaptions:
         # 操作画面を、127.0.0.1 に加えて待ち受けるアドレス（tailnet のIP）。
         # **必ず Tailscale の範囲だけにする**（run.py が確かめてから渡す）。
         self.control_extra: tuple[str, ...] = ()
+        # tailnet のアドレスを、取れるまで背景で待つかどうか。
+        self.control_retry = False
+        self._stopping = False
         self.lines = lines
         self.bind = bind
         self.control = None
@@ -2190,6 +2193,38 @@ class WebCaptions:
         # `Origin` の検査は、どちらもここから作る。開いていないURLを
         # 「開ける」と出すと、繋がらない理由を探すことになる。
         self.control_extra = tuple(bound)
+        if self.control_retry:
+            threading.Thread(target=self._retry_control_bind, daemon=True).start()
+
+    def _retry_control_bind(self) -> None:
+        """tailnet のアドレスが取れるまで、背景で待ち受けを足し続ける。
+
+        **自動起動では、Tailscale がまだ上がっていないことがある。**
+        起動のときに1回試して諦めると、再起動のたびに「その回はもう
+        tailnet から操作画面が開けない」ことになる。字幕アプリの起動そのものは
+        待たせず（127.0.0.1 は先に開いている）、ここで繰り返す。
+        """
+        while not self._stopping:
+            time.sleep(config.CONTROL_BIND_RETRY_SEC)
+            if self._stopping or self.control_extra:
+                return
+            addrs = tunnel_mod.tailscale_addrs()
+            if not addrs:
+                continue
+            bound = []
+            for addr in addrs:
+                try:
+                    self._servers.append(
+                        self._serve(addr, self.control_port, _control_handler(self)))
+                    bound.append(addr)
+                except OSError:
+                    pass
+            if bound:
+                self.control_extra = tuple(bound)
+                for url in self.control_urls_extra():
+                    print(f"[{time.strftime('%H:%M:%S')}] 操作        "
+                          f"tailnet からも開けるようになった: {url}")
+                return
 
     # --- ホストがトークンを貼る受け口 ---------------------------------------
     # **トンネル越しに出る、唯一の書き込み口である。** 狭く作る。
@@ -2320,12 +2355,18 @@ class WebCaptions:
                 address_family = socket.AF_INET6
 
             cls = _V6
+        # **同じポートを2つのプロセスが掴めないようにする。** Windows では
+        # `allow_reuse_address` が効いて、2つ目の LiveCaption も bind に成功する。
+        # そうなると、どちらが応答するか分からない。**常時起動の機体では、
+        # 二重起動に気づかないまま古いほうを操作することになる**（実際に踏んだ）。
+        cls.allow_reuse_address = False
         server = cls((host, port), handler)
         server.daemon_threads = True
         threading.Thread(target=server.serve_forever, daemon=True).start()
         return server
 
     def stop(self) -> None:
+        self._stopping = True
         for server in self._servers:
             server.shutdown()
             server.server_close()
