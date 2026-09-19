@@ -174,6 +174,10 @@ pixi run python scripts/cable_loopback.py
 **`InstallToStartMenu.bat`** をダブルクリックします。現在のユーザーのスタートメニューに
 `LiveCaption` の項目が入るので、会議の前にこのフォルダを探さずに済みます。
 
+**この項目はウィンドウを開きません。** タスクトレイに常駐し、アイコンを右クリックして
+操作画面・ログ・終了を選びます（4.5 を見てください）。起動の様子を見たいときは、
+`StartLiveCaption.bat` を手で実行してください。そちらはコンソールが残ります。
+
 ```
 Windowsキー  ->  「livecaption」と打つ  ->  Enter
 ```

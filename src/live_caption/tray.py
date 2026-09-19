@@ -114,18 +114,43 @@ def open_in_editor(path: Path | None) -> None:
 
 
 def _icon_image(color) -> object:  # noqa: ANN001
-    """丸を1つ描く。**アイコンの画像は持たない。**
+    """アプリのアイコンに、状態を示す小さな印を重ねる。
 
-    `etc/LiveCaption.ico` は起動用のショートカットに使っている。トレイでは
-    状態を色で示したいので、その場で描く。16x16 では細かい絵は潰れる。
+    **丸だけを描いてはいけない。** トレイには他のアプリも並ぶので、何のアプリか
+    分からなくなる（2026-09-19 の麻生の指摘）。`etc/LiveCaption.ico` を土台にして、
+    右下に色の付いた印を置く。
+
+    アイコンが読めないときは、印だけを大きく描いて落とす。**トレイが出ないより、
+    形が違うほうがましである。**
     """
     from PIL import Image, ImageDraw
 
     size = 64
-    image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(image)
-    draw.ellipse((6, 6, size - 6, size - 6), fill=(*color, 255))
-    return image
+    base = None
+    try:
+        icon = Image.open(config.APP_ICON)
+        # .ico は複数の大きさを持つ。近いものを選んでから合わせる。
+        icon.size = min(icon.info.get("sizes", [(size, size)]),
+                        key=lambda wh: abs(wh[0] - size))
+        icon.load()
+        base = icon.convert("RGBA").resize((size, size), Image.LANCZOS)
+    except Exception:  # noqa: BLE001
+        base = None
+
+    if base is None:
+        image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        ImageDraw.Draw(image).ellipse((6, 6, size - 6, size - 6),
+                                      fill=(*color, 255))
+        return image
+
+    # 右下に印を置く。**縁を暗く抜く。** アイコンの絵と重なっても印が読める。
+    draw = ImageDraw.Draw(base)
+    r = 22
+    box = (size - r - 2, size - r - 2, size - 2, size - 2)
+    draw.ellipse(box, fill=(13, 17, 23, 255))
+    draw.ellipse((box[0] + 3, box[1] + 3, box[2] - 3, box[3] - 3),
+                 fill=(*color, 255))
+    return base
 
 
 class Tray:

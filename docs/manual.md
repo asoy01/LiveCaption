@@ -182,6 +182,10 @@ Double-click **`InstallToStartMenu.bat`**. It adds a `LiveCaption` entry to the
 current user's Start menu, so you do not have to find this folder before a
 meeting.
 
+**That entry opens no window.** It goes to the task tray; right-click the icon
+for the control page, the log, and quit (see 4.5). To watch it start up, run
+`StartLiveCaption.bat` by hand — that one keeps a console.
+
 ```
 Windows key  ->  type "livecaption"  ->  Enter
 ```

@@ -3,11 +3,15 @@
 
     It creates one shortcut:
         %APPDATA%\Microsoft\Windows\Start Menu\Programs\LiveCaption.lnk
-    pointing at StartLiveCaption.bat in this repository.
+    pointing at StartLiveCaptionTray.vbs in this repository.
+
+    **It opens no window.** LiveCaption goes to the task tray, and you right-click
+    the tray icon for the control page, the log, and quit. Run
+    StartLiveCaption.bat by hand when you want a console to watch.
 
     The shortcut is written for the current user only, so no administrator
     rights are needed. After that you can press the Windows key, type
-    "livecaption", and hit Enter to start a meeting.
+    "livecaption", and hit Enter.
 
     Usage (from a terminal):
         powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install_start_menu.ps1
@@ -28,7 +32,12 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $repo      = Split-Path -Parent $PSScriptRoot
-$target    = Join-Path $repo 'StartLiveCaption.bat'
+# **Starts in the task tray, with no console window.** The entry used to run
+# StartLiveCaption.bat, which keeps a terminal open for the whole meeting.
+# That terminal is useful while you are debugging, but not on a machine that
+# stays powered on. Run the .bat by hand when you want to watch it start.
+$target    = Join-Path $repo 'StartLiveCaptionTray.vbs'
+$runner    = Join-Path $env:SystemRoot 'System32\wscript.exe'
 $icon      = Join-Path $repo 'etc\LiveCaption.ico'
 $startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
 $link      = Join-Path $startMenu 'LiveCaption.lnk'
@@ -50,7 +59,7 @@ if ($Remove) {
 
 if (-not (Test-Path -LiteralPath $target)) {
     Write-Host ''
-    Write-Host '  StartLiveCaption.bat not found. Expected it here:'
+    Write-Host '  StartLiveCaptionTray.vbs not found. Expected it here:'
     Write-Host "    $target"
     Write-Host ''
     Write-Host '  Run this script from inside the LiveCaption repository.'
@@ -67,10 +76,14 @@ $existed = Test-Path -LiteralPath $link
 $shell = New-Object -ComObject WScript.Shell
 try {
     $shortcut = $shell.CreateShortcut($link)
-    $shortcut.TargetPath       = $target
+    # Call wscript.exe explicitly. Targeting the .vbs works only while .vbs is
+    # still associated with Windows Script Host, and that association is easy
+    # to lose (an editor can claim it).
+    $shortcut.TargetPath       = $runner
+    $shortcut.Arguments        = "//B `"$target`""
     $shortcut.WorkingDirectory = $repo
-    $shortcut.Description      = 'Real-time English subtitles for meetings held in Japanese'
-    $shortcut.WindowStyle      = 1          # normal window, so the console stays visible
+    $shortcut.Description      = 'Real-time subtitles for meetings. Runs in the task tray.'
+    $shortcut.WindowStyle      = 7          # minimised; the .vbs shows no window anyway
     if (Test-Path -LiteralPath $icon) {
         $shortcut.IconLocation = "$icon,0"
     }
@@ -88,6 +101,12 @@ if ($existed) {
 Write-Host "    $link"
 Write-Host "  It runs: $target"
 Write-Host ''
-Write-Host '  To start a meeting: press the Windows key, type "livecaption", press Enter.'
+Write-Host '  No window opens. Look for the LiveCaption icon in the task tray.'
+Write-Host '  Right-click it for the control page, the log, and quit.'
+Write-Host ''
+Write-Host '  To start it: press the Windows key, type "livecaption", press Enter.'
 Write-Host '  To pin it: find LiveCaption in the Start menu, right-click, "Pin to Start".'
+Write-Host ''
+Write-Host '  To watch it start up instead, run StartLiveCaption.bat by hand.'
+Write-Host '  That one keeps a console window.'
 Write-Host ''
