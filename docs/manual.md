@@ -289,20 +289,23 @@ The right side has three tabs.
 
 | Tab | What is in it | When you look at it |
 |---|---|---|
-| **Meetings** | Right now, this meeting, how people see it, meeting record | Every meeting |
+| **This meeting** | Right now, the meeting being delivered, how people see it, meeting record | Every meeting |
 | **Manage meetings** | Add, edit and delete schedules | Before a meeting |
 | **Setup** | Audio input, glossary, delay tuning, quit | When you set the machine up |
 
-**Everything you touch on the day is under Meetings.** You rarely open Setup
+**Everything you touch on the day is under This meeting.** You rarely open Setup
 once it is right.
 
-**Manage meetings fills the whole window.** It lays out the time, the Zoom link,
-three numbers and a tick box, which does not fit in the width of the right
-panel. The captions are hidden while it is open, and the split comes back when
-you pick another tab.
+**Manage meetings widens the right panel.** It lays out the time, the Zoom link,
+three numbers and a tick box, which does not fit in the usual width. **The
+captions stay on the left.** Pick another tab and the panel goes back to its
+normal width.
 
-**A red dot on the Meetings tab means something there has failed.** It is there
-so you notice while another tab is open.
+You can still drag the divider. **Each tab remembers its own width**, so a wide
+Manage meetings does not change the width of the other tabs.
+
+**A red dot on the This meeting tab means something there has failed.** It is
+there so you notice while another tab is open.
 
 The three entries under "How people see it" are folded. **Even folded, the right
 of each row says `delivering` or `sending`, so you can tell how many are running.**
@@ -344,8 +347,8 @@ Any of the three works. MME is the default and is fine.
 
 ### Step 4. Check the direction, then start caption generation
 
-On the **Meetings** tab, look at **字幕の向き** (caption direction) under "This
-meeting". **Choose it for each meeting.**
+On the **This meeting** tab, look at **字幕の向き** (caption direction).
+**Choose it for each meeting.**
 
 | Choice | What kind of meeting | Captions you get |
 |---|---|---|
@@ -549,7 +552,7 @@ Weekly is the only repeat. There is no support for more complex schedules.
 
 ### 4.2 Watching what it does
 
-**Right now** is at the top of the **Meetings** tab.
+**Right now** is at the top of the **This meeting** tab.
 
 ```
 Right now
@@ -765,7 +768,7 @@ Downloads/live-caption_2026-09-08_143012.md      readable form, written at exit
 
 ### Changing the folder
 
-The setting is under **会議の記録** (meeting record) on the **Meetings** tab.
+The setting is under **会議の記録** (meeting record) on the **This meeting** tab.
 There are three ways to choose.
 
 Press **フォルダを選ぶ** (choose a folder) and a folder list opens inside the

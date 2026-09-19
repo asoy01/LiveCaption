@@ -511,17 +511,13 @@ CONTROL_BODY = """
      （2026-09-19）、そのまま欄の中に戻すと元の木阿弥になる。
      タブにするなら、幅も一緒に連れてくること。 */
   #meetFrame { display: block; width: 100%; height: 100%; border: 0; }
-  /* **消した2つは、格子の枠を数えるときに居なくなる。** 3列のまま
-     `display: none` にすると、欄が1列目（幅0）へ繰り上がって消える。
-     列も一緒に1つへ減らすこと。 */
-  body.manage #split { grid-template-columns: minmax(0, 1fr); }
-  body.manage #main, body.manage #sep { display: none; }
+  /* **字幕は消さない。** 以前は左の欄ごと畳んでいたが、会議の最中に字幕が
+     見えなくなるのは困る（2026-09-20 の麻生の指摘）。広げるのは欄の幅だけで、
+     左右の分割はそのまま残す。幅は `showTab` が入れ替える。 */
   body.manage #panel {
     display: flex; flex-direction: column; padding: 0; overflow: hidden;
-    border-left: 0; max-height: none;
   }
-  body.manage .tabs { flex: 0 0 auto; width: 100%; max-width: 980px;
-                      margin: 12px auto 0; padding: 0 26px; }
+  body.manage .tabs { flex: 0 0 auto; margin: 12px 16px 0; }
   body.manage #paneMeet { flex: 1 1 auto; min-height: 0; }
 
   /* 置き場を選ぶための一覧。**窓を重ねない。** この画面に重なる窓は1つも
@@ -761,7 +757,7 @@ CONTROL_BODY = """
        一列に並べていたら、どれが会議中に要るものか見分けが付かなかった
        （2026-09-20 の麻生の指摘）。 -->
   <div class="tabs">
-    <button class="tab on" id="tabRun">会議</button>
+    <button class="tab on" id="tabRun">この会議</button>
     <button class="tab" id="tabMeet">会議の管理</button>
     <button class="tab" id="tabSet">設定</button>
   </div>
@@ -801,9 +797,8 @@ CONTROL_BODY = """
   </div>
 
   <div class="grp">
-    <h2>この会議<span class="c" id="meetCount"></span></h2>
+    <h2>配信する会議<span class="c" id="meetCount"></span></h2>
     <div class="row2">
-      <label class="lbl" for="meetPick">配信する会議</label>
       <select id="meetPick"></select>
     </div>
     <div class="row2 hint" id="meetWhen"></div>
@@ -963,7 +958,7 @@ CONTROL_BODY = """
     <div class="row2">
       <button id="devReload">一覧を更新</button>
     </div>
-    <div class="row2 hint">音量メーターは会議の側に出る。</div>
+    <div class="row2 hint">音量メーターは「この会議」の側に出る。</div>
   </div>
 
   <div class="grp">
@@ -1072,9 +1067,20 @@ __FEED_JS__
   // **字幕が主で、設定は従である。** 幅は本人が決める。localStorage に残す。
   // 文字を大きくしたぶん、既定の幅も広げてある（CSS の --right と同じ値にすること）。
   const PANEL_MIN = 280, MAIN_MIN = 280, PANEL_DEFAULT = 440;
+  // 会議の管理は幅が要る。中身（.wrap）は 980px + 余白で組んである。
+  const MANAGE_DEFAULT = 1032;
+  // **幅はタブごとに覚える。** 管理の画面を 440px の欄に入れると、日時・Zoomの
+  // リンク・3つの数値・印が1行に1つしか入らない。かといって、そのために字幕を
+  // 消してはいけない（2026-09-20 の麻生の指摘）。**欄を広げるだけにする。**
+  // 境目は今までどおり動かせて、動かした幅はそのタブのものとして残る。
+  let widthKey = "panelW";
   // **本人が決めた幅と、いま出せる幅を分けて持つ。** 窓が一時的に狭くなったときに
   // 縮めた値で上書きすると、窓を広げても元の幅に戻らなくなる。
-  let wantW = parseInt(localStorage.getItem("panelW") || "", 10) || PANEL_DEFAULT;
+  let wantW = savedWidth("panelW", PANEL_DEFAULT);
+
+  function savedWidth(key, fallback) {
+    return parseInt(localStorage.getItem(key) || "", 10) || fallback;
+  }
 
   function fits(w) {
     const vw = window.innerWidth;
@@ -1108,7 +1114,7 @@ __FEED_JS__
       sep.removeEventListener("pointermove", move);
       sep.removeEventListener("pointerup", up);
       sep.removeEventListener("pointercancel", up);
-      localStorage.setItem("panelW", String(wantW));
+      localStorage.setItem(widthKey, String(wantW));
     };
     sep.addEventListener("pointermove", move);
     sep.addEventListener("pointerup", up);
@@ -1116,9 +1122,9 @@ __FEED_JS__
   });
   // 素早く元に戻したいとき。
   sep.addEventListener("dblclick", () => {
-    wantW = PANEL_DEFAULT;
+    wantW = (widthKey === "panelW") ? PANEL_DEFAULT : MANAGE_DEFAULT;
     applySplit();
-    localStorage.setItem("panelW", String(wantW));
+    localStorage.setItem(widthKey, String(wantW));
   });
 
   // --- パネルのタブ -------------------------------------------------------
@@ -1137,8 +1143,12 @@ __FEED_JS__
       pane.hidden = (k !== which);
       btn.classList.toggle("on", k === which);
     });
-    // 会議の管理だけは窓いっぱいに広げる。狭い欄では打てない。
+    // 会議の管理のときだけ、欄を広げる。**字幕は消さない。**
     document.body.classList.toggle("manage", which === "meet");
+    widthKey = (which === "meet") ? "panelWManage" : "panelW";
+    wantW = savedWidth(widthKey,
+                       (which === "meet") ? MANAGE_DEFAULT : PANEL_DEFAULT);
+    applySplit();
     // **開かれるまで読み込まない。** 使わない人の画面で、3秒ごとの問い合わせを
     // もう1本増やさない。一度読んだら、そのままにしておく。
     if (which === "meet" && !meetFrame.src) { meetFrame.src = "/meetings"; }

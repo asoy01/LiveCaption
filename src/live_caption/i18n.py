@@ -148,9 +148,6 @@ EN: dict[str, str] = {
         "Enter a schedule and it runs by itself at that time.",
     "配信する会議: ": "Now delivering: ",
     "配信する会議": "Meeting being delivered",
-    "予定の入力・追加・削除は、別の画面で行う。":
-        "Adding, deleting and scheduling happen on a separate page.",
-    "この欄は狭すぎる。": "This column is too narrow for that.",
     "操作画面に戻る": "Back to the control page",
     "作成 ": "created ",
     "配信中": "delivering",
@@ -241,7 +238,8 @@ EN: dict[str, str] = {
     "ブラウザで見てもらう": "In a browser",
     "Zoomの字幕に流す": "Into the Zoom captions",
     "設定": "Setup",
-    "音量メーターは会議の側に出る。": "The level meter is on the Meetings tab.",
+    "音量メーターは「この会議」の側に出る。":
+        "The level meter is on the This meeting tab.",
     "予定の入力・追加・削除は、上の「会議の管理」で行う。":
         "Add, edit and delete meetings on the Manage meetings tab above. ",
     "向きは選んだ時点で切り替わる。": "The direction changes the moment you pick it. ",
