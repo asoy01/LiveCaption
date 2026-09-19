@@ -31,6 +31,7 @@ import time
 from datetime import datetime
 
 from . import config
+from . import zoom_join
 
 # 状態。操作画面にもこの名前で出す。
 IDLE = "idle"
@@ -51,7 +52,11 @@ UI_STRINGS = (
     "会議を選んだ",
     "配信を始めた",
     "配信を始められなかった",
-    "Zoomへの自動参加はまだ入っていない",
+    "Zoomに入った",
+    "Zoomに入れなかった（手で入れば字幕は出る）",
+    "Zoomに入れない: ",
+    "Zoomから音が来ない。パスコード違いか、待機室で止まっているか、"
+    "更新のダイアログが出ている可能性がある。画面を見ること。",
     "字幕を出している",
     "生成が止められた",
     "操作画面から止めた",
@@ -101,6 +106,12 @@ class Scheduler:
         self._max_min = 180
         # 配信をこちらで始めたかどうか。人が始めた配信は止めない。
         self._we_started_tunnel = False
+        # Zoomをこちらで起こしたかどうか。**人が開いていた会議は殺さない。**
+        self._we_launched_zoom = False
+        # この回でZoomに入りに行ったか。音が来ないときの見立てに使う。
+        self._joined_zoom = False
+        # 音が一度でも届いたか。届いたら、以後は待機室を疑わない。
+        self._saw_audio = False
 
     # --- 操作画面に返す -----------------------------------------------------
 
@@ -230,6 +241,8 @@ class Scheduler:
         self._silence_min = meeting.silence_min
         self._max_min = meeting.max_min
         self._we_started_tunnel = False
+        self._joined_zoom = bool(meeting.zoom)
+        self._saw_audio = False
         print(f"[{now_str()}] 予定        「{meeting.name}」を始める（{occurrence}）")
 
         # 1. 配信する会議を切り替える。
@@ -277,10 +290,31 @@ class Scheduler:
         print(f"[{now_str()}] 予定        「{meeting.name}」の字幕を出している")
 
     async def _join_zoom(self, meeting) -> None:  # noqa: ANN001
-        """Zoomに入る。**まだ何もしない（Phase 4）。**"""
+        """Zoomに入る。**入れたかどうかは、ここでは分からない。**
+
+        `zoommtg:` はハンドラに渡すだけで、待機室・パスコード違い・更新の
+        ダイアログのどれに落ちても何も返ってこない。**確認は音で取る**
+        （`_watch_running` が、文字起こしが出ないまま時間が経つのを見る）。
+        """
         if not meeting.zoom:
             return
-        self.note = "Zoomへの自動参加はまだ入っていない"
+        # **すでに人がZoomを開いていたら、殺さない。** 麻生が開いたままの会議を
+        # 巻き添えにしないよう、こちらが起こしたときだけ覚えておく。
+        already = zoom_join.running()
+        try:
+            url = await asyncio.to_thread(
+                zoom_join.join, meeting.zoom, config.ZOOM_DISPLAY_NAME)
+        except zoom_join.JoinError as exc:
+            # **ここで会議を畳まない。** 人が手でZoomに入れば字幕は出せる。
+            self._fail(f"Zoomに入れない: {exc}")
+            self.note = "Zoomに入れなかった（手で入れば字幕は出る）"
+            return
+        self._we_launched_zoom = not already
+        self.note = "Zoomに入った"
+        print(f"[{now_str()}] 予定        Zoomに入る: {url[:90]}")
+        if already:
+            print(f"[{now_str()}] 予定        Zoomは既に動いていた。"
+                  "終わっても終了させない")
 
     async def _arm(self) -> str:
         """生成が本当に始まったかを確かめる。始まらなければ理由を返す。
@@ -301,6 +335,19 @@ class Scheduler:
 
     # --- 動いている間 -------------------------------------------------------
 
+    def _heard_sound(self) -> bool:
+        """会議が始まってから、音が一度でも届いたか。
+
+        **こちらは振幅で見る。** 文になったかではない。知りたいのは
+        「Zoomから音の経路が繋がっているか」であって、誰かが喋ったかではない。
+        待機室で止まっていれば、暗騒音すら来ない。
+        """
+        capture = self.app.capture
+        quiet_for = getattr(capture, "quiet_for", None)
+        if quiet_for is None:
+            return True     # 分からないときは、疑わない
+        return quiet_for() < config.SCHEDULE_JOIN_AUDIO_SEC
+
     def _silence_limit(self) -> float:
         return self._silence_min * 60.0
 
@@ -315,6 +362,17 @@ class Scheduler:
             self._teardown("生成が止められた")
             return
         elapsed = time.monotonic() - self.started_at
+        # **音が一度も来ないまま時間が経ったら、入れていない可能性が高い。**
+        # Zoomは待機室・パスコード違い・更新のダイアログのどれで止まっても
+        # 何も報せてこない。こちらから見えるのは「音が来ない」ことだけである。
+        # 会議が始まるのは遅れるものなので、判断は急がない。
+        if not self._saw_audio and self._heard_sound():
+            self._saw_audio = True
+        if (self._joined_zoom and not self._saw_audio
+                and elapsed > config.SCHEDULE_JOIN_AUDIO_SEC):
+            self._fail("Zoomから音が来ない。パスコード違いか、待機室で止まっているか、"
+                       "更新のダイアログが出ている可能性がある。画面を見ること。")
+            self._joined_zoom = False   # 一度出したら繰り返さない
         if elapsed > self._max_limit():
             # **無音でなくても必ず止める。** 課金が止まらないのを防ぐ最後の砦。
             self._teardown("安全上限で止めた", detail=f"{self._max_min}分")
@@ -361,9 +419,23 @@ class Scheduler:
         self.meeting_name = ""
         self.occurrence = ""
         self._we_started_tunnel = False
+        self._joined_zoom = False
+        self._saw_audio = False
 
     def _leave_zoom(self) -> None:
-        """Zoomから出る。**まだ何もしない（Phase 4）。**"""
+        """Zoomから出る。**こちらが起こしたときだけ。**
+
+        会議から出る口は無いので、終了させることになる。`Zoom.exe` を全部
+        落とすので、人が開いていた会議まで巻き添えにしてはいけない。
+        """
+        if not self._we_launched_zoom:
+            return
+        self._we_launched_zoom = False
+        try:
+            if zoom_join.leave():
+                print(f"[{now_str()}] 予定        Zoomを終了させた")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[{now_str()}] 予定        Zoomを終了させられない: {exc}")
 
     # --- 失敗 ---------------------------------------------------------------
 

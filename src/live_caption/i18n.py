@@ -86,7 +86,15 @@ EN: dict[str, str] = {
     "会議を選んだ": "Meeting selected",
     "配信を始めた": "Delivery started",
     "配信を始められなかった": "Could not start delivering",
-    "Zoomへの自動参加はまだ入っていない": "Joining Zoom automatically is not built yet",
+    "Zoomに入った": "Joined Zoom",
+    "Zoomに入れなかった（手で入れば字幕は出る）":
+        "Could not join Zoom (captions still work if you join by hand)",
+    "Zoomに入れない: ": "Cannot join Zoom: ",
+    "Zoomから音が来ない。パスコード違いか、待機室で止まっているか、"
+    "更新のダイアログが出ている可能性がある。画面を見ること。":
+        "No sound is coming from Zoom. The passcode may be wrong, it may be "
+        "stuck in the waiting room, or an update dialog may be open. "
+        "Look at the screen.",
     "字幕を出している": "Captions are running",
     "生成が止められた": "Caption generation was stopped",
     "操作画面から止めた": "Stopped from the control page",
