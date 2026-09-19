@@ -37,6 +37,7 @@ from . import asr as asr_mod
 from . import audio as audio_mod
 from . import captions as captions_mod
 from . import config, glossary
+from . import schedule as schedule_mod
 from . import segmenter as segmenter_mod
 from . import transcript as transcript_mod
 from . import translator as translator_mod
@@ -359,6 +360,8 @@ class App:
         self.glossary = GlossaryControl(self)
         self.tuning = TuningControl(self)
         self.dir_control = DirectionControl(self)
+        # 予定された会議を無人で回す見張り（schedule.py）。
+        self.scheduler = schedule_mod.Scheduler(self)
         # run() で受け取る。操作画面から入力を差し替えるために持っておく。
         self.capture = None
         # 音声デバイスを開けなかったときの理由。開けたら消す。
@@ -404,6 +407,8 @@ class App:
             web.on_shutdown = self.request_stop
             # 記録が溜まっていることを操作画面に出す。
             web.transcript = self.transcript
+            # 予定の状態と、止める・飛ばす・失敗を消す、の操作。
+            web.scheduler = self.scheduler
         self.sentences: asyncio.Queue[segmenter_mod.Cut] = asyncio.Queue()
         self.inflight: asyncio.Queue = asyncio.Queue(maxsize=MAX_INFLIGHT)
         self.stats = {"sentences": 0, "lines": 0}
@@ -866,6 +871,10 @@ class App:
             asyncio.create_task(self._watch_idle()),
             asyncio.create_task(self._dispatch()),
             asyncio.create_task(self._post()),
+            # 予定された会議を回す見張り。**予定が1つも無くても回しておく。**
+            # 動きの分かれ目を減らすためで、費用は寝ているコルーチン1本ぶんである。
+            # **この見張りは決して返らない。** 返ると下の wait を抜けてアプリが畳まれる。
+            asyncio.create_task(self.scheduler.run_forever()),
             # ブラウザから終了を頼まれたら、これが完了して下の wait を抜ける。
             asyncio.create_task(self.stop_requested.wait()),
         ]

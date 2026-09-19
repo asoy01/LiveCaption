@@ -1595,6 +1595,8 @@ class WebCaptions:
         self.tuning = None
         # 字幕の向き（app.DirectionControl）。
         self.direction = None
+        # 予定された会議を回す見張り（schedule.Scheduler）。
+        self.scheduler = None
         self.on_shutdown = None
         # 配信の経路（Cloudflare / Tailscale）。`tunnel.Delivery` が両方を持つ。
         self.tunnel: tunnel_mod.Delivery | None = None
@@ -1770,6 +1772,12 @@ class WebCaptions:
         # **会議ごとの閲覧URLも一緒に返す。** 前もって配るURLは、配信していない
         # あいだも見えていないと意味がない。
         st["meetings"] = self.meetings_status()
+        # 予定の見張りの状態。**2秒ごとの状態取得に相乗りさせる。**
+        # 無人で回すものは、次に何が起きるかが先に読めないと怖い。
+        st["schedule"] = self.scheduler.status() if self.scheduler else {
+            "state": "idle", "meeting": "", "occurrence": "", "note": "",
+            "failure": "", "failure_at": "", "silence_left_sec": -1.0,
+            "max_left_sec": -1.0, "upcoming": []}
         st["generating"] = bool(self.engine.status()["generating"]) if self.engine else True
         st["audio"] = self.audio.status() if self.audio else {
             "selectable": False, "name": "—", "index": None,
@@ -2040,7 +2048,7 @@ def _control_handler(web: WebCaptions):
             if path not in ("/api/token", "/api/zoom", "/api/tunnel",
                             "/api/engine", "/api/device", "/api/glossary",
                             "/api/tuning", "/api/tuning/save", "/api/direction",
-                            "/api/lang", "/api/meetings"):
+                            "/api/lang", "/api/meetings", "/api/schedule"):
                 self.send_error(404)
                 return
             try:
@@ -2055,6 +2063,10 @@ def _control_handler(web: WebCaptions):
 
             if path == "/api/meetings":
                 self._meetings(body)
+                return
+
+            if path == "/api/schedule":
+                self._schedule(body)
                 return
 
             if path == "/api/device":
@@ -2183,6 +2195,23 @@ def _control_handler(web: WebCaptions):
                 web.tunnel.stop()
             self._send_json(200, web.status())
 
+        def _schedule(self, body: dict) -> None:
+            """予定の見張りへの指示。**止める・飛ばす・失敗を消す、の3つだけ。**"""
+            if web.scheduler is None:
+                self._send_json(503, {"error": "予定の受け口が用意できていない。"})
+                return
+            action = str(body.get("action", ""))
+            if action == "stop":
+                web.scheduler.stop_now()
+            elif action == "skip":
+                web.scheduler.skip_next()
+            elif action == "ack":
+                web.scheduler.ack()
+            else:
+                self._send_json(400, {"error": f"知らない操作: 「{action}」。"})
+                return
+            self._send_json(200, web.status())
+
         def _meetings(self, body: dict) -> None:
             """会議を作る・選ぶ・消す。
 
@@ -2197,6 +2226,13 @@ def _control_handler(web: WebCaptions):
                     web.meetings.select(str(body.get("id", "")))
                 elif action == "delete":
                     web.meetings.delete(str(body.get("id", "")))
+                elif action == "schedule":
+                    fields = body.get("fields")
+                    if not isinstance(fields, dict):
+                        raise ValueError("fields はオブジェクトで渡すこと。")
+                    web.meetings.set_schedule(str(body.get("id", "")), **fields)
+                elif action == "host_key":
+                    web.meetings.ensure_host_id(str(body.get("id", "")), renew=True)
                 else:
                     raise ValueError(f"知らない操作: 「{action}」。")
             except ValueError as exc:
