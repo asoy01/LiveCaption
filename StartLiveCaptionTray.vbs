@@ -1,19 +1,29 @@
-' LiveCaption をタスクトレイに常駐させる。**窓を1つも出さない。**
+' LiveCaption - start in the task tray, with no window at all.
 '
-' 常時起動の機体で使う。ターミナルを開いたままにしたくないが、窓を消すと
-' 生きているのか分からなくなるので、トレイにアイコンを出す。
+' Use this on a machine that stays powered on. It keeps no terminal open,
+' so the tray icon is how you see whether it is alive:
 '
-'   ● 緑  会議の字幕を出している
-'   ● 青  待機中
-'   ● 赤  失敗が残っている
+'   blue   waiting
+'   green  captions are running
+'   red    a failure is waiting to be read
 '
-' 右クリックで、操作画面・ログ・終了。
-' ログは local\log\ に残る（窓が無いので、そこが唯一の手がかりになる）。
+' Right-click the icon for the control page, the log, and quit.
+' The log is written to local\log\ (there is no window to read).
 '
-' **.bat ではなく .vbs にしてあるのは、窓を完全に消すためである。** .bat は
-' タスクスケジューラから起動しても、一瞬コンソールが光る。
+' To watch it start up, use StartLiveCaption.bat instead. That one keeps a
+' console window.
 '
-' 手で起動して様子を見たいときは、StartLiveCaption.bat のほうを使うこと。
+'
+' ===  THIS FILE MUST STAY PURE ASCII  ========================================
+'
+' Windows Script Host reads .vbs as the system ANSI code page, NOT as UTF-8.
+' A .vbs saved as UTF-8 with Japanese comments cannot be decoded, and WSH then
+' does nothing at all - no error, no window, no process. That is exactly what
+' happened on 2026-09-19: double-clicking this file appeared to do nothing.
+'
+' So: no Japanese, no accented letters, nothing above 0x7F in this file.
+' The Japanese explanation lives in docs/manual.ja.md, section 4.5.
+' =============================================================================
 
 Option Explicit
 
@@ -24,9 +34,9 @@ here = fso.GetParentFolderName(WScript.ScriptFullName)
 
 shell.CurrentDirectory = here
 
-' --no-browser にしてある。常駐の起動でブラウザが開くのは邪魔である。
-' 操作画面はトレイの右クリックから開く。
+' --no-browser: a resident start should not pop a browser open.
+' Open the control page from the tray icon instead.
 cmd = "pixi run caption --web --tray --no-browser --control-bind"
 
-' 0 = 窓を出さない、False = 終わるのを待たない
+' 0 = no window, False = do not wait for it to finish
 shell.Run cmd, 0, False

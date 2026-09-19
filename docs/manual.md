@@ -590,6 +590,10 @@ control page, the log, and quit.
 
 There is no window, so the log goes to `local/log/` (the last 20 runs).
 
+**Keep `StartLiveCaptionTray.vbs` pure ASCII if you edit it.** Windows does not
+read that file as UTF-8. Non-ASCII comments make it **do nothing at all when you
+double-click it, with no error message.** The file says so at the top too.
+
 To start it at Windows logon, run this. No administrator rights are needed.
 
 ```

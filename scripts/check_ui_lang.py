@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""操作画面を日本語と英語で組み立てて、2つ調べる。
+"""出荷前の検査。操作画面と、起動用のファイルを調べる。
 
     pixi run python scripts/check_ui_lang.py
 
@@ -10,6 +10,11 @@
    2026-09-19 にこれで操作画面が丸ごと死んだ。訳表の `「」` が `"` に化けていた。
 2. **訳し残した日本語が無いか。** 訳表（`src/live_caption/i18n.py`）に無い
    文字列は、英語にしても日本語のまま出る。壊れはしないが、画面が日英混在になる。
+
+3. **起動用の `.vbs` が純ASCIIか。** Windows Script Host は `.vbs` を
+   システムのANSIコードページとして読む。UTF-8 で日本語のコメントを書くと
+   **何も起きない。エラーも出ない。窓も出ない。**
+   2026-09-19 に、ダブルクリックしても常駐しない形でこれを踏んだ。
 
 操作画面の文言を足したら、これを走らせること。
 
@@ -91,8 +96,44 @@ def check_scheduler_strings() -> list[str]:
     return left
 
 
+# WSH が ANSI として読むファイル。**純ASCIIでなければならない。**
+ASCII_ONLY = ("StartLiveCaptionTray.vbs",)
+
+
+def check_ascii_launchers() -> list[str]:
+    """起動用の `.vbs` に、ASCII以外が混ざっていないか。
+
+    混ざっていると、Windows Script Host は**黙って何もしない。**
+    エラーも出ないので、原因に辿り着くまでが長い。
+    """
+    root = Path(__file__).resolve().parent.parent
+    bad = []
+    for name in ASCII_ONLY:
+        path = root / name
+        if not path.exists():
+            continue
+        raw = path.read_bytes()
+        offenders = [i for i, b in enumerate(raw) if b > 0x7F]
+        if offenders:
+            where = offenders[0]
+            line = raw[:where].count(b"\n") + 1
+            bad.append(f"{name}: {len(offenders)} バイトがASCII外（最初は {line} 行目）")
+    return bad
+
+
 def main() -> int:
     page = build_page()
+
+    launchers = check_ascii_launchers()
+    if launchers:
+        print("起動用の .vbs に ASCII 以外が混ざっている。"
+              "このままでは、ダブルクリックしても何も起きない。")
+        for item in launchers:
+            print(f"    {item}")
+        print()
+        print("Windows Script Host は .vbs を ANSI として読む。日本語のコメントは"
+              "書けない。説明は docs/manual.ja.md に置くこと。")
+        return 1
 
     broken = check_syntax(page)
     if broken:
