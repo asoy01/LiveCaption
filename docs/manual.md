@@ -543,7 +543,7 @@ Opening `http://localhost:8081/meetings` directly shows the same thing.
 | Minutes before | Start delivering and join Zoom this many minutes early |
 | Stop after silence | If no transcript appears for this long, the meeting is treated as over |
 | Hard cap | Stop after this long even if sound continues |
-| Run this meeting automatically | **Only meetings with this ticked run on their own** |
+| Start this meeting automatically | **Only meetings with this ticked run on their own** |
 
 **Automatic is off by default.** Running it automatically sends captions out
 with nobody watching. Do not tick it for meetings whose content must not leave.
@@ -965,7 +965,7 @@ ignores a bad value silently**, so read the start-up output.
 | Captions go by too fast to read | Ask the readers to make the caption area taller. Lower `config.FORCE_CUT_CHARS` |
 | The recogniser reconnects again and again | The network. Turn off incoming video in the meeting software on the caption PC. Try another line |
 | Captions stopped after you connected remotely | **Did you connect with RDP?** It cuts the audio path (see 2.9) |
-| Nothing starts at the scheduled time | **Is "Run this meeting automatically" ticked?** It is off by default. Check that the meeting is listed under Right now |
+| Nothing starts at the scheduled time | **Is "Start this meeting automatically" ticked?** It is off by default. Check that the meeting is listed under Right now |
 | It joined Zoom but no sound arrives | **Is the "Join with Computer Audio" prompt still shown?** (see 4.3). It may also be stuck in the waiting room, or the passcode may be wrong |
 | It does not leave when the meeting ends | Check the silence-stop setting. The hard cap always stops it |
 | It keeps running after the meeting ended early | If somebody left a microphone open, the sound continues and it never falls silent. Press Stop now |

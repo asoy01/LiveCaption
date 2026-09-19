@@ -120,9 +120,9 @@ EN: dict[str, str] = {
     "何分前から": "Minutes before",
     "無音で終了（分）": "Stop after silence (min)",
     "安全上限（分）": "Hard cap (min)",
-    "この会議を自動で回す（時刻が来たら配信を始める）":
-        "Run this meeting automatically (start delivering at the set time)",
-    "自動で回すと、人が見ていなくても字幕が外に出る。":
+    "この会議を自動で開始する（時刻が来たら配信を始める）":
+        "Start this meeting automatically (deliver from the set time)",
+    "自動で開始すると、人が見ていなくても字幕が外に出る。":
         "Running it automatically sends captions out with nobody watching.",
     "外に出せない内容の会議では印を付けないこと。":
         "Do not tick this for meetings whose content must not leave.",
@@ -137,14 +137,14 @@ EN: dict[str, str] = {
     "もう一度受け付ける": "Accept one more",
     "ホスト用の受け口をもう一度開いた。": "The host page accepts a token again.",
 
-    "　自動で回す": "  automatic",
+    "　自動で開始": "  automatic",
     "　自動は切り": "  automatic off",
     "　Zoomに入る": "  joins Zoom",
 
     # --- 会議の管理（別画面） ---
     "会議の管理": "Manage meetings",
     "会議ごとに別の閲覧URLを使う。": "Each meeting gets its own viewer URL.",
-    "予定を入れておけば、時刻が来たときに自動で回る。":
+    "予定を入れておけば、時刻が来たときに自動で開始する。":
         "Enter a schedule and it runs by itself at that time.",
     "配信する会議: ": "Now delivering: ",
     "配信する会議": "Meeting being delivered",

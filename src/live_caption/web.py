@@ -511,9 +511,10 @@ CONTROL_BODY = """
      （2026-09-19）、そのまま欄の中に戻すと元の木阿弥になる。
      タブにするなら、幅も一緒に連れてくること。 */
   #meetFrame { display: block; width: 100%; height: 100%; border: 0; }
-  /* **字幕は消さない。** 以前は左の欄ごと畳んでいたが、会議の最中に字幕が
-     見えなくなるのは困る（2026-09-20 の麻生の指摘）。広げるのは欄の幅だけで、
-     左右の分割はそのまま残す。幅は `showTab` が入れ替える。 */
+  /* **字幕は消さない。幅も動かさない。** 以前は左の欄ごと畳み、次はタブごとに
+     幅を覚えていたが、どちらも麻生に止められた（2026-09-20）。会議の最中に字幕が
+     見えなくなるのも、押すたびに欄が伸び縮みするのも困る。
+     **中身が、本人の決めた欄の幅に合わせて伸びる**（`meetings_page.py`）。 */
   body.manage #panel {
     display: flex; flex-direction: column; padding: 0; overflow: hidden;
   }
@@ -689,7 +690,7 @@ CONTROL_BODY = """
     padding: 5px 6px; text-align: right;
   }
   .sched .wide { flex: 1 1 100%; }
-  /* **自動で回す印は目立たせる。** これを押すと、無人で外に配信が始まる。 */
+  /* **自動で開始する印は目立たせる。** これを押すと、無人で外に配信が始まる。 */
   .sched .auto { flex: 1 1 100%; color: var(--fg); font-size: var(--ui); }
   .sched .auto input { cursor: pointer; }
   /* ホスト用URLは畳んでおく。**参加者用と取り違えて配るのがいちばん怖い。** */
@@ -1067,20 +1068,12 @@ __FEED_JS__
   // **字幕が主で、設定は従である。** 幅は本人が決める。localStorage に残す。
   // 文字を大きくしたぶん、既定の幅も広げてある（CSS の --right と同じ値にすること）。
   const PANEL_MIN = 280, MAIN_MIN = 280, PANEL_DEFAULT = 440;
-  // 会議の管理は幅が要る。中身（.wrap）は 980px + 余白で組んである。
-  const MANAGE_DEFAULT = 1032;
-  // **幅はタブごとに覚える。** 管理の画面を 440px の欄に入れると、日時・Zoomの
-  // リンク・3つの数値・印が1行に1つしか入らない。かといって、そのために字幕を
-  // 消してはいけない（2026-09-20 の麻生の指摘）。**欄を広げるだけにする。**
-  // 境目は今までどおり動かせて、動かした幅はそのタブのものとして残る。
-  let widthKey = "panelW";
+  // **幅はタブを変えても動かさない**（2026-09-20 の麻生の指示）。
+  // 一時はタブごとに覚えていたが、押すたびに欄が伸び縮みするのは落ち着かない。
+  // 会議の管理で幅が要るときは、境目を引いて広げる。中身はその幅に合わせて伸びる。
   // **本人が決めた幅と、いま出せる幅を分けて持つ。** 窓が一時的に狭くなったときに
   // 縮めた値で上書きすると、窓を広げても元の幅に戻らなくなる。
-  let wantW = savedWidth("panelW", PANEL_DEFAULT);
-
-  function savedWidth(key, fallback) {
-    return parseInt(localStorage.getItem(key) || "", 10) || fallback;
-  }
+  let wantW = parseInt(localStorage.getItem("panelW") || "", 10) || PANEL_DEFAULT;
 
   function fits(w) {
     const vw = window.innerWidth;
@@ -1114,7 +1107,7 @@ __FEED_JS__
       sep.removeEventListener("pointermove", move);
       sep.removeEventListener("pointerup", up);
       sep.removeEventListener("pointercancel", up);
-      localStorage.setItem(widthKey, String(wantW));
+      localStorage.setItem("panelW", String(wantW));
     };
     sep.addEventListener("pointermove", move);
     sep.addEventListener("pointerup", up);
@@ -1122,9 +1115,9 @@ __FEED_JS__
   });
   // 素早く元に戻したいとき。
   sep.addEventListener("dblclick", () => {
-    wantW = (widthKey === "panelW") ? PANEL_DEFAULT : MANAGE_DEFAULT;
+    wantW = PANEL_DEFAULT;
     applySplit();
-    localStorage.setItem(widthKey, String(wantW));
+    localStorage.setItem("panelW", String(wantW));
   });
 
   // --- パネルのタブ -------------------------------------------------------
@@ -1143,12 +1136,8 @@ __FEED_JS__
       pane.hidden = (k !== which);
       btn.classList.toggle("on", k === which);
     });
-    // 会議の管理のときだけ、欄を広げる。**字幕は消さない。**
+    // 管理の中身は欄いっぱいに伸びる。**幅そのものには触らない。**
     document.body.classList.toggle("manage", which === "meet");
-    widthKey = (which === "meet") ? "panelWManage" : "panelW";
-    wantW = savedWidth(widthKey,
-                       (which === "meet") ? MANAGE_DEFAULT : PANEL_DEFAULT);
-    applySplit();
     // **開かれるまで読み込まない。** 使わない人の画面で、3秒ごとの問い合わせを
     // もう1本増やさない。一度読んだら、そのままにしておく。
     if (which === "meet" && !meetFrame.src) { meetFrame.src = "/meetings"; }
@@ -1889,7 +1878,7 @@ __FEED_JS__
     meetWhen.textContent = !live ? ""
       : live.start
         ? (live.repeat === "weekly" ? "毎週 " : "") + live.start
-          + (live.auto ? "　自動で回す" : "　自動は切り")
+          + (live.auto ? "　自動で開始" : "　自動は切り")
           + (live.zoom ? "　Zoomに入る" : "")
         : "予定なし";
 

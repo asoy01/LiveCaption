@@ -18,7 +18,11 @@ from __future__ import annotations
 
 BODY = """</style>
 <style>
-  body { margin: 0; background: var(--bg); color: var(--fg);
+  /* **`display: block` に戻すこと。** 共通の `STYLE` は body を縦並びの flex に
+     している（操作画面と閲覧画面のため）。そのままだと `.wrap` が flex の品目に
+     なって中身の幅まで縮み、**左右に 130px 以上の余白ができる**
+     （2026-09-20 の麻生の指摘）。 */
+  body { display: block; margin: 0; background: var(--bg); color: var(--fg);
          font-family: "Segoe UI", "Yu Gothic UI", system-ui, sans-serif; }
   .wrap { max-width: 980px; margin: 0 auto; padding: 22px 26px 40px; }
   h1 { font-size: 20px; margin: 0 0 4px; }
@@ -81,7 +85,7 @@ BODY = """</style>
   <h1>会議の管理</h1>
   <p class="sub">会議ごとに別の閲覧URLを使う。<b>配信するのは選んである1つだけで、
      他の会議のURLは開けない。</b><br>
-     予定を入れておけば、時刻が来たときに自動で回る。</p>
+     予定を入れておけば、時刻が来たときに自動で開始する。</p>
   <div id="msg"></div>
 
   <div class="add">
@@ -102,7 +106,11 @@ BODY = """</style>
   // 自分の窓で開いたときは、どちらも要る。
   if (window.self !== window.top) {
     document.querySelectorAll("h1, .back").forEach((e) => { e.hidden = true; });
-    document.querySelector(".wrap").style.paddingTop = "6px";
+    // **タブの中では幅いっぱいに使う。** 欄の幅は本人が境目で決めているので、
+    // そこから更に 980px で頭を打つと、決めた幅が使われない。余白も詰める。
+    const wrap = document.querySelector(".wrap");
+    wrap.style.maxWidth = "none";
+    wrap.style.padding = "6px 16px 28px";
   }
   // **触っている欄があるうちは描き直さない。** 打ちかけの値が手の下で消える。
   let seen = "";
@@ -241,12 +249,12 @@ BODY = """</style>
     auto.addEventListener("change", mark);
     autorow.appendChild(auto);
     autorow.appendChild(document.createTextNode(
-      "この会議を自動で回す（時刻が来たら配信を始める）"));
+      "この会議を自動で開始する（時刻が来たら配信を始める）"));
     box.appendChild(autorow);
 
     const warn = document.createElement("div");
     warn.className = "warn";
-    warn.textContent = "自動で回すと、人が見ていなくても字幕が外に出る。"
+    warn.textContent = "自動で開始すると、人が見ていなくても字幕が外に出る。"
       + "外に出せない内容の会議では印を付けないこと。";
     box.appendChild(warn);
 
