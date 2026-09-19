@@ -299,6 +299,68 @@ def check_zoom_token(url: str) -> None:
     captions_mod.parse_token(text)
 
 
+# URLのコピー。**操作画面と会議の管理画面で、同じものを使う。**
+#
+# 別々に書いていたら、管理画面のほうに `document.execCommand` の段が抜けていて、
+# **tailnet 越しだと操作画面ではコピーできるのに管理画面ではできない**という
+# 食い違いが出た（2026-09-19、麻生の指摘）。直したら両方に効くよう、1か所に置く。
+#
+# 3段になっている。**上から順に試す。**
+#   1. navigator.clipboard   安全なオリジン（https か localhost）でしか使えない
+#   2. document.execCommand  古いやり方。**tailnet 越しの http でも通る**
+#   3. 選んで Ctrl+C を促す   最後の手段
+COPY_JS = """  // --- URLのコピー --------------------------------------------------------
+  // **配るURLは、手で選ばせない。** トンネルのURLはチャットに貼ることがある。
+  // `user-select: all` だけだと、クリックで全選択されることが画面から分からない。
+  //
+  // `navigator.clipboard` は安全なオリジンでしか使えない。操作画面は
+  // http だが localhost / 127.0.0.1 は安全なオリジンとして扱われるので通る。
+  // それでも使えない場合（古いブラウザ、権限を切っている）に備えて保険を置く。
+  function selectAll(el) {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
+  async function copyText(el, btn) {
+    const text = el ? el.textContent.trim() : "";
+    if (!text) { return; }
+    let ok = true;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (e) {
+      // 古いやり方。書き込みが許されていない環境ではこれも失敗する。
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try { ok = document.execCommand("copy"); } catch (e2) { ok = false; }
+      ta.remove();
+    }
+    if (!ok) {
+      // **書けないなら、せめて選んでおく。** Ctrl+C を押すだけで済む。
+      // 「自分で選べ」と言って放り出さないこと。会議中に手間を増やさない。
+      selectAll(el);
+      say("クリップボードに書けない。選んであるので Ctrl+C を押すこと。", false);
+      return;
+    }
+    // **押したことが分かるようにする。** 何も変わらないと、押せたのか分からない。
+    const before = btn.textContent;
+    btn.textContent = "コピーした";
+    setTimeout(() => { btn.textContent = before; }, 1400);
+  }
+
+  document.addEventListener("click", (ev) => {
+    const btn = ev.target.closest(".copybtn");
+    if (!btn) { return; }
+    copyText(document.getElementById(btn.dataset.copy), btn);
+  });"""
+
+
 def _qr_filename(name: str) -> str:
     """保存するQRのファイル名。会議の名前を入れる。
 
@@ -1566,56 +1628,7 @@ __FEED_JS__
 
   openViewer.addEventListener("click", () => { window.open(viewerUrl.textContent, "_blank"); });
 
-  // --- URLのコピー --------------------------------------------------------
-  // **配るURLは、手で選ばせない。** トンネルのURLはチャットに貼ることがある。
-  // `user-select: all` だけだと、クリックで全選択されることが画面から分からない。
-  //
-  // `navigator.clipboard` は安全なオリジンでしか使えない。操作画面は
-  // http だが localhost / 127.0.0.1 は安全なオリジンとして扱われるので通る。
-  // それでも使えない場合（古いブラウザ、権限を切っている）に備えて保険を置く。
-  function selectAll(el) {
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(range);
-  }
-
-  async function copyText(el, btn) {
-    const text = el ? el.textContent.trim() : "";
-    if (!text) { return; }
-    let ok = true;
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch (e) {
-      // 古いやり方。書き込みが許されていない環境ではこれも失敗する。
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      try { ok = document.execCommand("copy"); } catch (e2) { ok = false; }
-      ta.remove();
-    }
-    if (!ok) {
-      // **書けないなら、せめて選んでおく。** Ctrl+C を押すだけで済む。
-      // 「自分で選べ」と言って放り出さないこと。会議中に手間を増やさない。
-      selectAll(el);
-      say("クリップボードに書けない。選んであるので Ctrl+C を押すこと。", false);
-      return;
-    }
-    // **押したことが分かるようにする。** 何も変わらないと、押せたのか分からない。
-    const before = btn.textContent;
-    btn.textContent = "コピーした";
-    setTimeout(() => { btn.textContent = before; }, 1400);
-  }
-
-  document.addEventListener("click", (ev) => {
-    const btn = ev.target.closest(".copybtn");
-    if (!btn) { return; }
-    copyText(document.getElementById(btn.dataset.copy), btn);
-  });
+__COPY_JS__
 
   // --- QRコードの保存 -------------------------------------------------------
   // **画面のQRは貼り付けられない。** スライドや案内のメールに載せるには、
@@ -2446,7 +2459,8 @@ def _viewer_handler(web: WebCaptions):
 
 def _meetings_page(web: WebCaptions, lang: str) -> bytes:
     """会議の管理画面。**要求のたびに組み立てる**（言語の切り替えのため）。"""
-    page = _head("Live Captions ・ 会議の管理", web.lines) + meetings_page.BODY
+    page = (_head("Live Captions ・ 会議の管理", web.lines)
+            + meetings_page.BODY.replace("__COPY_JS__", COPY_JS))
     return i18n.apply(page, lang).encode("utf-8")
 
 
@@ -2461,7 +2475,7 @@ def _control_page(web: WebCaptions, lang: str) -> bytes:
         FEED_JS.replace("__FEED__", "/api/lines")
         .replace("__HISTORY__", str(HISTORY))
         .replace("__SOURCE_DEFAULT__", "false"),
-    )
+    ).replace("__COPY_JS__", COPY_JS)
     # **言語の差し替えを先に済ませる。** `__UI_LANG__` は言語の名前そのものなので、
     # 訳表に通してはいけない。
     return i18n.apply(page, lang).replace("__UI_LANG__", lang).encode("utf-8")

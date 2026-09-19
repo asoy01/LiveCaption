@@ -98,6 +98,14 @@ BODY = """</style>
 
   function say(text, ok) { msg.textContent = text; msg.className = ok ? "ok" : "ng"; }
 
+  // datetime-local が受ける形。**UTCにしない。** toISOString は時差のぶんずれる。
+  function nowLocal() {
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, "0");
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate())
+         + "T" + p(d.getHours()) + ":" + p(d.getMinutes());
+  }
+
   async function post(body) {
     const r = await fetch("/api/meetings", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -165,8 +173,15 @@ BODY = """</style>
     }
     const start = document.createElement("input");
     start.type = "datetime-local";
-    start.value = it.start ? it.start.replace(" ", "T") : "";
+    // **予定が無い会議には、いまの時刻を入れておく。** 空欄から打ち始めるより、
+    // 近い値を直すほうが速い。会議はたいてい「これから」のものである。
+    start.value = it.start ? it.start.replace(" ", "T") : nowLocal();
     start.addEventListener("input", mark);
+    // **欄のどこを押しても暦と時計が開くようにする。** 既定では右端の小さな
+    // アイコンを狙わないと開かない。`showPicker` はブラウザによっては無い。
+    start.addEventListener("click", () => {
+      try { start.showPicker(); } catch (e) { /* 手入力に任せる */ }
+    });
     row("開始", start);
 
     const repWrap = document.createElement("label");
@@ -207,7 +222,10 @@ BODY = """</style>
     const autorow = document.createElement("label");
     autorow.className = "autorow";
     const auto = document.createElement("input");
-    auto.type = "checkbox"; auto.checked = !!it.auto;
+    // **予定がまだ無い会議は、印を付けた状態で出す。** ここを開いた人は、
+    // 予定を入れて回すつもりで開いている。既に予定がある会議は、保存されている
+    // 値をそのまま出す（外したものを勝手に戻さない）。
+    auto.type = "checkbox"; auto.checked = it.start ? !!it.auto : true;
     auto.addEventListener("change", mark);
     autorow.appendChild(auto);
     autorow.appendChild(document.createTextNode(
@@ -347,27 +365,7 @@ BODY = """</style>
     if (e.key === "Enter") { addMeeting(); }
   });
 
-  // URLのコピー。安全なオリジンでないと clipboard は使えないので保険を置く。
-  document.addEventListener("click", async (ev) => {
-    const btn = ev.target.closest(".copybtn");
-    if (!btn) { return; }
-    const el = document.getElementById(btn.dataset.copy);
-    const text = el ? el.textContent.trim() : "";
-    if (!text) { return; }
-    try {
-      await navigator.clipboard.writeText(text);
-      const before = btn.textContent;
-      btn.textContent = "コピーした";
-      setTimeout(() => { btn.textContent = before; }, 1400);
-    } catch (e) {
-      const range = document.createRange();
-      range.selectNodeContents(el);
-      const sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(range);
-      say("クリップボードに書けない。選んであるので Ctrl+C を押すこと。", false);
-    }
-  });
+__COPY_JS__
 
   async function refresh() {
     try {
