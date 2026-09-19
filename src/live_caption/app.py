@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from pathlib import Path
 
 from . import asr as asr_mod
 from . import audio as audio_mod
@@ -382,20 +383,7 @@ class App:
         # 会議の記録。**日本語の認識文と英語の字幕を対にして残す。**
         # 対にするために、翻訳のタスクと元の文を一緒に持ち回る（_dispatch / _post）。
         self.transcript = (
-            transcript_mod.Transcript(
-                settings.transcript_dir,
-                meta={
-                    "asr": config.ASR_MODEL,
-                    "delay": settings.delay,
-                    "languages": ",".join(settings.languages),
-                    "translate": settings.translate_model,
-                    # 始めたときの向き。**途中で変えられるので、1文ごとにも残す。**
-                    "direction": self.direction.name,
-                    "glossary": len(entries),
-                    "glossary_sets": ", ".join(self.glossary_names) or "(なし)",
-                    "dry_run": settings.dry_run,
-                },
-            )
+            transcript_mod.Transcript(settings.transcript_dir, meta=self._transcript_meta())
             if settings.save
             else None
         )
@@ -437,6 +425,51 @@ class App:
             self.stop_requested.set()
         else:
             loop.call_soon_threadsafe(self.stop_requested.set)
+
+    def _transcript_meta(self) -> dict:
+        """記録の先頭に書く情報。
+
+        **呼ぶたびに今の状態から作る。** 会議ごとに記録を切り替えるので、
+        起動時の値を使い回すと、向きや用語集を途中で変えた後の記録が嘘になる。
+        """
+        return {
+            "asr": config.ASR_MODEL,
+            "delay": self.settings.delay,
+            "languages": ",".join(self.settings.languages),
+            "translate": self.settings.translate_model,
+            # 始めたときの向き。**途中で変えられるので、1文ごとにも残す。**
+            "direction": self.direction.name,
+            "glossary": len(self.entries),
+            "glossary_sets": ", ".join(self.glossary_names) or "(なし)",
+            "dry_run": self.settings.dry_run,
+        }
+
+    def roll_transcript(self, label: str = "") -> Path | None:
+        """いまの記録を閉じて `.md` を書き、次の記録を開く。閉じたパスを返す。
+
+        **プロセスの終了を待たない。** 常駐させると `report()` が呼ばれるのは
+        何週間も先になる。それまで `.md` は1本も書かれず、会議何十本ぶんが
+        1つの `.jsonl` に溜まる。会議が終わるたびにここで区切る。
+
+        **`web.transcript` も差し替えること。** 差し替えないと、操作画面の
+        「途中まで読む」が閉じたほうを読み続ける。
+
+        1文も無い記録は `close()` が消すので、会議の前後で2回呼んでも
+        空ファイルは残らない。
+
+        呼ぶのは本体のイベントループ（スケジューラ）だけである。
+        """
+        if self.transcript is None:
+            return None
+        done = self.transcript.close()
+        if done is not None:
+            print(f"[{now()}] 記録        書いた: {done}")
+        self.transcript = transcript_mod.Transcript(
+            self.settings.transcript_dir, meta=self._transcript_meta(), label=label)
+        self.transcript.open()
+        if self.web is not None:
+            self.web.transcript = self.transcript
+        return done
 
     def set_generating(self, on: bool) -> None:
         """字幕の生成を開始・停止する。**別のスレッドから呼ばれる。**

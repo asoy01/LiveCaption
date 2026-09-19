@@ -49,6 +49,31 @@ def _clock(epoch: float) -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(epoch))
 
 
+# Windows のファイル名に使えない文字。制御文字は別に落とす。
+_BAD_NAME_CHARS = '\\/:*?"<>|'
+# ファイル名に入れる会議名の長さ。パス全体の上限に余裕を持たせる。
+NAME_IN_FILE_MAX = 40
+
+
+def safe_filename(name: str) -> str:
+    """会議の名前をファイル名の一部にする。
+
+    **日本語は落とさない。** ファイル名に会議名が入るのは、後から探すためである。
+    「KAGRA朝礼」が消えて日付だけになったら意味が無い。Windows のパスは UTF-8 を
+    そのまま扱える。落とすのは、パスとして使えない文字と制御文字だけである。
+
+    `web._qr_filename` とは別物である。あちらは HTTP のヘッダに載せるので
+    ASCII に限る必要があり、日本語は消える。要求が違うので分けてある。
+    """
+    out = "".join(
+        "_" if (c in _BAD_NAME_CHARS or ord(c) < 32) else c
+        for c in str(name)
+    )
+    # 空白をまとめ、前後の空白と点を落とす（Windowsは末尾の点を嫌う）。
+    out = "_".join(out.split()).strip("._")
+    return out[:NAME_IN_FILE_MAX]
+
+
 class Transcript:
     """1回の起動ぶんの記録。
 
@@ -56,16 +81,27 @@ class Transcript:
     書くのは数百バイトなので、そのまま同期で書いて流す。
     """
 
-    def __init__(self, directory: Path, meta: dict | None = None) -> None:
+    def __init__(self, directory: Path, meta: dict | None = None,
+                 label: str = "") -> None:
         self.directory = Path(directory)
         self.meta = dict(meta or {})
+        self.label = label
         self.started = time.time()
+        self.ended: float | None = None
         stem = config.TRANSCRIPT_PREFIX + time.strftime(
             "%Y-%m-%d_%H%M%S", time.localtime(self.started))
+        # **会議の名前をファイル名に入れる。** 無人で回すと1日に何本も落ちるので、
+        # 時刻だけでは後から探せない。名前は人が打つので、ファイル名に使えない
+        # 文字が入る。`safe_filename` で落とす。
+        if label:
+            slug = safe_filename(label)
+            if slug:
+                stem = f"{stem}_{slug}"
         self.path = self.directory / f"{stem}.jsonl"
         self.md_path = self.directory / f"{stem}.md"
         self.records: list[dict] = []
         self.error = ""
+        self.closed = False
         self._fh = None
 
     # --- 本体から呼ぶ -------------------------------------------------------
@@ -143,7 +179,16 @@ class Transcript:
         self._write(record)
 
     def close(self) -> Path | None:
-        """`.md` を書いて閉じる。書いたパスを返す。1文も無ければ何も残さない。"""
+        """`.md` を書いて閉じる。書いたパスを返す。1文も無ければ何も残さない。
+
+        **2回呼ばれても平気にしてある。** 会議の切れ目で閉じた後、終了時の
+        `App.report` がもう一度呼ぶ。印を付けておかないと、消したファイルを
+        消しに行ったり、書いた `.md` を書き直したりする。
+        """
+        if self.closed:
+            return self.md_path if self.records else None
+        self.closed = True
+        self.ended = time.time()
         if self._fh is not None:
             try:
                 self._fh.close()
@@ -171,10 +216,13 @@ class Transcript:
 
     def markdown(self, final: bool = False) -> str:
         """`final=False` は会議の途中で読むとき。**「終了」と書いてはいけない。**"""
+        # 閉じた後は、閉じた時刻を書く。`time.time()` のままだと、記録を後から
+        # 読み直すたびに終了時刻が伸びていく。
+        end = self.ended if self.ended is not None else time.time()
         return render(
             {"started": _clock(self.started), **self.meta},
             self.records,
-            ended=_clock(time.time()),
+            ended=_clock(end),
             final=final,
         )
 

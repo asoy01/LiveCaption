@@ -24,29 +24,110 @@ from __future__ import annotations
 import json
 import secrets
 import threading
-from dataclasses import dataclass
-from datetime import date
+from dataclasses import dataclass, replace
+from datetime import date, datetime, timedelta
 
 from . import config
 
 # 名前の長さの上限。操作画面の一覧に収めるためで、中身の制約ではない。
 NAME_MAX = 60
+# 予定の書き方。**秒も時間帯も持たない。** 1台の機体で、人が手で打つ値である。
+TIME_FMT = "%Y-%m-%d %H:%M"
+# 繰り返しはこの2つだけ。cron も RRULE も持ち込まない。
+REPEATS = ("", "weekly")
 
 
 @dataclass(frozen=True)
 class Meeting:
-    """1つの会議ぶん。`id` がURLに載る。"""
+    """1つの会議ぶん。`id` がURLに載る。
+
+    **下の予定の欄は後から足した。** 古い `local/meetings.json` には入っていないので、
+    既定値を持たせてある（`_meeting_from` が補う）。
+    """
 
     id: str
     name: str
     created: str
+    # --- 予定（無人で回すための欄） ---
+    start: str = ""            # "2026-09-25 09:30"。空なら予定なし
+    repeat: str = ""           # "" か "weekly"
+    zoom: str = ""             # Zoomの招待URLか会議番号。空なら自分では入らない
+    lead_min: int = 2          # 何分前に動き出すか
+    silence_min: float = 10.0  # 無音がこれだけ続いたら畳む
+    max_min: int = 180         # 安全上限。無音でなくてもここで必ず止める
+    auto: bool = False         # **自動で回す印。既定は切り。** 理由は下
+    last_fired: str = ""       # 済ませた回の `start`。**時刻ではなく回を書く**
+    host_id: str = ""          # ホストがトークンを貼るURLの経路（Phase 6）
 
     def as_dict(self) -> dict:
-        return {"id": self.id, "name": self.name, "created": self.created}
+        return {
+            "id": self.id, "name": self.name, "created": self.created,
+            "start": self.start, "repeat": self.repeat, "zoom": self.zoom,
+            "lead_min": self.lead_min, "silence_min": self.silence_min,
+            "max_min": self.max_min, "auto": self.auto,
+            "last_fired": self.last_fired, "host_id": self.host_id,
+        }
+
+    @property
+    def scheduled(self) -> bool:
+        return bool(self.start) and self.auto
 
 
 def _new_id() -> str:
     return secrets.token_urlsafe(config.VIEWER_SECRET_BYTES)
+
+
+def _new_host_id() -> str:
+    """ホスト用URLの経路。
+
+    **閲覧用の `id` より長くする。** 閲覧用は破られても字幕が漏れるだけで、
+    しかも数十人に配るものである。こちらは Zoom へ何を送るかを決めるので、
+    桁を変えてある。**閲覧用から導けてはいけない。**
+    """
+    return secrets.token_urlsafe(config.HOST_SECRET_BYTES)
+
+
+# --- 読み込みの補正 -----------------------------------------------------------
+# **手で直した `meetings.json` で落ちないようにする。** 読めない値は既定に戻す。
+# ここで例外を出すと、見張りが5秒ごとに同じ会議で転び続ける。
+
+
+def _clean_start(raw) -> str:  # noqa: ANN001
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    try:
+        return datetime.strptime(text, TIME_FMT).strftime(TIME_FMT)
+    except (ValueError, TypeError):
+        return ""
+
+
+def _num(raw, lo: float, hi: float, default: float) -> float:  # noqa: ANN001
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return default
+    if value != value or value < lo or value > hi:  # NaN もここで落ちる
+        return default
+    return value
+
+
+def _meeting_from(m: dict) -> Meeting:
+    """1件ぶんを読む。**足りない欄は既定値で埋める。**"""
+    return Meeting(
+        id=str(m["id"]),
+        name=str(m.get("name", "")),
+        created=str(m.get("created", "")),
+        start=_clean_start(m.get("start")),
+        repeat=str(m.get("repeat", "")) if m.get("repeat") in REPEATS else "",
+        zoom=str(m.get("zoom", "")).strip(),
+        lead_min=int(_num(m.get("lead_min"), 0, 60, 2)),
+        silence_min=_num(m.get("silence_min"), 0.5, 240, 10.0),
+        max_min=int(_num(m.get("max_min"), 5, 24 * 60, 180)),
+        auto=bool(m.get("auto", False)),
+        last_fired=str(m.get("last_fired", "")),
+        host_id=str(m.get("host_id", "")),
+    )
 
 
 class Store:
@@ -74,9 +155,9 @@ class Store:
         try:
             saved = json.loads(self.path.read_text(encoding="utf-8"))
             items = [
-                Meeting(str(m["id"]), str(m.get("name", "")), str(m.get("created", "")))
+                _meeting_from(m)
                 for m in saved.get("items", [])
-                if m.get("id")
+                if isinstance(m, dict) and m.get("id")
             ]
             active = str(saved.get("active", ""))
         except (OSError, ValueError, AttributeError, KeyError, TypeError):
@@ -190,6 +271,164 @@ class Store:
         if changed:
             self._changed()
         return out
+
+    # --- 予定 ---------------------------------------------------------------
+
+    def set_schedule(self, meeting_id: str, **fields) -> dict:  # noqa: ANN003
+        """予定の欄を書き換える。読めない値は `ValueError` で断る。
+
+        **ここは人が打った値を受ける入口なので、ここで断る。** 読み込みの側
+        （`_meeting_from`）は逆に、何が来ても既定値に落として通す。
+        壊れたファイルで見張りが転び続けるほうが困るためである。
+        """
+        meeting_id = str(meeting_id)
+        clean: dict = {}
+
+        if "start" in fields:
+            raw = str(fields["start"] or "").strip().replace("T", " ")
+            # ブラウザの datetime-local は "2026-09-25T09:30" を返す。
+            if raw and _clean_start(raw) == "":
+                raise ValueError(f"日時の書き方が違う: 「{raw}」。{TIME_FMT} の形で入れること。")
+            clean["start"] = _clean_start(raw)
+        if "repeat" in fields:
+            rep = str(fields["repeat"] or "")
+            if rep not in REPEATS:
+                raise ValueError(f"繰り返しが違う: 「{rep}」。空か weekly のどちらか。")
+            clean["repeat"] = rep
+        if "zoom" in fields:
+            clean["zoom"] = str(fields["zoom"] or "").strip()[:500]
+        if "lead_min" in fields:
+            clean["lead_min"] = int(_num(fields["lead_min"], 0, 60, -1))
+            if clean["lead_min"] < 0:
+                raise ValueError("何分前に動き出すかは 0〜60 で入れること。")
+        if "silence_min" in fields:
+            value = _num(fields["silence_min"], 0.5, 240, -1)
+            if value < 0:
+                raise ValueError("無音で畳むまでの分は 0.5〜240 で入れること。")
+            clean["silence_min"] = value
+        if "max_min" in fields:
+            value = int(_num(fields["max_min"], 5, 24 * 60, -1))
+            if value < 0:
+                raise ValueError("安全上限は 5〜1440 分で入れること。")
+            clean["max_min"] = value
+        if "auto" in fields:
+            clean["auto"] = bool(fields["auto"])
+
+        with self._lock:
+            found = [m for m in self._items if m.id == meeting_id]
+            if not found:
+                raise ValueError("その会議は無い。")
+            old = found[0]
+            # 予定を変えたら、済ませた印を落とす。時刻を動かしたのに
+            # 「もう済んだ」と見なされては困る。
+            if clean.get("start", old.start) != old.start:
+                clean["last_fired"] = ""
+            new = replace(old, **clean)
+            self._items = [new if m.id == meeting_id else m for m in self._items]
+            self._save_locked()
+            return self._status_locked()
+
+    def ensure_host_id(self, meeting_id: str, renew: bool = False) -> str:
+        """ホスト用URLの経路。無ければ作って保存する。"""
+        meeting_id = str(meeting_id)
+        with self._lock:
+            found = [m for m in self._items if m.id == meeting_id]
+            if not found:
+                raise ValueError("その会議は無い。")
+            if found[0].host_id and not renew:
+                return found[0].host_id
+            new = replace(found[0], host_id=_new_host_id())
+            self._items = [new if m.id == meeting_id else m for m in self._items]
+            self._save_locked()
+            return new.host_id
+
+    def mark_fired(self, meeting_id: str, occurrence: str) -> None:
+        """その回を済ませたことにする。**失敗しても投げない。**
+
+        見張りから呼ばれる。ここで例外を出すと見張りが転び、同じ回を
+        何度も掴むことになる。
+        """
+        try:
+            with self._lock:
+                found = [m for m in self._items if m.id == meeting_id]
+                if not found:
+                    return
+                new = replace(found[0], last_fired=str(occurrence))
+                self._items = [new if m.id == meeting_id else m for m in self._items]
+                self._save_locked()
+        except Exception as exc:  # noqa: BLE001
+            print(f"  [会議] 済ませた印を残せない: {exc}")
+
+    def next_occurrence(self, m: Meeting, now: datetime) -> datetime | None:
+        """次に来る回。無ければ None。
+
+        **`weekly` は日付に7日足して組み直す。** 「7日ぶんの秒を足す」ではない。
+        夏時間のある土地に機体を動かしても、指定した時刻のままになる。
+        """
+        if not m.start:
+            return None
+        try:
+            when = datetime.strptime(m.start, TIME_FMT)
+        except ValueError:
+            return None
+        if not m.repeat:
+            return when
+        # 過去になっていたら、次に来る同じ曜日・同じ時刻まで進める。
+        guard = 0
+        while when < now and guard < 520:  # 10年ぶんで打ち切る
+            when = datetime.combine(
+                when.date() + timedelta(days=7), when.time())
+            guard += 1
+        return when
+
+    def occurrence_key(self, when: datetime) -> str:
+        return when.strftime(TIME_FMT)
+
+    def due(self, now: datetime) -> list[tuple[Meeting, datetime]]:
+        """いま動き出すべき会議。**新しい順ではなく、開始の早い順に返す。**
+
+        重なっていることが分かるように、1つに絞らず全部返す。選ぶのは見張りである。
+        """
+        out = []
+        for m in self.items():
+            if not m.scheduled:
+                continue
+            when = self.next_occurrence(m, now)
+            if when is None:
+                continue
+            key = self.occurrence_key(when)
+            if m.last_fired == key:
+                continue
+            # 開始の `lead_min` 分前から掴む。過ぎすぎた回は拾わない
+            # （止めていた間に流れた回まで、まとめて始めない）。
+            begin = when - timedelta(minutes=m.lead_min)
+            if begin <= now <= when + timedelta(minutes=config.SCHEDULE_GRACE_MIN):
+                out.append((m, when))
+        out.sort(key=lambda pair: pair[1])
+        return out
+
+    def upcoming(self, now: datetime, limit: int = 3) -> list[dict]:
+        """これから来る回を早い順に。操作画面に出す。"""
+        out = []
+        for m in self.items():
+            if not m.scheduled:
+                continue
+            when = self.next_occurrence(m, now)
+            if when is None:
+                continue
+            key = self.occurrence_key(when)
+            if m.last_fired == key and not m.repeat:
+                continue
+            if m.last_fired == key and m.repeat:
+                when = datetime.combine(when.date() + timedelta(days=7), when.time())
+            out.append({
+                "id": m.id, "name": m.name,
+                "at": when.strftime(TIME_FMT),
+                "in_sec": int((when - now).total_seconds()),
+                "zoom": bool(m.zoom),
+            })
+        out.sort(key=lambda d: d["at"])
+        return out[:limit]
 
     # --- 内部 ---------------------------------------------------------------
 
