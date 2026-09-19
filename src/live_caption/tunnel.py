@@ -39,6 +39,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 import shutil
@@ -280,6 +281,49 @@ def tailscale_host(command: str | None = None, max_age: float | None = None
     return name, why
 
 
+def is_tailscale_addr(addr: str) -> bool:
+    """Tailscale が配る範囲のアドレスかどうか。
+
+    **操作画面を出してよい範囲を、ここ1か所で決める。** 汎用のバインド指定に
+    してはいけない。`0.0.0.0` と書けば、認証の無い操作画面が学内LANの全員に
+    見えてしまう。Tailscale の範囲だけを通す。
+
+        IPv4  100.64.0.0/10   （Tailscale が使う CGNAT の範囲）
+        IPv6  fd7a:115c:a1e0::/48
+    """
+    try:
+        ip = ipaddress.ip_address(str(addr).strip())
+    except ValueError:
+        return False
+    return any(ip in net for net in config.TAILSCALE_NETS)
+
+
+def tailscale_addrs(command: str | None = None) -> list[str]:
+    """このPCの tailnet 上のIP。繋がっていなければ空。
+
+    **手で書かせない。** IPは機体ごとに違うし、書き間違えると
+    「操作画面が出ない」のか「別のアドレスに出ている」のか分からなくなる。
+    """
+    exe = find_tailscale(command)
+    if exe is None:
+        return []
+    try:
+        out = subprocess.run(
+            [exe, "status", "--json"], capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=10,
+            stdin=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if out.returncode != 0:
+            return []
+        state = json.loads(out.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return []
+    if state.get("BackendState") != "Running":
+        return []
+    return [a for a in state.get("TailscaleIPs", []) if is_tailscale_addr(a)]
+
+
 def _tailscale_host_now(command: str | None = None) -> tuple[str, str]:
     """実際に `tailscale status --json` を起こして調べる。"""
     exe = find_tailscale(command)
@@ -372,8 +416,15 @@ class Funnel:
             self._state, self._error = "starting", ""
         try:
             out = subprocess.run(
-                [exe, "funnel", "--bg", "--yes",
+                # **`--yes` を付けない。** 付けると、tailnet 側の設定
+                # （HTTPS証明書の発行と、ポリシーへの funnel 属性の追加）を
+                # **人の同意なしに書き換えてしまう。** tailnet の設定は、
+                # この機体1台の話ではない。有効化は人が1度だけ行うものとし、
+                # ここでは「まだ有効になっていない」と報せるに留める。
+                # 待ち受けに落ちないよう、標準入力は塞いでおく。
+                [exe, "funnel", "--bg",
                  f"--https={config.FUNNEL_PUBLIC_PORT}", str(self.port)],
+                stdin=subprocess.DEVNULL,
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=config.TUNNEL_TIMEOUT_SEC,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -412,14 +463,20 @@ class Funnel:
         if exe is not None and was != "off":
             try:
                 subprocess.run(
-                    [exe, "funnel", "--yes", f"--https={config.FUNNEL_PUBLIC_PORT}", "off"],
+                    [exe, "funnel", f"--https={config.FUNNEL_PUBLIC_PORT}", "off"],
+                    stdin=subprocess.DEVNULL,
                     capture_output=True, text=True, encoding="utf-8", errors="replace",
                     timeout=15,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
             except (OSError, subprocess.SubprocessError) as exc:
                 with self._lock:
-                    self._error = f"止められなかった。手で `tailscale funnel reset` を打つこと: {exc}"
+                    # **`reset` を勧めてはいけない。** `serve` の設定も一緒に消える。
+                    # 操作画面を tailnet に出していると、そこへの経路まで巻き添えになる。
+                    self._error = (
+                        "止められなかった。手で次を打つこと: "
+                        f"tailscale funnel --https={config.FUNNEL_PUBLIC_PORT} off"
+                        f"（{exc}）")
         if was != "off":
             self._changed()
         return self.status()

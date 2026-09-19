@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 from dataclasses import dataclass, field
@@ -238,6 +239,13 @@ FUNNEL_PUBLIC_PORT = 443
 # tailnet 上のホスト名を覚えておく秒数。**0 にすると毎回プロセスを起こす。**
 # 操作画面は2秒ごとに状態を取りに来るので、覚えないと1日に数万回になる。
 TAILSCALE_HOST_CACHE_SEC = 30.0
+# Tailscale が配るアドレスの範囲。**操作画面を出してよいのはここだけである。**
+# 汎用のバインド指定にしてはいけない。0.0.0.0 と書けば、認証の無い操作画面が
+# 学内LANの全員に見える。
+TAILSCALE_NETS = (
+    ipaddress.ip_network("100.64.0.0/10"),
+    ipaddress.ip_network("fd7a:115c:a1e0::/48"),
+)
 
 # --- 会議ごとの閲覧URL -------------------------------------------------------
 # **会議ごとに別のURLを使う。** 参加者が会議ごとに違うので、前の会議のURLで

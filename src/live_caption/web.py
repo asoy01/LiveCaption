@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import io
 import json
+import socket
 import threading
 import time
 from datetime import datetime
@@ -1830,6 +1831,9 @@ class WebCaptions:
     ) -> None:
         self.port = port
         self.control_port = control_port
+        # 操作画面を、127.0.0.1 に加えて待ち受けるアドレス（tailnet のIP）。
+        # **必ず Tailscale の範囲だけにする**（run.py が確かめてから渡す）。
+        self.control_extra: tuple[str, ...] = ()
         self.lines = lines
         self.bind = bind
         self.control = None
@@ -2061,7 +2065,11 @@ class WebCaptions:
     def start(self) -> None:
         """閲覧と操作、2つのサーバを立てる。
 
-        **操作画面は必ず 127.0.0.1 に縛る。** `bind` は閲覧にしか効かない。
+        **操作画面は必ず 127.0.0.1 で待ち受ける。** `bind` は閲覧にしか効かない。
+
+        `control_extra` があれば、**それに加えて** tailnet のアドレスでも待ち受ける。
+        127.0.0.1 は必ず残す。**Tailscale が落ちていても、機体の前からは必ず
+        操作できるようにするためである。**
         """
         viewer = self._serve(self.bind, self.port, _viewer_handler(self))
         try:
@@ -2072,9 +2080,47 @@ class WebCaptions:
             raise
         self._servers = [viewer, control]
 
+        bound = []
+        for addr in self.control_extra:
+            try:
+                self._servers.append(
+                    self._serve(addr, self.control_port, _control_handler(self)))
+                bound.append(addr)
+            except OSError as exc:
+                # **ここで起動を止めない。** 再起動の直後は tailscaled が
+                # まだアドレスを配っていないことがある。操作画面が外に出ないだけで
+                # 字幕アプリが立ち上がらないのでは、本末転倒である。
+                print(f"  [操作] {addr} では待ち受けられない: {exc}")
+        # **実際に待ち受けられたものだけを覚える。** 起動時の画面に出すURLと、
+        # `Origin` の検査は、どちらもここから作る。開いていないURLを
+        # 「開ける」と出すと、繋がらない理由を探すことになる。
+        self.control_extra = tuple(bound)
+
+    def control_urls_extra(self) -> list[str]:
+        """127.0.0.1 以外で操作画面が開けるURL。起動時の画面に出す。"""
+        return [f"http://{'[' + a + ']' if ':' in a else a}:{self.control_port}"
+                for a in self.control_extra]
+
+    def allowed_origins(self) -> set[str]:
+        """この操作画面自身のURL。`Origin` の検査に使う。"""
+        out = {f"http://localhost:{self.control_port}",
+               f"http://127.0.0.1:{self.control_port}"}
+        for addr in self.control_extra:
+            host = f"[{addr}]" if ":" in addr else addr
+            out.add(f"http://{host}:{self.control_port}")
+        return out
+
     def _serve(self, host: str, port: int, handler) -> ThreadingHTTPServer:  # noqa: ANN001
         # ThreadingHTTPServer にするのは、長ポーリングが1本ずつ居座るため。
-        server = ThreadingHTTPServer((host, port), handler)
+        cls = ThreadingHTTPServer
+        if ":" in host:
+            # **IPv6 は族を変えないと開けない。** `ThreadingHTTPServer` の既定は
+            # IPv4 で、tailnet の IPv6 アドレスを渡すと getaddrinfo で落ちる。
+            class _V6(ThreadingHTTPServer):
+                address_family = socket.AF_INET6
+
+            cls = _V6
+        server = cls((host, port), handler)
         server.daemon_threads = True
         threading.Thread(target=server.serve_forever, daemon=True).start()
         return server
@@ -2207,9 +2253,37 @@ def _control_page(web: WebCaptions, lang: str) -> bytes:
 
 
 def _control_handler(web: WebCaptions):
-    """操作画面。**127.0.0.1 からしか届かない。**"""
+    """操作画面。**既定では 127.0.0.1 からしか届かない。**
+
+    `--control-bind` を付けると、tailnet のアドレスでも待ち受ける。そのときは
+    「この機体の前に座っている人だけ」という前提が崩れるので、下の `_same_origin`
+    で、**別のページから押されるのを断る。**
+    """
 
     class Handler(_Base):
+        def _same_origin(self) -> bool:
+            """この画面から来た要求かどうかを見る。違えば断って False を返す。
+
+            **ブラウザで開いたページは、裏で他のアドレスへ要求を送れる。**
+            答えは読めない（ブラウザが止める）が、要求は届く。つまり、
+            無関係なページが「終了」や「配信を開始」を押せてしまう。
+
+            要求には `Origin` という札が付く。**それを見ていなかった。**
+            自分の画面以外から来たものは断る。
+
+            `Origin` が無いものは通す。`curl` や手元の道具は札を付けないし、
+            **ブラウザは POST に必ず付ける。** 札が無い＝ブラウザ以外である。
+            """
+            origin = self.headers.get("Origin")
+            if origin is None:
+                return True
+            if origin in web.allowed_origins():
+                return True
+            # **理由を残す。** 無人で回す機体では、記録が唯一の痕跡になる。
+            print(f"[{time.strftime('%H:%M:%S')}] 操作        別のページからの操作を断った"
+                  f"（Origin: {origin[:100]}）")
+            self._send_json(403, {"error": "この画面以外からは操作できない。"})
+            return False
         def do_GET(self) -> None:  # noqa: N802
             u = urlparse(self.path)
             if u.path in ("/", "/index.html"):
@@ -2302,6 +2376,8 @@ def _control_handler(web: WebCaptions):
             self._send_bytes(200, "image/svg+xml", buf.getvalue())
 
         def do_POST(self) -> None:  # noqa: N802
+            if not self._same_origin():
+                return
             path = urlparse(self.path).path
             if path == "/api/shutdown":
                 self._shutdown()

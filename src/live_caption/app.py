@@ -831,7 +831,12 @@ class App:
             if self.web is not None:
                 print("  ブラウザの操作画面（右上の歯車）からトークンを入れて開始できる。")
         if self.web is not None:
-            print(f"操作画面:   {self.web.control_url()}  （麻生だけ。共有しないこと）")
+            print(f"操作画面:   {self.web.control_url()}  （自分だけ。共有しないこと）")
+            # **出ているなら、必ず見せる。** 出ているつもりが無いのに出ている、
+            # というのがいちばん困る。認証は無いので、届く範囲が全てである。
+            for extra in self.web.control_urls_extra():
+                print(f"            {extra}  "
+                      "（tailnet の中から。**ACLで絞ること**）")
             print(f"閲覧画面:   {self.web.viewer_url()}"
                   f"  （{self.web.lines}行。全画面にして画面共有する）")
             state = self.web.tunnel.status()["state"] if self.web.tunnel else "off"

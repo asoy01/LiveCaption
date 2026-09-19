@@ -98,8 +98,14 @@ def parse_args() -> argparse.Namespace:
                    help=f"ブラウザに字幕を出す（閲覧は既定 {config.WEB_PORT}番）。--token と併用可")
     p.add_argument("--control-port", type=int, default=config.CONTROL_PORT,
                    metavar="ポート",
-                   help=f"操作画面のポート（既定: {config.CONTROL_PORT}）。"
-                        "**常に 127.0.0.1 でしか待ち受けない**")
+                   help=f"操作画面のポート（既定: {config.CONTROL_PORT}）")
+    p.add_argument("--control-bind", nargs="?", const="auto", default=None,
+                   metavar="アドレス",
+                   help="**操作画面を tailnet からも開けるようにする。** 値を省くと"
+                        "このPCの Tailscale のアドレスを自分で調べる。"
+                        "127.0.0.1 は必ず残る。"
+                        "**Tailscale の範囲以外は受け付けない**"
+                        "（操作画面には認証が無いため）")
     p.add_argument("--web-bind", default=config.WEB_BIND, metavar="アドレス",
                    help=f"**閲覧画面**を待ち受けるアドレス（既定: {config.WEB_BIND}）。"
                         "同じLANの端末から直接見せるなら 0.0.0.0。"
@@ -120,6 +126,43 @@ def parse_args() -> argparse.Namespace:
                    metavar="秒",
                    help="音量だけを表示する（APIを呼ばない）。実機の試験はここから")
     return p.parse_args()
+
+
+def _control_extra(value: str) -> tuple[str, ...] | None:
+    """`--control-bind` の値を確かめる。おかしければ理由を出して None を返す。
+
+    **操作画面には認証が無い。** 守っているのは「どこから届くか」だけである。
+    だから、ここを汎用のバインド指定にしてはいけない。`0.0.0.0` と書けば、
+    **認証の無い操作画面が学内LANの全員に見える。** Tailscale の範囲だけを通す。
+
+    値を省いたら（`auto`）、このPCの Tailscale のアドレスを自分で調べる。
+    手で書かせると、書き間違えたときに「出ていない」のか「別の場所に出ている」のか
+    分からなくなる。
+    """
+    from live_caption import tunnel as tunnel_mod
+
+    if value == "auto":
+        addrs = tunnel_mod.tailscale_addrs()
+        if not addrs:
+            # **ここで起動を止める。** 出るつもりで出ていないのが、いちばん困る。
+            print("--control-bind: Tailscale のアドレスが分からない。")
+            print("  Tailscale が動いてサインインしているか確かめること"
+                  "（tailscale status）。")
+            return None
+        return tuple(addrs)
+
+    if not tunnel_mod.is_tailscale_addr(value):
+        print(f"--control-bind: 受け付けられないアドレス: 「{value}」")
+        print("  操作画面には認証が無いので、Tailscale の範囲だけを通す。")
+        print("  100.64.0.0/10 か fd7a:115c:a1e0::/48 のアドレスを指定するか、")
+        print("  値を省いて自分で調べさせること（--control-bind）。")
+        return None
+    return (value,)
+
+
+def _hostpart(addr: str) -> str:
+    """URLに入れる形。IPv6 は角括弧で囲む。"""
+    return f"[{addr}]" if ":" in addr else addr
 
 
 def main() -> int:
@@ -176,6 +219,12 @@ def main() -> int:
         web = web_mod.WebCaptions(
             port=args.web, control_port=args.control_port, bind=args.web_bind
         )
+        # **操作画面を tailnet に出すかどうか。** 既定では出さない。
+        if args.control_bind is not None:
+            extra = _control_extra(args.control_bind)
+            if extra is None:
+                return 1
+            web.control_extra = extra
         # 配信の口だけ用意しておく。出すかどうかは別（既定では出さない）。
         # 経路（Cloudflare / Tailscale）は前回の選択を引き継ぐ。
         web.tunnel = tunnel_mod.Delivery(args.web, command=args.cloudflared)
