@@ -405,8 +405,8 @@ VIEWER_BODY = """</style>
     <input type="checkbox" id="ja">
     <span class="track"></span>
     <!-- **「Japanese」とは書けない。** 向きが en2ja なら、ここに出るのは英語である。
-         このトグルが出すのは「認識の出力」であって、特定の言語ではない。 -->
-    <span>Source</span>
+         このトグルが出すのは「訳す前の言葉」であって、特定の言語ではない。 -->
+    <span>Original language</span>
   </label>
 </header>
 <main id="main">
@@ -468,6 +468,22 @@ CONTROL_BODY = """
      まわりの文字より小さくなって、押すものだけ読みにくくなる。**
      閲覧画面には `--ui` が無いので、#panel の中だけに効かせる。 */
   #panel button, #panel select { font-size: var(--ui); }
+  /* パネルの上のタブ。**当日触るものと、据え付けたら触らないものを分ける。**
+     選んだ側は localStorage に残す。次の起動も同じ側で開く。 */
+  .tabs { display: flex; gap: 6px; margin: 0 0 14px; }
+  .tabs > .tab {
+    flex: 1 1 0; padding: 7px 10px; color: #8b949e; background: #0d1117;
+  }
+  .tabs > .tab:hover { background: #161b22; }
+  .tabs > .tab.on { color: var(--fg); background: #21262d; border-color: #4a5560; }
+  /* **隠した側で起きた失敗を見落とさないようにする。** 設定を開いたまま
+     会議が始まって、そちらで失敗していても気づけない。 */
+  .tabs > .tab.alert::after { content: " ●"; color: var(--ng); }
+
+  /* 見せ方の3つ。畳んだ見出しを縦に積む。 */
+  .grp > .fold { margin-bottom: 7px; }
+  .grp > .fold:last-child { margin-bottom: 0; }
+
   /* まとまりごとに区切る。全部が地続きだと、どこが何の設定か分からない。 */
   .grp { padding: 12px 0; border-bottom: 1px solid var(--line); }
   .grp:first-child { padding-top: 0; }
@@ -664,11 +680,12 @@ CONTROL_BODY = """
     <option value="ja">日本語</option>
     <option value="en">English</option>
   </select>
-  <label class="toggle">
+  <!-- **「日本語」とは書けない。** 向きが en2ja なら、ここに出るのは英語である。
+       このトグルが出すのは「訳す前の言葉」であって、特定の言語ではない。 -->
+  <label class="toggle" title="訳す前の言葉を、訳文の上に小さく出す">
     <input type="checkbox" id="ja">
     <span class="track"></span>
-    <!-- 出るのは文字起こしである。向きが en2ja なら英語になる。 -->
-    <span>文字起こし</span>
+    <span>元の言語を表示</span>
   </label>
 </header>
 
@@ -682,55 +699,39 @@ CONTROL_BODY = """
 
 <aside id="panel">
 
-  <div class="grp">
-    <h2>字幕の生成</h2>
+  <!-- **当日触るものと、据え付けたら触らないものを分ける。** 見出しを12個
+       一列に並べていたら、どれが会議中に要るものか見分けが付かなかった
+       （2026-09-20 の麻生の指摘）。 -->
+  <div class="tabs">
+    <button class="tab on" id="tabRun">会議</button>
+    <button class="tab" id="tabSet">設定</button>
+  </div>
+
+<div id="paneRun">
+
+  <div class="grp" id="schedGrp">
+    <h2>いまの状態</h2>
+    <div class="row2" id="schedFailRow" style="display:none">
+      <pre class="err" id="schedFail"></pre>
+      <button id="schedAck">了解</button>
+    </div>
     <div class="row2">
       <button id="gstart" class="primary">開始</button>
       <button id="gstop" class="danger">停止</button>
       <span id="genState"></span>
     </div>
+    <!-- **音量メーターは、入力デバイスの欄ではなくここに置く。** 会議中に見る
+         ものなので、設定の側に隠してはいけない。 -->
+    <div class="row2">
+      <span class="meter" id="meter"><i id="meterBar"></i></span>
+      <span id="audioState"></span>
+    </div>
+    <div class="row2" id="audioErrBox" style="display:none">
+      <pre class="err" id="audioErr"></pre>
+    </div>
     <div class="row2 hint" id="genHint">
       開始するまで、<b>音は取り込まれず、認識も翻訳もしない。</b>
       会議に入る前に立ち上げておいてよい。
-    </div>
-  </div>
-
-  <div class="grp">
-    <h2>参加者への配信</h2>
-    <div class="row2">
-      <label class="lbl" for="tkind">経路</label>
-      <select id="tkind">
-        <option value="cloudflare">Cloudflare（その場で配る）</option>
-        <option value="tailscale">Tailscale（前もって配る）</option>
-      </select>
-    </div>
-    <div class="row2 hint" id="tkindHint"></div>
-    <div class="row2">
-      <button id="tstart" class="primary">配信を開始</button>
-      <button id="tstop" class="danger">停止</button>
-    </div>
-    <div class="row2"><span id="tunnelState"></span></div>
-    <div class="row2" id="qrbox">
-      <img id="qr" alt="閲覧URLのQRコード">
-    </div>
-    <div class="row2" id="publicUrlRow" style="display:none">
-      <span class="url" id="publicUrl"></span>
-      <button class="copybtn" data-copy="publicUrl">URLをコピー</button>
-      <button class="savebtn" id="qrsave">QRコードを保存</button>
-    </div>
-    <div class="row2 hint" id="tunnelHint" style="display:none">
-      このURLをQRで配る。参加者はブラウザで開くだけでよい。
-    </div>
-    <div class="row2" id="tunnelErrBox" style="display:none">
-      <pre class="err" id="tunnelErr"></pre>
-    </div>
-  </div>
-
-  <div class="grp" id="schedGrp">
-    <h2>次にやること</h2>
-    <div class="row2" id="schedFailRow" style="display:none">
-      <pre class="err" id="schedFail"></pre>
-      <button id="schedAck">了解</button>
     </div>
     <div class="row2"><span id="schedState"></span></div>
     <div class="list" id="schedNext"></div>
@@ -741,7 +742,7 @@ CONTROL_BODY = """
   </div>
 
   <div class="grp">
-    <h2>会議<span class="c" id="meetCount"></span></h2>
+    <h2>この会議<span class="c" id="meetCount"></span></h2>
     <div class="row2">
       <label class="lbl" for="meetPick">配信する会議</label>
       <select id="meetPick"></select>
@@ -753,45 +754,97 @@ CONTROL_BODY = """
       <button class="savebtn" id="meetQr">QRコードを保存</button>
     </div>
     <div class="row2">
+      <label class="lbl" for="dirSel">字幕の向き</label>
+      <select id="dirSel"><option>読み込み中…</option></select>
+    </div>
+    <div class="row2">
+      <span id="dirState"></span>
+    </div>
+    <div class="row2">
       <button id="meetManage" class="primary">会議の管理</button>
     </div>
     <div class="row2 hint">
-      予定の入力・追加・削除は、別の画面で行う。<b>この欄は狭すぎる。</b>
+      予定の入力・追加・削除は別の画面で行う。<b>向きは選んだ時点で切り替わる。</b>
+      逆の言語が混ざったときは、訳さずにそのまま出す。
     </div>
   </div>
 
+  <!-- **3つの出口を1つの枠に入れる。** 離して置いていたので、同時に使える
+       ことが読み取れなかった。畳んだ見出しの右に、動いているかどうかを出す。 -->
   <div class="grp">
-    <h2>Zoom字幕</h2>
-    <div class="row2">
-      <label class="lbl" for="token">APIトークン</label>
-      <input type="password" id="token" placeholder="https://....zoom.us/closedcaption?id=..."
-             autocomplete="off" spellcheck="false">
-      <button id="save" class="primary">登録</button>
-    </div>
-    <div class="row2">
-      <button id="start" class="primary">開始</button>
-      <button id="stop" class="danger">停止</button>
-      <span id="zoomState"></span>
-    </div>
-    <div class="row2 hint">
-      会議中にホストが取る。「字幕」→「∧」→「手動字幕の設定」で<b>手動字幕を有効にしてから、</b>
-      「APIトークンをコピー」。<b>有効にしないとこの項目は出ない。</b><br>
-      入力欄は伏せ字で、登録すると空になる。
-    </div>
-  </div>
+    <h2>見せ方</h2>
+    <div class="row2 hint">3つとも同時に使える。</div>
 
-  <div class="grp">
-    <h2>画面共有で見せる</h2>
-    <div class="row2">
-      <span class="url" id="viewerUrl"></span>
-    </div>
-    <div class="row2">
-      <button id="openViewer">閲覧画面を開く</button>
-      <button class="copybtn" data-copy="viewerUrl">URLをコピー</button>
-    </div>
-    <div class="row2 hint">
-      <b>この画面は共有しないこと。</b>共有するのは閲覧画面のほう。
-    </div>
+    <details class="fold" id="wayNet" open>
+      <summary><span class="n">ブラウザで見てもらう</span><span class="c" id="wayNetState"></span></summary>
+      <div class="body">
+        <div class="row2">
+          <label class="lbl" for="tkind">経路</label>
+          <select id="tkind">
+            <option value="cloudflare">Cloudflare（その場で配る）</option>
+            <option value="tailscale">Tailscale（前もって配る）</option>
+          </select>
+        </div>
+        <div class="row2 hint" id="tkindHint"></div>
+        <div class="row2">
+          <button id="tstart" class="primary">配信を開始</button>
+          <button id="tstop" class="danger">停止</button>
+        </div>
+        <div class="row2"><span id="tunnelState"></span></div>
+        <div class="row2" id="qrbox">
+          <img id="qr" alt="閲覧URLのQRコード">
+        </div>
+        <div class="row2" id="publicUrlRow" style="display:none">
+          <span class="url" id="publicUrl"></span>
+          <button class="copybtn" data-copy="publicUrl">URLをコピー</button>
+          <button class="savebtn" id="qrsave">QRコードを保存</button>
+        </div>
+        <div class="row2 hint" id="tunnelHint" style="display:none">
+          このURLをQRで配る。参加者はブラウザで開くだけでよい。
+        </div>
+        <div class="row2" id="tunnelErrBox" style="display:none">
+          <pre class="err" id="tunnelErr"></pre>
+        </div>
+      </div>
+    </details>
+
+    <details class="fold" id="wayShare">
+      <summary><span class="n">画面共有で見せる</span><span class="c"></span></summary>
+      <div class="body">
+        <div class="row2">
+          <span class="url" id="viewerUrl"></span>
+        </div>
+        <div class="row2">
+          <button id="openViewer">閲覧画面を開く</button>
+          <button class="copybtn" data-copy="viewerUrl">URLをコピー</button>
+        </div>
+        <div class="row2 hint">
+          <b>この画面は共有しないこと。</b>共有するのは閲覧画面のほう。
+        </div>
+      </div>
+    </details>
+
+    <details class="fold" id="wayZoom">
+      <summary><span class="n">Zoomの字幕に流す</span><span class="c" id="wayZoomState"></span></summary>
+      <div class="body">
+        <div class="row2">
+          <label class="lbl" for="token">APIトークン</label>
+          <input type="password" id="token" placeholder="https://....zoom.us/closedcaption?id=..."
+                 autocomplete="off" spellcheck="false">
+          <button id="save" class="primary">登録</button>
+        </div>
+        <div class="row2">
+          <button id="start" class="primary">開始</button>
+          <button id="stop" class="danger">停止</button>
+          <span id="zoomState"></span>
+        </div>
+        <div class="row2 hint">
+          会議中にホストが取る。「字幕」→「∧」→「手動字幕の設定」で<b>手動字幕を有効にしてから、</b>
+          「APIトークンをコピー」。<b>有効にしないとこの項目は出ない。</b><br>
+          入力欄は伏せ字で、登録すると空になる。
+        </div>
+      </div>
+    </details>
   </div>
 
   <div class="grp">
@@ -806,6 +859,10 @@ CONTROL_BODY = """
     </div>
   </div>
 
+</div>
+
+<div id="paneSet" hidden>
+
   <div class="grp">
     <h2>音声の入力</h2>
     <div class="row2">
@@ -814,27 +871,7 @@ CONTROL_BODY = """
     <div class="row2">
       <button id="devReload">一覧を更新</button>
     </div>
-    <div class="row2">
-      <span class="meter" id="meter"><i id="meterBar"></i></span>
-      <span id="audioState"></span>
-    </div>
-    <div class="row2" id="audioErrBox" style="display:none">
-      <pre class="err" id="audioErr"></pre>
-    </div>
-  </div>
-
-  <div class="grp">
-    <h2>字幕の向き</h2>
-    <div class="row2">
-      <select id="dirSel"><option>読み込み中…</option></select>
-    </div>
-    <div class="row2">
-      <span id="dirState"></span>
-    </div>
-    <div class="row2 hint">
-      会議ごとに選ぶ。<b>選んだ時点で切り替わる。</b>次の起動もこの向きで始まる。
-      逆の言語が混ざったときは、訳さずにそのまま出す。
-    </div>
+    <div class="row2 hint">音量メーターは会議の側に出る。</div>
   </div>
 
   <div class="grp">
@@ -884,6 +921,8 @@ CONTROL_BODY = """
     <div class="row2"><span id="msg"></span></div>
   </div>
 
+</div>
+
 </aside>
 </div>
 
@@ -913,6 +952,7 @@ __FEED_JS__
   const quit = $("quit"), tstart = $("tstart"), tstop = $("tstop");
   const msg = $("msg"), pill = $("zoomPill"), zoomState = $("zoomState");
   const tpill = $("tunnelPill"), tstate = $("tunnelState");
+  const wayNetState = $("wayNetState"), wayZoomState = $("wayZoomState");
   const qrbox = $("qrbox"), qr = $("qr"), publicUrl = $("publicUrl");
   const qrsave = $("qrsave");
   const tkind = $("tkind"), tkindHint = $("tkindHint");
@@ -988,6 +1028,23 @@ __FEED_JS__
     localStorage.setItem("panelW", String(wantW));
   });
 
+  // --- パネルのタブ -------------------------------------------------------
+  // **隠すのは設定の側だけにする。** 会議中に見るもの（状態・音量・次の予定）は
+  // どちらを開いていても見えていないと困るので、会議の側に集めてある。
+  const tabRun = $("tabRun"), tabSet = $("tabSet");
+  const paneRun = $("paneRun"), paneSet = $("paneSet");
+  function showTab(which) {
+    const set = (which === "set");
+    paneSet.hidden = !set;
+    paneRun.hidden = set;
+    tabSet.classList.toggle("on", set);
+    tabRun.classList.toggle("on", !set);
+    localStorage.setItem("panelTab", which);
+  }
+  tabRun.addEventListener("click", () => showTab("run"));
+  tabSet.addEventListener("click", () => showTab("set"));
+  showTab(localStorage.getItem("panelTab") === "set" ? "set" : "run");
+
   async function post(path, body) {
     const res = await fetch(path, {
       method: "POST",
@@ -1048,6 +1105,10 @@ __FEED_JS__
     // ここに出ていないと、字幕が届いていないことに気づけない。
     if (s.failed > 0) { label += "（失敗 " + s.failed + "）"; cls = "bad"; }
     pill.textContent = label; pill.className = "pill " + cls;
+    // 畳んだままでも、動いているかどうかが読めるようにする。
+    wayZoomState.textContent = s.dry_run ? "--dry-run"
+                             : s.active ? "送信中"
+                             : s.has_token ? "登録済み" : "";
 
     const parts = [];
     parts.push(s.has_token ? ("登録済み（会議 " + s.meeting + "）") : "トークン未登録");
@@ -1068,6 +1129,9 @@ __FEED_JS__
     const cls2 = { off: "off", starting: "warn", on: "on", error: "bad" };
     tpill.textContent = names[st] || "配信: —";
     tpill.className = "pill " + (cls2[st] || "off");
+    wayNetState.textContent = st === "on" ? "配信中"
+                            : st === "starting" ? "起動中"
+                            : st === "error" ? "配信の失敗" : "";
     // 経路を触れるのは止まっている間だけ。張ったまま持ち替えると、消せない
     // トンネルが残る。
     if (document.activeElement !== tkind && t.kind) { tkind.value = t.kind; }
@@ -1092,6 +1156,11 @@ __FEED_JS__
     }
     if (t.error) { terr.textContent = t.error; terrBox.style.display = ""; }
     else { terrBox.style.display = "none"; }
+
+    // 会議の側で何か失敗していたら、タブに印を付ける。設定を開いたままでも
+    // 気づけるようにするためである。
+    const bad = !!(a.error || t.error || s.failed > 0 || (s.schedule || {}).failure);
+    tabRun.classList.toggle("alert", bad);
 
     // --- 予定 ---
     drawSchedule(s.schedule || {});
@@ -1659,6 +1728,7 @@ __COPY_JS__
     pill.textContent = "終了した"; pill.className = "pill off";
     tpill.textContent = "配信: 停止"; tpill.className = "pill off";
     zoomState.textContent = ""; qrbox.classList.remove("on");
+    wayNetState.textContent = ""; wayZoomState.textContent = "";
     gpill.textContent = "生成: 停止"; gpill.className = "pill off";
     genState.textContent = "";
     for (const b of [save, start, stop, quit, tstart, tstop, gstart, gstop,

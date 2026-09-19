@@ -201,6 +201,23 @@ EN: dict[str, str] = {
 
     # --- 会議の記録 ---
     "会議の記録": "Meeting record",
+    # --- パネルのタブと、まとめ直した見出し ---
+    "いまの状態": "Right now",
+    "この会議": "This meeting",
+    "見せ方": "How people see it",
+    "3つとも同時に使える。": "All three can run at the same time.",
+    "ブラウザで見てもらう": "In a browser",
+    "Zoomの字幕に流す": "Into the Zoom captions",
+    "設定": "Setup",
+    "音量メーターは会議の側に出る。": "The level meter is on the Meetings tab.",
+    "予定の入力・追加・削除は別の画面で行う。":
+        "Add, edit and delete meetings on the other page. ",
+    "向きは選んだ時点で切り替わる。": "The direction changes the moment you pick it. ",
+    "起動中": "starting",
+    "配信の失敗": "delivery failed",
+    "送信中": "sending",
+    "登録済み": "token set",
+
     "途中まで読む": "Read it so far",
     "パスをコピー": "Copy the path",
 
@@ -396,7 +413,9 @@ EN: dict[str, str] = {
         "Started with --from-file, so the input device cannot be changed.",
 
     # --- 単独で出る短い語。**長い鍵を先に置き換えたあとに残ったものだけが当たる** ---
-    "文字起こし": "Source",
+    "元の言語を表示": "Show original language",
+    "訳す前の言葉を、訳文の上に小さく出す":
+        "Show the words as spoken, small, above each translation",
     " 語": " terms",
     "開始": "Start",
     "停止": "Stop",

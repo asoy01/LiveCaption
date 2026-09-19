@@ -278,6 +278,27 @@ http://localhost:8080/v/<random>   viewer page    <- share this one
 no API is called until you press start. You can launch LiveCaption before you join
 the meeting, and the conversation during setup does not reach the recogniser.
 
+#### Reading the control page
+
+Captions are on the left, controls on the right. Drag the divider to change the
+width; double-click it to go back to the default.
+
+The right side has two tabs.
+
+| Tab | What is in it | When you look at it |
+|---|---|---|
+| **Meetings** | Right now, this meeting, how people see it, meeting record | Every meeting |
+| **Setup** | Audio input, glossary, delay tuning, quit | When you set the machine up |
+
+**Everything you touch on the day is under Meetings.** You rarely open Setup
+once it is right.
+
+**A red dot on the Meetings tab means something there has failed.** It is there
+so you notice while Setup is open.
+
+The three entries under "How people see it" are folded. **Even folded, the right
+of each row says `delivering` or `sending`, so you can tell how many are running.**
+
 ### Step 2. Join the meeting from the caption PC
 
 Check three things in the meeting software on the caption PC.
@@ -299,8 +320,8 @@ record are never translated. The viewer page is in English already.
 
 ### Step 3. Check the input device
 
-On the control page, look at **音声の入力** (audio input). It should be
-`CABLE Output`. If it is not, pick the right one from the list. **The change
+Open the **Setup** tab on the control page and look at **音声の入力** (audio
+input). It should be `CABLE Output`. If it is not, pick the right one from the list. **The change
 takes effect as soon as you pick it.** There is no apply button. Press
 **一覧を更新** (refresh the list) if you plugged in a device just now.
 
@@ -315,8 +336,8 @@ Any of the three works. MME is the default and is fine.
 
 ### Step 4. Check the direction, then start caption generation
 
-Look at **字幕の向き** (caption direction) on the control page. **Choose it for
-each meeting.**
+On the **Meetings** tab, look at **字幕の向き** (caption direction) under "This
+meeting". **Choose it for each meeting.**
 
 | Choice | What kind of meeting | Captions you get |
 |---|---|---|
@@ -334,9 +355,9 @@ covers a meeting that is English in the first half and Japanese in the second.**
 **The next start uses the same direction.** LiveCaption remembers your last
 choice.
 
-Then press **開始** (start) under **字幕の生成** (caption generation).
+Then press **開始** (start) at the top, under **いまの状態** (right now).
 
-**Watch the level meter.** If nobody has spoken yet, the meter does not move.
+**Watch the level meter just below it.** If nobody has spoken yet, the meter does not move.
 Ask someone to speak. If the meter stays flat while a person is speaking, the
 input device is wrong. Pick another one. You can change the device while
 captions are being generated.
@@ -360,7 +381,8 @@ The token can only be made during a meeting, and only by a host or a co-host.
    **"Copy the API token" does not appear until manual captions are on**
 2. From the same place, the host chooses **"Copy the API token"**
 3. The host sends that token to the caption PC in the meeting chat
-4. Paste the token into **APIトークン** under **Zoom字幕** on the control page and
+4. Under **How people see it**, open **Zoomの字幕に流す** (into the Zoom captions),
+   paste the token into **APIトークン**, and
    press **登録** (register). The field is masked, and it clears after you
    register
 5. Press **開始** (start). Three warm-up captions are sent first
@@ -386,7 +408,8 @@ status and no explanation. Get a new token and register it again.
 
 This needs no host rights, and the captions never leave your network.
 
-1. Press **閲覧画面を開く** (open the viewer page) under **画面共有で見せる**
+1. Under **How people see it**, open **画面共有で見せる** (show on a shared
+   screen) and press **閲覧画面を開く** (open the viewer page)
 2. Press **F11** to make the viewer page full screen
 3. Share that browser window in your meeting software
 
@@ -399,7 +422,8 @@ fewer lines (`config.WEB_LINES`).
 This needs no host rights either. The caption PC opens an outgoing tunnel and
 gives you a public URL and a QR code.
 
-**There are two routes.** Pick one under **Route** (経路).
+**There are two routes.** Open **ブラウザで見てもらう** (in a browser) under
+**How people see it**, and pick one under **Route** (経路).
 
 | | Cloudflare | Tailscale |
 |---|---|---|
@@ -413,8 +437,7 @@ the URL in the invitation.
 ##### C-1. Hand out on the spot (Cloudflare)
 
 1. Set **Route** to **Cloudflare**
-2. Press **Start delivering** (配信を開始) under **Delivery to participants**.
-   The status shows `配信: 起動中…` and then `配信: 中`
+2. Press **Start delivering** (配信を開始). The status shows `配信: 起動中…` and then `配信: 中`
 3. Show the QR code to the people who want captions, or send them the URL.
    **Press Copy the URL** and paste it into the meeting chat
 4. To hand out the QR code as a picture, press **Save the QR code**. Your
@@ -466,8 +489,9 @@ Say this at the start of the meeting, to the people who will read the captions:
 
 ### Step 7. End the meeting
 
-Press **終了** (quit) under **アプリの終了** on the control page. The browser tab
-and the terminal window both close.
+Open the **Setup** tab and press **終了** (quit) under **アプリの終了**. The
+browser tab and the terminal window both close. If you started it from the task
+tray, right-clicking the icon and choosing quit does the same.
 
 ---
 
@@ -489,8 +513,9 @@ the host can create it, during the meeting. Section 4.4 covers how to receive it
 
 ### 4.1 Entering a schedule
 
-On the control page, under **Meetings**, press **Schedule** on a meeting row. An
-editor opens inside the row.
+Press **Manage meetings** under "This meeting" on the control page. The
+management page opens in another tab. Press **Schedule** on a meeting row and an
+editor opens inside it.
 
 | Field | Meaning |
 |---|---|
@@ -509,10 +534,11 @@ Weekly is the only repeat. There is no support for more complex schedules.
 
 ### 4.2 Watching what it does
 
-**Coming up** appears at the top of the control page.
+**Right now** is at the top of the **Meetings** tab.
 
 ```
-Coming up
+Right now
+[Start] [Stop]  Stopped
 Waiting
 2026-09-25 10:00  Morning meeting    in 23 min
 2026-09-27 13:00  Collaborators      in 2 d 3 h
@@ -658,7 +684,7 @@ can recover the correct term from them.
 
 ### Choose tables for each meeting
 
-The **用語集** (glossary) row on the control page is folded. **You can see what is
+The **用語集** (glossary) row on the **Setup** tab is folded. **You can see what is
 in use without opening it**: the table names and the total word count. Press the
 row to open the list, and tick the tables you want. **The change takes effect as
 soon as you tick.**
@@ -820,7 +846,7 @@ not have to edit the code.
 
 ### From the control page
 
-Press the **遅延の調整** (delay tuning) row to open it. **The row is folded
+On the **Setup** tab, press the **遅延の調整** (delay tuning) row to open it. **The row is folded
 because you do not change these values often.**
 
 - Edit a number and leave the field. **The change takes effect at once. No
@@ -878,9 +904,9 @@ ignores a bad value silently**, so read the start-up output.
 
 | Symptom | Where to look |
 |---|---|
-| Nothing happens. No log lines | **Did you press 開始 under 字幕の生成?** Launching LiveCaption is not enough |
+| Nothing happens. No log lines | **Did you press 開始 under いまの状態?** Launching LiveCaption is not enough |
 | `CABLE Output` is not in the list | Is VB-CABLE installed? Did you restart the PC? |
-| The level meter does not move | The speaker setting in your meeting software. Both devices at 48000 Hz. **Is 音声の入力 set to `CABLE Output`?** |
+| The level meter does not move | The speaker setting in your meeting software. Both devices at 48000 Hz. **Is 音声の入力 on the Setup tab set to `CABLE Output`?** |
 | "cannot open the input" | Another app may have the device. Does the device accept 48000 Hz? Pick a different input |
 | No recognition lines | `OPENAI_API_KEY` in `.env`. **Is `.env` in the top folder of the repository, next to `pixi.toml`? Is it named `.env.txt` by mistake?** Also check the network |
 | Recognition lines but no caption lines | A translation error should be on the screen |
@@ -892,7 +918,7 @@ ignores a bad value silently**, so read the start-up output.
 | Captions go by too fast to read | Ask the readers to make the caption area taller. Lower `config.FORCE_CUT_CHARS` |
 | The recogniser reconnects again and again | The network. Turn off incoming video in the meeting software on the caption PC. Try another line |
 | Captions stopped after you connected remotely | **Did you connect with RDP?** It cuts the audio path (see 2.9) |
-| Nothing starts at the scheduled time | **Is "Run this meeting automatically" ticked?** It is off by default. Check that the meeting is listed under Coming up |
+| Nothing starts at the scheduled time | **Is "Run this meeting automatically" ticked?** It is off by default. Check that the meeting is listed under Right now |
 | It joined Zoom but no sound arrives | **Is the "Join with Computer Audio" prompt still shown?** (see 4.3). It may also be stuck in the waiting room, or the passcode may be wrong |
 | It does not leave when the meeting ends | Check the silence-stop setting. The hard cap always stops it |
 | It keeps running after the meeting ended early | If somebody left a microphone open, the sound continues and it never falls silent. Press Stop now |
