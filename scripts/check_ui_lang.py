@@ -33,7 +33,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from live_caption import i18n, schedule, web  # noqa: E402
+from live_caption import i18n, meetings_page, schedule, web  # noqa: E402
 
 HISTORY = 300
 
@@ -56,6 +56,15 @@ def build_page() -> str:
         .replace("__HISTORY__", str(HISTORY))
         .replace("__SOURCE_DEFAULT__", "false"),
     )
+
+
+def build_meetings_page() -> str:
+    """会議の管理画面。**操作画面とは別に調べる。**
+
+    こちらは `web.CONTROL_BODY` に入っていないので、操作画面だけを見ていると
+    訳し残しも構文エラーも素通りする。
+    """
+    return web._head("Live Captions ・ 会議の管理", 8) + meetings_page.BODY
 
 
 def scripts_of(page: str) -> str:
@@ -135,7 +144,9 @@ def main() -> int:
               "書けない。説明は docs/manual.ja.md に置くこと。")
         return 1
 
-    broken = check_syntax(page)
+    meets = build_meetings_page()
+
+    broken = check_syntax(page) + check_syntax(meets)
     if broken:
         print("操作画面のスクリプトが構文エラーになる。このままでは全部のボタンが効かない。")
         for item in broken:
@@ -148,6 +159,8 @@ def main() -> int:
     print("スクリプトの構文: 日本語・英語ともに通る。")
 
     left = i18n.remaining_japanese(strip_comments(i18n.apply(page, "en")))
+    left += [w for w in i18n.remaining_japanese(
+        strip_comments(i18n.apply(meets, "en"))) if w not in left]
     notes = check_scheduler_strings()
     if not left and not notes:
         print("訳し残しは無い。")

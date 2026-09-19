@@ -141,6 +141,29 @@ EN: dict[str, str] = {
     "　自動は切り": "  automatic off",
     "　Zoomに入る": "  joins Zoom",
 
+    # --- 会議の管理（別画面） ---
+    "会議の管理": "Manage meetings",
+    "会議ごとに別の閲覧URLを使う。": "Each meeting gets its own viewer URL.",
+    "予定を入れておけば、時刻が来たときに自動で回る。":
+        "Enter a schedule and it runs by itself at that time.",
+    "配信する会議: ": "Now delivering: ",
+    "配信する会議": "Meeting being delivered",
+    "予定の入力・追加・削除は、別の画面で行う。":
+        "Adding, deleting and scheduling happen on a separate page.",
+    "この欄は狭すぎる。": "This column is too narrow for that.",
+    "操作画面に戻る": "Back to the control page",
+    "作成 ": "created ",
+    "配信中": "delivering",
+    "同じ曜日・同じ時刻で繰り返す": "Repeat on the same weekday at the same time",
+    "Zoomの招待URLか会議番号。空なら自分では入らない":
+        "Zoom invitation URL or meeting number. Empty: it does not join",
+    "Zoomのリンク": "Zoom link",
+    "参加者用": "Participants",
+    "ホスト用": "Host",
+    "出す": "Show",
+    "失敗しました（": "Failed (",
+    "本体が終わっただけ": "the app just stopped",
+
     # --- 会議 ---
     "会議": "Meetings",
     "会議ごとに別のURLを使う。": "Each meeting gets its own URL.",

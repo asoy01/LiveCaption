@@ -57,6 +57,7 @@ from urllib.parse import parse_qs, urlparse
 
 from . import captions as captions_mod
 from . import config, i18n, meetings, tunnel as tunnel_mod
+from . import meetings_page
 
 # 画面に残す履歴の数。これを超えた分は古いほうから捨てる。
 # 途中から開いた参加者に、直前の流れが見えるだけあればよい。
@@ -679,16 +680,22 @@ CONTROL_BODY = """
 
   <div class="grp">
     <h2>会議<span class="c" id="meetCount"></span></h2>
-    <div class="row2 hint">
-      会議ごとに別のURLを使う。<b>配信するのは選んである1つだけで、
-      他の会議のURLは開けない。</b>
+    <div class="row2">
+      <label class="lbl" for="meetPick">配信する会議</label>
+      <select id="meetPick"></select>
+    </div>
+    <div class="row2 hint" id="meetWhen"></div>
+    <div class="row2" id="meetUrlRow" style="display:none">
+      <span class="url" id="meetUrl"></span>
+      <button class="copybtn" data-copy="meetUrl">URLをコピー</button>
+      <button class="savebtn" id="meetQr">QRコードを保存</button>
     </div>
     <div class="row2">
-      <input type="text" id="meetName" placeholder="会議の名前（例: KAGRA朝礼 9/25）">
-      <button id="meetAdd" class="primary">追加</button>
+      <button id="meetManage" class="primary">会議の管理</button>
     </div>
-    <div class="list" id="meetList"></div>
-    <div class="row2 hint" id="meetHint"></div>
+    <div class="row2 hint">
+      予定の入力・追加・削除は、別の画面で行う。<b>この欄は狭すぎる。</b>
+    </div>
   </div>
 
   <div class="grp">
@@ -847,14 +854,13 @@ __FEED_JS__
   const qrbox = $("qrbox"), qr = $("qr"), publicUrl = $("publicUrl");
   const qrsave = $("qrsave");
   const tkind = $("tkind"), tkindHint = $("tkindHint");
-  const meetName = $("meetName"), meetAdd = $("meetAdd");
-  const meetList = $("meetList"), meetHint = $("meetHint"), meetCount = $("meetCount");
+  const meetPick = $("meetPick"), meetCount = $("meetCount");
+  const meetWhen = $("meetWhen"), meetUrl = $("meetUrl");
+  const meetUrlRow = $("meetUrlRow"), meetQr = $("meetQr");
+  const meetManage = $("meetManage");
   const schedState = $("schedState"), schedNext = $("schedNext");
   const schedFail = $("schedFail"), schedFailRow = $("schedFailRow");
   const schedAck = $("schedAck"), schedStop = $("schedStop"), schedSkip = $("schedSkip");
-  // 予定を開いている会議のID。**開いている間は一覧を描き直さない。**
-  // 描き直すと、打ちかけの値が手の下で消える。
-  let meetEditing = "";
   // 一覧を組み直すと、打ちかけの名前や押した場所が飛ぶ。中身が変わったときだけ描く。
   let meetSeen = "";
   const publicUrlRow = $("publicUrlRow"), tunnelHint = $("tunnelHint");
@@ -1503,278 +1509,60 @@ __FEED_JS__
   });
 
   // --- 会議 ---------------------------------------------------------------
-  // **一覧は中身が変わったときだけ描き直す。** 毎秒組み直すと、打ちかけの名前や
-  // 押そうとしていたボタンが手の下で消える。
+  // **予定の入力はここに置かない。** 右の欄は狭すぎて、日時・Zoomのリンク・
+  // 3つの数値・印を並べられない。別の画面（/meetings）に出す。
+  // ここに残すのは、当日に使うものだけである。どれを配信するかと、そのURL。
   function drawMeetings(m, t, sc) {
     const items = m.items || [];
-    // **予定を開いている間は描き直さない。** 打ちかけの日時や会議番号が
-    // 手の下で消える。閉じた時点で描き直される。
-    if (meetEditing) { return; }
     const key = JSON.stringify([m.active, items]);
-    if (key === meetSeen) { return; }
-    meetSeen = key;
+    if (key !== meetSeen) {
+      meetSeen = key;
+      meetPick.textContent = "";
+      for (const it of items) {
+        const opt = document.createElement("option");
+        opt.value = it.id;
+        opt.textContent = it.name;
+        meetPick.appendChild(opt);
+      }
+      meetCount.textContent = items.length > 1 ? "（" + items.length + "）" : "";
+    }
+    if (document.activeElement !== meetPick) { meetPick.value = m.active; }
 
-    meetList.textContent = "";
-    meetCount.textContent = items.length > 1 ? "（" + items.length + "）" : "";
-    let picked = null;
-    for (const it of items) {
-      const row = document.createElement("div");
-      row.className = "meet" + (it.id === m.active ? " on" : "");
-      if (it.id === m.active) { picked = row; }
-
-      const pick = document.createElement("input");
-      pick.type = "radio"; pick.name = "meet"; pick.checked = (it.id === m.active);
-      pick.title = "この会議を配信する";
-      pick.addEventListener("change", async () => {
-        try {
-          showStatus(await post("/api/meetings", { action: "select", id: it.id }));
-          say("配信する会議: " + it.name, true);
-        } catch (e) { say(String(e.message), false); }
-      });
-      row.appendChild(pick);
-
-      const nm = document.createElement("span");
-      nm.className = "nm"; nm.textContent = it.name; row.appendChild(nm);
-
-      const when = document.createElement("span");
-      when.className = "when"; when.textContent = it.created; row.appendChild(when);
-
-      // 予定の要約。無人で回す印が立っている会議は、ここで見分ける。
-      if (it.auto && it.start) { row.classList.add("armed"); }
-      const sum = document.createElement("span");
-      sum.className = "when2";
-      sum.textContent = it.start
-        ? (it.repeat === "weekly" ? "毎週 " : "") + it.start
-          + (it.auto ? "　自動で回す" : "　自動は切り")
-          + (it.zoom ? "　Zoomに入る" : "")
+    const live = items.find((x) => x.id === m.active);
+    meetWhen.textContent = !live ? ""
+      : live.start
+        ? (live.repeat === "weekly" ? "毎週 " : "") + live.start
+          + (live.auto ? "　自動で回す" : "　自動は切り")
+          + (live.zoom ? "　Zoomに入る" : "")
         : "予定なし";
-      row.appendChild(sum);
 
-      if (it.url) {
-        const u = document.createElement("span");
-        u.className = "url"; u.id = "murl-" + it.id; u.textContent = it.url;
-        row.appendChild(u);
-
-        const cp = document.createElement("button");
-        cp.className = "copybtn"; cp.dataset.copy = u.id; cp.textContent = "URLをコピー";
-        row.appendChild(cp);
-
-        const sv = document.createElement("button");
-        sv.className = "savebtn"; sv.textContent = "QRコードを保存";
-        sv.addEventListener("click", () => {
-          const a = document.createElement("a");
-          a.href = "/api/qr?dl=1&id=" + encodeURIComponent(it.id)
-                 + "&name=" + encodeURIComponent(it.name);
-          a.download = "livecaption-qr.png";
-          document.body.appendChild(a); a.click(); a.remove();
-        });
-        row.appendChild(sv);
-      } else {
-        const none = document.createElement("span");
-        none.className = "none";
-        none.textContent = t.preannounce
-          ? "URLがまだ決まらない。Tailscale に繋がっているか確かめること。"
-          : "Cloudflare ではURLが毎回変わる。配信を始めると出る。";
-        row.appendChild(none);
-      }
-
-      const edit = document.createElement("button");
-      edit.className = "savebtn"; edit.textContent = "予定";
-      edit.addEventListener("click", () => {
-        if (meetEditing === it.id) { meetEditing = ""; meetSeen = ""; refresh(); return; }
-        meetEditing = it.id;
-        row.appendChild(buildEditor(it));
-        edit.disabled = true;
-      });
-      row.appendChild(edit);
-
-      const del = document.createElement("button");
-      del.className = "savebtn"; del.textContent = "削除";
-      // **最後の1つも消せる。** 終わった会議を全部片付けられるようにする。
-      // 閲覧URLは要るので、消したあとに代わりが1つ作られる。
-      const last = (items.length === 1);
-      del.addEventListener("click", async () => {
-        if (!confirm("この会議を消す: " + it.name + "。このURLは開けなくなる。よろしいですか。")) { return; }
-        try {
-          const st = await post("/api/meetings", { action: "delete", id: it.id });
-          meetEditing = "";
-          showStatus(st);
-          say(last ? "会議を消した。閲覧URLが要るので、新しい会議を1つ作った。"
-                   : "会議を消した: " + it.name, true);
-        } catch (e) { say(String(e.message), false); }
-      });
-      row.appendChild(del);
-
-      meetList.appendChild(row);
-    }
-    meetHint.innerHTML = t.preannounce
-      ? "会議のURLはいつでも作れる。Zoomのリンクと一緒に案内に載せられる。"
-      : "前もってURLを配るには、上の経路を <b>Tailscale</b> にすること。";
-
-    // **送れるようになったら、それが見えるようにする。** 枠の中に収まっている
-    // うちは、上下の線を出さない。線だけあって送れないのは、かえって紛らわしい。
-    const more = meetList.scrollHeight > meetList.clientHeight;
-    meetList.classList.toggle("more", more);
-    // **配信する会議を、隠れたままにしない。** 一覧が長くなると、選んである行が
-    // 枠の外にあることがある。当日いちばん見たいのはそこである。
-    //
-    // **`scrollIntoView` は使わない。** 親も一緒に送るので、右の欄まで動いて
-    // 「会議」から下しか見えなくなる。この枠の中だけを動かす。
-    if (more && picked) {
-      const top = picked.offsetTop;
-      const bottom = top + picked.offsetHeight;
-      if (top < meetList.scrollTop) {
-        meetList.scrollTop = top;
-      } else if (bottom > meetList.scrollTop + meetList.clientHeight) {
-        meetList.scrollTop = bottom - meetList.clientHeight;
-      }
+    if (live && live.url) {
+      meetUrl.textContent = live.url;
+      meetUrlRow.style.display = "";
+    } else {
+      meetUrlRow.style.display = "none";
     }
   }
 
-  // 予定の入力欄。**行の中に開く。** この画面に重ねる窓は1つも無い。
-  function buildEditor(it) {
-    const box = document.createElement("div");
-    box.className = "sched";
-
-    function field(labelText, node) {
-      const l = document.createElement("label");
-      l.appendChild(document.createTextNode(labelText));
-      l.appendChild(node);
-      box.appendChild(l);
-      return node;
-    }
-    function num(labelText, value, min, max, step) {
-      const i = document.createElement("input");
-      i.type = "number"; i.value = value; i.min = min; i.max = max;
-      if (step) { i.step = step; }
-      return field(labelText, i);
-    }
-
-    const start = document.createElement("input");
-    start.type = "datetime-local";
-    // 画面の値は "2026-09-25T09:30"。送るときに T を空白へ直す。
-    start.value = it.start ? it.start.replace(" ", "T") : "";
-    field("開始", start);
-
-    const rep = document.createElement("input");
-    rep.type = "checkbox"; rep.checked = (it.repeat === "weekly");
-    field("毎週", rep);
-
-    const zoom = document.createElement("input");
-    zoom.type = "text"; zoom.className = "wide";
-    zoom.placeholder = "Zoomの招待URLか会議番号（空なら自分では入らない）";
-    zoom.value = it.zoom || "";
-    field("Zoom", zoom);
-
-    const lead = num("何分前から", it.lead_min, 0, 60);
-    const silence = num("無音で終了（分）", it.silence_min, 0.5, 240, "0.5");
-    const cap = num("安全上限（分）", it.max_min, 5, 1440);
-
-    const autoWrap = document.createElement("label");
-    autoWrap.className = "auto";
-    const auto = document.createElement("input");
-    auto.type = "checkbox"; auto.checked = !!it.auto;
-    autoWrap.appendChild(auto);
-    autoWrap.appendChild(document.createTextNode(
-      "この会議を自動で回す（時刻が来たら配信を始める）"));
-    box.appendChild(autoWrap);
-
-    const warn = document.createElement("div");
-    warn.className = "warn2";
-    warn.textContent = "自動で回すと、人が見ていなくても字幕が外に出る。"
-      + "外に出せない内容の会議では印を付けないこと。";
-    box.appendChild(warn);
-
-    const save = document.createElement("button");
-    save.className = "primary savebtn"; save.textContent = "予定を保存";
-    save.addEventListener("click", async () => {
-      save.disabled = true;
-      try {
-        const fields = {
-          start: start.value,
-          repeat: rep.checked ? "weekly" : "",
-          zoom: zoom.value,
-          lead_min: Number(lead.value),
-          silence_min: Number(silence.value),
-          max_min: Number(cap.value),
-          auto: auto.checked,
-        };
-        const st = await post("/api/meetings",
-                              { action: "schedule", id: it.id, fields });
-        // **通ってから閉じる。** 先に閉じると、断られたときに入力欄が消えて
-        // 一覧が描き直され、「保存したのに予定なしに戻った」ように見える。
-        meetEditing = "";
-        meetSeen = "";
-        showStatus(st);
-        say("予定を保存した: " + it.name, true);
-      } catch (e) { say(String(e.message), false); save.disabled = false; }
-    });
-    box.appendChild(save);
-
-    const cancel = document.createElement("button");
-    cancel.className = "savebtn"; cancel.textContent = "やめる";
-    cancel.addEventListener("click", () => {
-      meetEditing = ""; meetSeen = ""; refresh();
-    });
-    box.appendChild(cancel);
-
-    // ホスト用URL。**参加者用と取り違えて配るのが、この機能でいちばん怖い。**
-    // 畳んでおき、赤で囲って、反射で押させない。
-    const host = document.createElement("div");
-    host.className = "hostrow";
-    const show = document.createElement("button");
-    show.className = "savebtn"; show.textContent = "ホスト用URLを出す";
-    show.addEventListener("click", () => {
-      show.remove();
-      const w = document.createElement("div");
-      w.className = "warn2";
-      w.textContent = "ホストにだけ送ること。参加者用のURLと取り違えないこと。"
-        + "このURLを持つ人は、この会議の字幕をZoomに流し込める。";
-      host.appendChild(w);
-      const u = document.createElement("span");
-      u.className = "url"; u.id = "hurl-" + it.id;
-      u.textContent = it.host_url
-        || "経路を Tailscale にすると出る（Cloudflare では出さない）。";
-      host.appendChild(u);
-      if (it.host_url) {
-        const cp = document.createElement("button");
-        cp.className = "copybtn"; cp.dataset.copy = u.id;
-        cp.textContent = "URLをコピー";
-        host.appendChild(cp);
-      }
-      if (it.host_taken) {
-        const re = document.createElement("button");
-        re.className = "savebtn"; re.textContent = "もう一度受け付ける";
-        re.addEventListener("click", async () => {
-          try {
-            const st = await post("/api/meetings",
-                                  { action: "host_rearm", id: it.id });
-            meetEditing = ""; meetSeen = "";
-            showStatus(st);
-            say("ホスト用の受け口をもう一度開いた。", true);
-          } catch (e) { say(String(e.message), false); }
-        });
-        host.appendChild(re);
-      }
-    });
-    host.appendChild(show);
-    box.appendChild(host);
-    return box;
-  }
-
-  async function addMeeting() {
-    const name = meetName.value.trim();
-    if (!name) { say("会議の名前を入れること。", false); return; }
-    meetAdd.disabled = true;
+  meetPick.addEventListener("change", async () => {
     try {
-      showStatus(await post("/api/meetings", { action: "create", name }));
-      meetName.value = "";
-      say("会議を作った: " + name + "。配信する会議は変えていない。", true);
+      showStatus(await post("/api/meetings",
+                            { action: "select", id: meetPick.value }));
+      say("配信する会議: " + meetPick.options[meetPick.selectedIndex].text, true);
     } catch (e) { say(String(e.message), false); }
-    meetAdd.disabled = false;
-  }
-  meetAdd.addEventListener("click", addMeeting);
-  meetName.addEventListener("keydown", (e) => { if (e.key === "Enter") { addMeeting(); } });
+  });
+
+  meetQr.addEventListener("click", () => {
+    const a = document.createElement("a");
+    a.href = "/api/qr?dl=1&id=" + encodeURIComponent(meetPick.value)
+           + "&name=" + encodeURIComponent(
+               meetPick.options[meetPick.selectedIndex].text);
+    a.download = "livecaption-qr.png";
+    document.body.appendChild(a); a.click(); a.remove();
+  });
+
+  // **別のタブで開く。** 操作画面は会議中に見ているので、置き換えない。
+  meetManage.addEventListener("click", () => { window.open("/meetings", "_blank"); });
 
   openViewer.addEventListener("click", () => { window.open(viewerUrl.textContent, "_blank"); });
 
@@ -2656,6 +2444,12 @@ def _viewer_handler(web: WebCaptions):
     return Handler
 
 
+def _meetings_page(web: WebCaptions, lang: str) -> bytes:
+    """会議の管理画面。**要求のたびに組み立てる**（言語の切り替えのため）。"""
+    page = _head("Live Captions ・ 会議の管理", web.lines) + meetings_page.BODY
+    return i18n.apply(page, lang).encode("utf-8")
+
+
 def _control_page(web: WebCaptions, lang: str) -> bytes:
     """操作画面を組み立てる。
 
@@ -2710,6 +2504,11 @@ def _control_handler(web: WebCaptions):
             if u.path in ("/", "/index.html"):
                 self._send_bytes(200, "text/html; charset=utf-8",
                                  _control_page(web, config.UI_LANG))
+            elif u.path == "/meetings":
+                # 会議の管理。**操作ポートにしか無い。** 会議の名前もホスト用URLも
+                # 外に出してよいものではない。
+                self._send_bytes(200, "text/html; charset=utf-8",
+                                 _meetings_page(web, config.UI_LANG))
             elif u.path == "/api/lines":
                 self._send_lines(web, parse_qs(u.query))
             elif u.path == "/api/status":
