@@ -19,14 +19,33 @@ services:
       context: .
       dockerfile: docker/Dockerfile
     image: livecaption-engine:dev
+    # 会議で使う形。**`--device pulse` を渡すこと。** 既定の "CABLE Output" は
+    # Windows の仮想ケーブルの名前で、コンテナには無い。
+    # **閲覧画面は 0.0.0.0 で待ち受ける。** コンテナの中の話なので、外に出るのは
+    # 下の `ports` が通す分（ホストの 127.0.0.1）と、配信を始めたとき（Funnel）
+    # だけである。操作画面はこの設定の影響を受けない。
+    command:
+      - "--web"
+      - "--no-browser"
+      - "--control-bind"
+      - "--web-bind"
+      - "0.0.0.0"
+      - "--device"
+      - "pulse"
     env_file:
       - path: .env
         required: false
     environment:
       TZ: Asia/Tokyo
       # tailnet 上の名前。**変えると配ってあった閲覧URLが死ぬ。**
+      # **用語対訳表は state ボリュームの中に置く。** 操作画面から足したり
+      # 消したりする利用者データなので、イメージに焼き込むと作り直しで消える。
+      LIVECAPTION_GLOSSARY_DIR: /app/local/glossary
       TS_HOSTNAME: livecaption
       # TS_AUTHKEY は .env から入る（署名済みの鍵）。
+      # 中の画面を人が触りたいとき（Zoomへのサインインなど）に 1 にする。
+      # **認証が無いので、常用しないこと。**
+      LIVECAPTION_VNC: "${LIVECAPTION_VNC:-0}"
     # **userspace-networking では足りない。** 操作画面を tailnet に出すには、
     # 100.x のアドレスが実際のインターフェースに載っている必要がある。
     cap_add:
@@ -44,7 +63,9 @@ services:
       # **Tailscale の状態。消すと署名からやり直しになる。**
       # ホスト名も変わるので、配ってあった閲覧URLが死ぬ。
       - tailscale:/var/lib/tailscale
-      # 段階1の試験用の音。段階3で本物の会議の音に置き換わる。
+      # **Zoom の設定とサインイン。** 消すとサインインのやり直しになる。
+      - zoomhome:/home/livecaption
+      # 試験用の音。`--from-file` で使う。
       - ./local/SampleRecordings/_wav24k:/samples:ro
     ports:
       # **閲覧画面だけを出す。** 操作画面(8081)はコンテナの中の 127.0.0.1 に
@@ -57,3 +78,4 @@ services:
 volumes:
   state:
   tailscale:
+  zoomhome:

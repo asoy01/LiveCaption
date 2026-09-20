@@ -30,6 +30,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,10 +44,32 @@ class Entry:
     wrong: tuple[str, ...]
 
 
+#: 表の名前に使ってよい文字。**操作画面には認証が無い。**
+#: 名前はそのままファイル名になるので、ここを緩めるとディレクトリを遡られる。
+_NAME_OK = re.compile(r"\A[A-Za-z0-9_\-. ぁ-んァ-ヶ一-龠々ー]{1,64}\Z")
+
+#: アップロードを受ける上限。用語表は数百行のテキストなので、1 MB あれば余る。
+MAX_UPLOAD_BYTES = 1 << 20
+
+
+def check_name(name: str) -> str:
+    """表の名前として使える形に直す。使えなければ `ValueError`。
+
+    **`.tsv` を外した「名前」だけを扱う。** パスの区切りも `..` も通さない。
+    """
+    stem = name[:-4] if name.lower().endswith(".tsv") else name
+    stem = stem.strip()
+    if not stem or not _NAME_OK.match(stem) or stem in {".", ".."}:
+        raise ValueError(
+            f"用語集の名前として使えない: 「{name}」\n"
+            "  英数字・かな・漢字・` _ - . `だけ、64文字までにすること。"
+        )
+    return stem
+
+
 def path_of(name: str) -> Path:
     """名前から表のファイルの場所を作る。拡張子は付けても付けなくてもよい。"""
-    stem = name[:-4] if name.lower().endswith(".tsv") else name
-    return config.GLOSSARY_DIR / f"{stem}.tsv"
+    return config.glossary_dir() / f"{check_name(name)}.tsv"
 
 
 def available() -> list[dict]:
@@ -55,17 +78,79 @@ def available() -> list[dict]:
     語数まで返す。**どれを選ぶと何語になるかが見えないと、選べない。**
     """
     out = []
-    if not config.GLOSSARY_DIR.is_dir():
+    root = config.glossary_dir()
+    if not root.is_dir():
         return out
-    for p in sorted(config.GLOSSARY_DIR.glob("*.tsv"), key=lambda q: q.name.lower()):
+    for p in sorted(root.glob("*.tsv"), key=lambda q: q.name.lower()):
         out.append({"name": p.stem, "terms": len(load_file(p))})
     return out
 
 
-def load_file(path: Path) -> list[Entry]:
-    """1つの表を読む。"""
+def read_text(name: str) -> str:
+    """表の中身をそのまま返す。ダウンロードに使う。"""
+    path = path_of(name)
+    if not path.is_file():
+        raise ValueError(f"そういう名前の用語集は無い: 「{name}」")
+    return path.read_text(encoding="utf-8")
+
+
+def save_text(name: str, text: str) -> str:
+    """表を書き込む。同じ名前があれば置き換える。保存した名前を返す。
+
+    **中身を確かめてから書く。** 操作画面から入る唯一の書き込み口なので、
+    壊れた表を置いて会議の当日に気づく、ということが無いようにする。
+    """
+    stem = check_name(name)
+    raw = text.encode("utf-8")
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise ValueError(
+            f"用語集が大きすぎる（{len(raw)} バイト）。"
+            f"{MAX_UPLOAD_BYTES} バイトまでにすること。"
+        )
+    if "\x00" in text:
+        raise ValueError("テキストではない。.tsv を渡すこと。")
+
+    # **書式を間違えた表を受け取らない。** カンマ区切りで出した `.csv` は、
+    # 1行まるごとが日本語の語1つとして読めてしまう。黙って壊れた表になり、
+    # 会議の当日に「用語が効かない」という形で気づくことになる。
+    lines = [ln for ln in text.splitlines()
+             if ln.strip() and not ln.startswith("#")]
+    entries = parse_text(text)
+    if not entries or not any("\t" in ln for ln in lines):
+        raise ValueError(
+            "用語集として読めない。書式を確かめること:\n"
+            "  日本語(正しい表記) <TAB> English <TAB> よくある誤認識(カンマ区切り)\n"
+            "  **区切りはタブである。カンマではない。**\n"
+            "  Excel から出すときは「テキスト (タブ区切り)」を選ぶこと。"
+        )
+
+    root = config.glossary_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / f"{stem}.tsv"
+    # 改行は LF に揃える。Windows で編集した表がそのまま来る。
+    body = text.replace("\r\n", "\n").replace("\r", "\n")
+    if not body.endswith("\n"):
+        body += "\n"
+    # **書きかけを残さない。** 会議中に置き換えることがある。
+    tmp = path.with_suffix(".tsv.tmp")
+    tmp.write_text(body, encoding="utf-8")
+    tmp.replace(path)
+    return stem
+
+
+def delete_file(name: str) -> str:
+    """表を消す。消した名前を返す。"""
+    path = path_of(name)
+    if not path.is_file():
+        raise ValueError(f"そういう名前の用語集は無い: 「{name}」")
+    path.unlink()
+    return path.stem
+
+
+def parse_text(text: str) -> list[Entry]:
+    """表の中身を解く。**受け取る前の検査にも使うので、ファイルとは別にしてある。**"""
     entries: list[Entry] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         if not line.strip() or line.startswith("#"):
             continue
         cols = line.split("\t")
@@ -77,6 +162,11 @@ def load_file(path: Path) -> list[Entry]:
         if ja:
             entries.append(Entry(ja, en, wrong))
     return entries
+
+
+def load_file(path: Path) -> list[Entry]:
+    """1つの表を読む。"""
+    return parse_text(path.read_text(encoding="utf-8"))
 
 
 def load(names: list[str] | tuple[str, ...] | None = None) -> list[Entry]:
@@ -93,7 +183,13 @@ def load(names: list[str] | tuple[str, ...] | None = None) -> list[Entry]:
 
     merged: dict[str, Entry] = {}
     for name in names:
-        path = path_of(name)
+        try:
+            path = path_of(name)
+        except ValueError:
+            # **読み込みで落とさない。** 覚えていた選択が壊れていても、
+            # 会議は始められないといけない。
+            print(f"  [用語集] 「{name}」は名前として使えない。飛ばす")
+            continue
         if not path.exists():
             print(f"  [用語集] {path.name} が無い。飛ばす")
             continue
@@ -122,11 +218,18 @@ def selection() -> tuple[str, ...]:
         names = tuple(str(n) for n in saved.get("names", []))
     except (OSError, ValueError, AttributeError):
         names = ()
-    # 消えた表を覚えたままにしない。
-    names = tuple(n for n in names if path_of(n).exists())
+    # 消えた表を覚えたままにしない。壊れた名前も落とす。
+    names = tuple(n for n in names if _exists(n))
     if names:
         return names
-    return tuple(n for n in config.GLOSSARY_DEFAULT if path_of(n).exists())
+    return tuple(n for n in config.GLOSSARY_DEFAULT if _exists(n))
+
+
+def _exists(name: str) -> bool:
+    try:
+        return path_of(name).exists()
+    except ValueError:
+        return False
 
 
 def remember(names: list[str] | tuple[str, ...]) -> None:

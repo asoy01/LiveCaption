@@ -401,8 +401,22 @@ def check_save_dir(path: str | Path) -> Path:
 # サブシステムによって語彙が違うので、1つの大きな表を全部の会議で使うと、
 # 関係の無い語が認識の keywords を食い、上限で本当に要る語が落ちる。
 GLOSSARY_DIR = PROJECT_ROOT / "etc" / "glossary"
+# **置き場を外から変えられるようにしてある。** Docker では、表は操作画面から
+# 足したり消したりする利用者データなので、リポジトリではなくボリュームに置く。
+# 置かないと、アップロードした表がコンテナの作り直しで消える。
+GLOSSARY_DIR_ENV = "LIVECAPTION_GLOSSARY_DIR"
 # 何も選ばれていないときに読むもの（拡張子は付けない）。
 GLOSSARY_DEFAULT: tuple[str, ...] = ("KAGRA_basic",)
+
+
+def glossary_dir() -> Path:
+    """用語対訳表の置き場。
+
+    **呼ぶたびに環境変数を見る。** `load_env()` は import のあとに走るので、
+    ここで定数にしてしまうと `.env` の指定が効かない。
+    """
+    raw = os.environ.get(GLOSSARY_DIR_ENV, "").strip()
+    return Path(raw).expanduser() if raw else GLOSSARY_DIR
 # 前回の選択。操作画面で選び直すたびに書く。次の起動もこれで始まる。
 GLOSSARY_STATE_PATH = PROJECT_ROOT / "local" / "glossary_state.json"
 ENV_PATH = PROJECT_ROOT / ".env"

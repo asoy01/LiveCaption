@@ -243,6 +243,29 @@ class GlossaryControl:
         self.app.apply_glossary(names)
         return self.status()
 
+    def read(self, name: str) -> tuple[str, str]:
+        """表の中身を返す。`(名前, 本文)`。ダウンロードに使う。"""
+        return glossary.check_name(name), glossary.read_text(name)
+
+    def upload(self, name: str, text: str) -> dict:
+        """表を置く。同じ名前があれば置き換える。
+
+        **使っている表を置き換えたら、その場で入れ直す。** 置き換えたのに
+        古いままで会議が進む、というのがいちばん困る。
+        """
+        stem = glossary.save_text(name, text)
+        if stem in self.app.glossary_names:
+            self.app.apply_glossary(list(self.app.glossary_names))
+        return self.status()
+
+    def remove(self, name: str) -> dict:
+        """表を消す。使っていた表なら、選択から外して入れ直す。"""
+        stem = glossary.delete_file(name)
+        if stem in self.app.glossary_names:
+            self.app.apply_glossary(
+                [n for n in self.app.glossary_names if n != stem])
+        return self.status()
+
 
 class TuningControl:
     """遅延の調整つまみを、操作画面から変えられるようにする。

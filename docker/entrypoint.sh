@@ -12,6 +12,49 @@ HOSTNAME_TS="${TS_HOSTNAME:-livecaption}"
 
 mkdir -p "$STATE_DIR" /var/run/tailscale
 
+# --- 音声 -------------------------------------------------------------------
+# **会議ソフトの音を、ホストを通さずに拾う。** ホストの音声装置を使わないのが、
+# ホストを選ばない作りの鍵である。口は2つ作る。
+#
+#   meeting … 会議ソフトの出力先。本体は meeting.monitor から録る
+#   mic     … 会議ソフトに渡す「無音のマイク」。**これが無いと音声に入れない**
+#
+# `sounddevice` からは `pulse` として見える（`/etc/asound.conf` と
+# `ALSA_PLUGIN_DIR`）。本体には `--device pulse` を渡すこと。
+export XDG_RUNTIME_DIR=/tmp/xdg
+mkdir -p "$XDG_RUNTIME_DIR"
+# **残骸を消してから起こす。** 前回のソケットが残っていると立ち上がらない。
+rm -rf "$XDG_RUNTIME_DIR/pulse"
+pulseaudio -D --exit-idle-time=-1 --disable-shm --log-target=stderr \
+           2>/var/log/pulseaudio.log
+
+i=0
+while ! pactl info >/dev/null 2>&1; do
+  i=$((i + 1))
+  if [ "$i" -gt 100 ]; then
+    echo "音声:       PulseAudio が上がらない。/var/log/pulseaudio.log を見ること。"
+    break
+  fi
+  sleep 0.1
+done
+
+if pactl info >/dev/null 2>&1; then
+  # **口のレートを 48000 に揃える。** 既定の 44100 のままだと、会議ソフトの
+  # 48 kHz が 44.1k に落とされ、本体が 48 kHz で開くときにまた上げられる。
+  # リサンプルを2回通ると認識が目に見えて落ちる（段階3で実測した）。
+  pactl load-module module-null-sink sink_name=meeting rate=48000 \
+        channels=2 format=s16le \
+        sink_properties=device.description=meeting >/dev/null
+  pactl load-module module-null-sink sink_name=mic rate=48000 \
+        channels=2 format=s16le \
+        sink_properties=device.description=mic >/dev/null
+  pactl set-default-sink meeting
+  # **本体が録るのはここである。** 会議ソフトには PULSE_SOURCE=mic.monitor を
+  # 別に渡す（会議ソフト側から見たマイクは無音でよい）。
+  pactl set-default-source meeting.monitor
+  echo "音声:       meeting / mic を作った。本体は meeting.monitor から録る"
+fi
+
 # **状態はボリュームに置く。** これが消えると、Tailnet Lock の署名からやり直しに
 # なり、ホスト名も変わって、配ってあった閲覧URLが死ぬ。
 tailscaled --state="$STATE_DIR/tailscaled.state" --socket="$SOCK" \
@@ -58,5 +101,70 @@ while [ "$i" -lt 60 ]; do
   sleep 0.5
 done
 [ -z "${ADDR:-}" ] && echo "Tailscale:  アドレスがまだ無い。本体は背景で取り直す。"
+
+# --- 用語対訳表 ---------------------------------------------------------------
+# **表はボリュームに置く。** 操作画面からアップロード・ダウンロード・削除できる
+# 利用者データであり、イメージに焼き込むと、足した表がコンテナの作り直しで消える。
+#
+# 空のときだけ、イメージに入っている表を種として置く。**上書きはしない。**
+# 操作画面から直したものを、起動のたびに巻き戻すことになる。
+GLOSS_DIR="${LIVECAPTION_GLOSSARY_DIR:-/app/local/glossary}"
+mkdir -p "$GLOSS_DIR"
+if [ -z "$(ls -A "$GLOSS_DIR" 2>/dev/null)" ] && [ -d /app/etc/glossary ]; then
+  cp -n /app/etc/glossary/*.tsv "$GLOSS_DIR"/ 2>/dev/null || true
+  echo "用語集:     $GLOSS_DIR に種を置いた（$(ls -1 "$GLOSS_DIR" | wc -l) 個）"
+else
+  echo "用語集:     $GLOSS_DIR（$(ls -1 "$GLOSS_DIR"/*.tsv 2>/dev/null | wc -l) 個）"
+fi
+
+# --- 画面 -------------------------------------------------------------------
+# **会議ソフトを置くための画面である。** 人は見ない。中を見たいときは
+# LIVECAPTION_VNC=1 で起こして、http://<ホスト>:6080/vnc.html を開く。
+#
+# 窓の管理役（openbox）が要る。**無いと窓を前面に出せず、`wmctrl` も
+# 窓を見られない**（段階0で踏んだ）。`xdotool search` は WM 無しでも効く。
+export DISPLAY="${DISPLAY:-:99}"
+rm -f /tmp/.X99-lock
+Xvfb "$DISPLAY" -screen 0 "${LIVECAPTION_SCREEN:-1600x1200x24}" \
+     >/var/log/xvfb.log 2>&1 &
+i=0
+while ! xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; do
+  i=$((i + 1))
+  if [ "$i" -gt 100 ]; then
+    echo "画面:       Xvfb が上がらない。/var/log/xvfb.log を見ること。"
+    break
+  fi
+  sleep 0.1
+done
+openbox >/var/log/openbox.log 2>&1 &
+echo "画面:       $DISPLAY (${LIVECAPTION_SCREEN:-1600x1200x24})"
+
+# **Zoom の設定。** 既にあれば触らない。サインイン後の設定を消さないためである。
+#
+# `speaker_volume` の既定は 0 である。つまみが左端のままで、PulseAudio 側が
+# 100% でも Zoom は無音を書き出す。**255 が最大。これが段階0で見つけた鍵である。**
+if [ ! -f "$HOME/.config/zoomus.conf" ]; then
+  mkdir -p "$HOME/.config"
+  cat > "$HOME/.config/zoomus.conf" <<'CONF'
+[General]
+enableShowPreviewWndToJoin=false
+autoJoinAudio=true
+enableAutoJoinAudio=true
+muteVoipWhenJoin=true
+enableStartVideoWhenJoin=false
+speaker_volume=255
+system.audio.type=default
+CONF
+  echo "Zoom:       設定を書いた（speaker_volume=255）"
+fi
+
+if [ "${LIVECAPTION_VNC:-0}" = "1" ]; then
+  # **サインインは人がやる作業なので、この口が要る。**
+  x11vnc -display "$DISPLAY" -forever -shared -nopw -quiet -rfbport 5900 \
+         >/var/log/x11vnc.log 2>&1 &
+  websockify --web=/usr/share/novnc 6080 localhost:5900 \
+         >/var/log/novnc.log 2>&1 &
+  echo "画面:       http://<ホスト>:6080/vnc.html で中を触れる（認証は無い）"
+fi
 
 exec pixi run --frozen python run.py "$@"

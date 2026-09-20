@@ -56,7 +56,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, urlparse
 
 from . import captions as captions_mod
-from . import config, i18n, meetings, tunnel as tunnel_mod
+from . import config, glossary as glossary_mod, i18n, meetings, tunnel as tunnel_mod
 from . import meetings_page
 from . import transcript as transcript_mod
 
@@ -983,6 +983,12 @@ CONTROL_BODY = """
           <button id="glossAll">全部選ぶ</button>
           <button id="glossNone">全部外す</button>
         </div>
+        <div class="row2" style="margin:8px 0 0">
+          <input type="file" id="glossFile" accept=".tsv,text/tab-separated-values,text/plain">
+          <button id="glossUp">アップロード</button>
+        </div>
+        <div class="row2 hint">同じ名前があれば置き換える。ファイル名が表の名前になる。
+          いま使っている表を置き換えると、その場で読み直す。</div>
       </div>
     </details>
     <div class="row2">
@@ -1030,6 +1036,7 @@ __FEED_JS__
   const glossFold = $("glossFold"), glossSummary = $("glossSummary");
   const glossFilter = $("glossFilter"), glossFilterRow = $("glossFilterRow");
   const glossAll = $("glossAll"), glossNone = $("glossNone");
+  const glossFile = $("glossFile"), glossUp = $("glossUp");
   let glossLoaded = false;
   const dirSel = $("dirSel"), dirState = $("dirState");
   let dirLoaded = false;
@@ -1460,7 +1467,27 @@ __FEED_JS__
         n.className = "n"; n.textContent = s.name;
         const c = document.createElement("span");
         c.className = "c"; c.textContent = s.terms + " 語";
-        lab.append(cb, n, c);
+        // **持ち出す口と、消す口を1行に置く。** 字幕PCに入らないと表を
+        // 触れない、という状態を作らない。
+        const dl = document.createElement("a");
+        dl.className = "c"; dl.textContent = "落とす";
+        dl.href = "/api/glossary/file?name=" + encodeURIComponent(s.name);
+        dl.setAttribute("download", s.name + ".tsv");
+        dl.addEventListener("click", e => e.stopPropagation());
+        const rm = document.createElement("span");
+        rm.className = "c"; rm.textContent = "消す";
+        rm.style.cursor = "pointer";
+        rm.addEventListener("click", async e => {
+          e.preventDefault(); e.stopPropagation();
+          // **消すのは戻せない。** 落としてからでないと取り返せないので確かめる。
+          if (!confirm("用語集「" + s.name + "」を消す。戻せない。\n"
+                       + "取っておくなら、先に「落とす」で保存すること。")) { return; }
+          try {
+            showGlossary(await post("/api/glossary/delete", { name: s.name }));
+            say("用語集「" + s.name + "」を消した。", true);
+          } catch (err) { say(String(err.message), false); }
+        });
+        lab.append(cb, n, c, dl, rm);
         glossBox.appendChild(lab);
       }
     }
@@ -1552,6 +1579,26 @@ __FEED_JS__
     }
     for (const c of glossBox.querySelectorAll("input")) { c.disabled = false; }
   }
+
+  // **表はアップロードで足す。** 字幕PCはコンテナの中にあり、遠隔から
+  // ファイルを置く手段が他に無い。置き場はボリュームなので、コンテナを
+  // 作り直しても残る。
+  glossUp.addEventListener("click", async () => {
+    const f = glossFile.files && glossFile.files[0];
+    if (!f) { say("ファイルを選ぶこと。", false); return; }
+    glossUp.disabled = true;
+    try {
+      const text = await f.text();
+      // 拡張子を落としたファイル名が表の名前になる。名前を別に打たせない。
+      const name = f.name.replace(/[.]tsv$/i, "");
+      showGlossary(await post("/api/glossary/upload", { name, text }));
+      glossFile.value = "";
+      say("用語集「" + name + "」を置いた。", true);
+    } catch (e) {
+      say(String(e.message), false);
+    }
+    glossUp.disabled = false;
+  });
 
   // --- 操作画面の言語 -----------------------------------------------------
   // **サーバ側で差し替える。** 選んだらサーバに覚えさせて、読み込み直す。
@@ -2843,6 +2890,21 @@ def _control_handler(web: WebCaptions):
                     self._send_json(200, web.records.latest())
             elif u.path == "/api/records/file":
                 self._send_record(parse_qs(u.query).get("fmt", ["md"])[0])
+            elif u.path == "/api/glossary/file":
+                # 用語集を持ち出す。**字幕PCの中にしか無い、という状態を作らない。**
+                if web.glossary is None:
+                    self._send_json(503, {"error": "用語集の受け口が用意できていない。"})
+                    return
+                try:
+                    name, text = web.glossary.read(
+                        parse_qs(u.query).get("name", [""])[0])
+                except ValueError as exc:
+                    self._send_json(400, {"error": str(exc)})
+                    return
+                self._send_bytes(
+                    200, "text/tab-separated-values; charset=utf-8",
+                    text.encode("utf-8"),
+                    {"Content-Disposition": _attachment(f"{name}.tsv")})
             elif u.path == "/api/devices":
                 if web.audio is None:
                     self._send_json(503, {"error": "音声の受け口が用意できていない。"})
@@ -2936,13 +2998,18 @@ def _control_handler(web: WebCaptions):
                 return
             if path not in ("/api/token", "/api/zoom", "/api/tunnel",
                             "/api/engine", "/api/device", "/api/glossary",
+                            "/api/glossary/upload", "/api/glossary/delete",
                             "/api/tuning", "/api/tuning/save", "/api/direction",
                             "/api/lang", "/api/meetings", "/api/schedule",
                             "/api/chat"):
                 self.send_error(404)
                 return
             try:
-                body = self._read_json()
+                # **アップロードだけは大きい。** 他の口は数KBで足りるので
+                # 広げない。用語表の上限に、JSON の飾りぶんを足しておく。
+                body = self._read_json(
+                    glossary_mod.MAX_UPLOAD_BYTES + MAX_BODY
+                    if path == "/api/glossary/upload" else None)
             except ValueError as exc:
                 self._send_json(400, {"error": str(exc)})
                 return
@@ -2988,6 +3055,32 @@ def _control_handler(web: WebCaptions):
                     st = web.glossary.select([str(n) for n in raw])
                 except ValueError as exc:
                     self._send_json(400, {"error": str(exc)})
+                    return
+                self._send_json(200, st)
+                return
+
+            if path in ("/api/glossary/upload", "/api/glossary/delete"):
+                # **用語集は会議のたびに育てるものである。** 字幕PCに入らないと
+                # 直せない状態にしない。置き場はボリュームなので、コンテナを
+                # 作り直しても残る（`LIVECAPTION_GLOSSARY_DIR`）。
+                if web.glossary is None:
+                    self._send_json(503, {"error": "用語集の受け口が用意できていない。"})
+                    return
+                name = str(body.get("name", ""))
+                try:
+                    if path.endswith("/upload"):
+                        text = body.get("text")
+                        if not isinstance(text, str):
+                            self._send_json(400, {"error": "text は文字列で渡すこと。"})
+                            return
+                        st = web.glossary.upload(name, text)
+                    else:
+                        st = web.glossary.remove(name)
+                except ValueError as exc:
+                    self._send_json(400, {"error": str(exc)})
+                    return
+                except OSError as exc:
+                    self._send_json(500, {"error": f"用語集を書けない: {exc}"})
                     return
                 self._send_json(200, st)
                 return
