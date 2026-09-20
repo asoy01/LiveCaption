@@ -584,8 +584,28 @@ Open the link in any browser. No app or sign-in needed.
 turned file sending off, the QR code is rejected, but **the URL has already
 arrived**.
 
-**It posts after the captions have started**, so that nobody opens the link onto
-an empty page.
+#### When it posts
+
+**Two minutes after the scheduled start time.** LiveCaption itself starts a few
+minutes earlier, but **it does not post then.**
+
+The reason is how Zoom works. **Zoom chat does not show what was said before you
+joined.** Posting before the start time leaves nothing for the people who join
+on time. The two extra minutes are there because not everyone is in the room at
+the exact minute.
+
+**So people who join late do not get it.** That is a Zoom limit and there is
+nothing this side can do about it. For a meeting where people join late, put the
+caption URL in the Zoom invitation as well, or press **Zoomのチャットに投げる**
+(post to the Zoom chat) by hand during the meeting.
+
+To change the wait, edit `SCHEDULE_CHAT_AFTER_MIN` in
+`src/live_caption/config.py`. There is no `.env` setting for it.
+
+**It also waits for Zoom to finish joining.** After the `zoommtg:` link is
+opened, Zoom takes anywhere from tens of seconds to a few minutes to show the
+meeting window. LiveCaption looks every 10 seconds and gives up after 10
+minutes, writing that to the log.
 
 To post by hand, press **Zoomのチャットに投げる** (post to the Zoom chat) inside
 **ブラウザで見てもらう** (in a browser) under **How people see it**. It posts to

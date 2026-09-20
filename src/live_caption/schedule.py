@@ -28,9 +28,10 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from . import config
+from . import meetings
 from . import zoom_join
 
 # 状態。操作画面にもこの名前で出す。
@@ -112,6 +113,11 @@ class Scheduler:
         self._joined_zoom = False
         # 音が一度でも届いたか。届いたら、以後は待機室を疑わない。
         self._saw_audio = False
+        # チャットへの投稿がまだ残っているか。**Zoomの窓が出るまで待つ。**
+        self._chat_left = False
+        self._chat_next = 0.0
+        self._chat_from = datetime.max
+        self._chat_until = datetime.max
 
     # --- 操作画面に返す -----------------------------------------------------
 
@@ -243,6 +249,7 @@ class Scheduler:
         self._we_started_tunnel = False
         self._joined_zoom = bool(meeting.zoom)
         self._saw_audio = False
+        self._chat_left = False
         print(f"[{now_str()}] 予定        「{meeting.name}」を始める（{occurrence}）")
 
         # 1. 配信する会議を切り替える。
@@ -289,42 +296,97 @@ class Scheduler:
         self.note = "字幕を出している"
         print(f"[{now_str()}] 予定        「{meeting.name}」の字幕を出している")
 
-        # 6. Zoomのチャットに、字幕のURLを投げる。**印が付いた会議だけ。**
-        #    **字幕が出てから投げる。** 先に投げると、開いた人が空の画面を見る。
-        self._post_chat(meeting)
-
-    def _post_chat(self, meeting) -> None:  # noqa: ANN001
-        """会議のチャットに字幕のURLを投げる。**失敗しても字幕は止めない。**
-
-        画面操作でやっているので、Zoomの作りが変われば黙って効かなくなる。
-        **結果は必ず記録に残すこと。** 無人なので、ここが唯一の痕跡になる。
-        """
-        if not meeting.chat:
-            return
-        web = self.app.web
-        if web is None:
-            return
-        url = web.public_url() or web.viewer_url()
-        if not url:
-            print(f"[{now_str()}] 予定        チャットに投げる先のURLが無い")
-            return
+        # 6. Zoomのチャットに投げるのは、あとで。**ここではまだ投げない。**
+        #
+        #    **予定の開始時刻を過ぎてから投げる。** Zoomのチャットは、入る前の
+        #    発言が見えない。字幕アプリは開始の lead_min 分前に動き出すので、
+        #    ここで投げると、定刻に入ってきた人が全員取りこぼす
+        #    （麻生の指摘、2026-09-20）。
+        #
+        #    それに、`zoommtg:` を投げてから会議の窓が出るまで、Zoomは数十秒から
+        #    数分かかる（実測: 起動の5秒後にはまだ無かった）。
+        #
+        #    時刻と窓の両方が揃うのを `_watch_running` が待つ。
+        self._chat_left = bool(meeting.chat)
+        self._chat_next = 0.0
         try:
-            from . import zoom_chat
+            start_at = datetime.strptime(occurrence, meetings.TIME_FMT)
+        except ValueError:
+            start_at = datetime.now()
+        self._chat_from = start_at + timedelta(
+            minutes=config.SCHEDULE_CHAT_AFTER_MIN)
+        self._chat_until = self._chat_from + timedelta(
+            seconds=config.SCHEDULE_CHAT_WAIT_SEC)
 
-            shot = zoom_chat.qr_file(url, meeting.name)
-            done = zoom_chat.post(zoom_chat.compose(url), [shot] if shot else [])
+    async def _try_chat(self) -> None:
+        """会議の窓が出ていたら、チャットに投げる。出るまで何度でも見に来る。
+
+        **字幕が出た時点では、まだZoomが会議に入り終えていない。** そこで一度
+        試して諦めると、印を付けた会議でも一度も投げられない（2026-09-20 に
+        麻生の実会議でそうなった）。
+
+        **別のスレッドで投げること。** 投げるのに8秒ほどかかる。本体の
+        イベントループで待つと、そのあいだ音の取り込みも字幕も止まる。
+        """
+        if not self._chat_left:
+            return
+        # **開始時刻を過ぎるまで投げない。** 早く投げると、後から入ってきた人に
+        # 何も残らない。Zoomのチャットは、入る前の発言が見えない。
+        wall = datetime.now()
+        if wall < self._chat_from:
+            return
+        now = time.monotonic()
+        if now < self._chat_next:
+            return
+        self._chat_next = now + config.SCHEDULE_CHAT_RETRY_SEC
+        late = wall > self._chat_until
+
+        from . import zoom_chat
+
+        if not zoom_chat.meeting_window():
+            if late:
+                self._chat_left = False
+                print(f"[{now_str()}] 予定        チャットに投げられない: "
+                      "Zoomの会議の窓が出てこない")
+            return
+
+        web = self.app.web
+        url = (web.public_url() or web.viewer_url()) if web else ""
+        if not url:
+            if late:
+                self._chat_left = False
+                print(f"[{now_str()}] 予定        チャットに投げる先のURLが無い")
+            return
+
+        name = self.meeting_name
+        try:
+            done = await asyncio.to_thread(self._post_chat_now, url, name)
         except Exception as exc:  # noqa: BLE001
+            self._chat_left = False
             print(f"[{now_str()}] 予定        チャットに投げられない: "
                   f"{type(exc).__name__}: {exc}")
             return
+
         if done["text"]:
+            self._chat_left = False
             extra = "（QRも）" if done["files"] else ""
             print(f"[{now_str()}] 予定        チャットにURLを投げた{extra}")
-        else:
+            if not done["files"]:
+                # ホストがファイル送信を切っていると、こうなる。**URLは届いている。**
+                print(f"[{now_str()}] 予定        QRは送れなかった。URLだけ届いている。")
+            return
+        # 貼っている途中で前面が入れ替わった、など。**もう一度だけ見に来る。**
+        if late:
+            self._chat_left = False
             print(f"[{now_str()}] 予定        チャットに投げられない: {done['why']}")
-        if done["text"] and not done["files"]:
-            # ホストがファイル送信を切っていると、こうなる。**URLは届いている。**
-            print(f"[{now_str()}] 予定        QRは送れなかった。URLだけ届いている。")
+
+    @staticmethod
+    def _post_chat_now(url: str, name: str) -> dict:
+        """**別のスレッドで動く。** ここから本体の状態を触らないこと。"""
+        from . import zoom_chat
+
+        shot = zoom_chat.qr_file(url, name)
+        return zoom_chat.post(zoom_chat.compose(url), [shot] if shot else [])
 
     async def _join_zoom(self, meeting) -> None:  # noqa: ANN001
         """Zoomに入る。**入れたかどうかは、ここでは分からない。**
@@ -403,6 +465,8 @@ class Scheduler:
         if not self.app.engine.status()["generating"]:
             self._teardown("生成が止められた")
             return
+        # チャットへの投稿は、Zoomの窓が出てから。ここで何度でも試す。
+        await self._try_chat()
         elapsed = time.monotonic() - self.started_at
         # **音が一度も来ないまま時間が経ったら、入れていない可能性が高い。**
         # Zoomは待機室・パスコード違い・更新のダイアログのどれで止まっても
@@ -463,6 +527,11 @@ class Scheduler:
         self._we_started_tunnel = False
         self._joined_zoom = False
         self._saw_audio = False
+        # チャットへの投稿がまだ残っているか。
+        self._chat_left = False
+        self._chat_next = 0.0
+        self._chat_from = datetime.max
+        self._chat_until = datetime.max
 
     def _leave_zoom(self) -> None:
         """Zoomから出る。**こちらが起こしたときだけ。**
