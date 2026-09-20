@@ -525,6 +525,31 @@ It does four things by itself:
 **Only the Zoom caption token cannot be obtained automatically**, because only
 the host can create it, during the meeting. Section 4.4 covers how to receive it.
 
+### 4.0 Starting without a schedule
+
+**You can run the same four steps right now.** Use this for a meeting you never
+put in the schedule, or one that starts early.
+
+Pick the meeting on the **This meeting** tab and press **Start this meeting
+now**. The line under the button says what will happen for that meeting.
+
+```
+Delivery -> join Zoom -> Caption generation -> post to the chat
+```
+
+It joins Zoom only for a meeting that has a URL, and posts to the chat only for
+a meeting with that box ticked (both are set on the **Manage meetings** tab).
+**The chat gets the URL twice: when you press the button, and three minutes
+later** (for a scheduled meeting, at the start time and three minutes later).
+
+**It takes tens of seconds to come up**, because Zoom has to launch and the
+tunnel has to open. The progress is shown under **Right now**. To end it, press
+**Stop now**.
+
+This is not the **Start** button at the top. That one starts reading audio and
+transcribing, nothing else: **it never opens the tunnel and never touches
+Zoom.**
+
 ### 4.1 Entering a schedule
 
 Pick the **Manage meetings** tab on the control page. Each meeting row has the
@@ -791,8 +816,8 @@ a warning on screen and uses the first table.
 
 ### Grow the tables after a meeting
 
-1. Open `live-caption_*.md` in your Downloads folder. The header says which
-   tables that meeting used
+1. Open the `.md` of the meeting record (download it from the control page).
+   The header says which tables that meeting used
 2. Find the terms that came out wrong
 3. Add the wrong text that the recogniser actually produced to the third column
    of the table that holds that term
@@ -818,42 +843,56 @@ on by running them through the translation step.
 **LiveCaption saves a record of every meeting by default.** You do not have to
 turn it on.
 
-The files start out in **your Downloads folder**.
+The files go to **`local/transcripts/`** on the caption PC.
 
 ```
-Downloads/live-caption_2026-09-08_143012.jsonl   appended one sentence at a time
-Downloads/live-caption_2026-09-08_143012.md      readable form, written at exit
+local/transcripts/live-caption_2026-09-08_143012.jsonl   appended one sentence at a time
+local/transcripts/live-caption_2026-09-08_143012.md      readable form, written at exit
 ```
+
+### Downloading a record
+
+**The records stay on the caption PC. Download them from the control page.**
+You do not have to walk over to that machine, or pull the files out of it over
+a remote desktop.
+
+There are two buttons under **Meeting record** on the **This meeting** tab.
+
+| Button | What you get |
+|---|---|
+| **Readable (.md)** | The form people read. Recognised text and caption, paired |
+| **Original (.jsonl)** | One sentence per line, with the measured delays. Use this one to grow the glossary |
+
+The file lands in the download folder of **the machine you opened the control
+page on**.
+
+**Only the latest record can be downloaded.** The line under the buttons says
+which one it is. For an older meeting, take the file from
+`local/transcripts/` on the caption PC.
+
+**You can download during the meeting.** The `.md` then says the meeting is
+still going.
+
+**Pressing Stop closes the record** (about three seconds later). The `.md` is
+written and a new record starts, so a download after Stop gives you the
+finished meeting. A short pause - stop and start again within three seconds -
+does not split the record.
 
 ### Changing the folder
 
-The setting is under **会議の記録** (meeting record) on the **This meeting** tab.
-There are three ways to choose.
+You do not need to, but you can keep the records outside the repository - for
+example when the repository sits in a synced folder. Write the folder in
+`.env`.
 
-Press **フォルダを選ぶ** (choose a folder) and a folder list opens inside the
-page. Press a name to go in, **↑ 上へ** (up) to go back. When you reach the
-folder you want, press **ここにする** (use this one). **This works the same way
-from another machine.**
+```
+LIVECAPTION_SAVE_DIR=%LOCALAPPDATA%\LiveCaption\transcripts
+```
 
-The list shows **only what is under the home folder** (`C:\Users\<name>`). The
-control page has no authentication, so there is no way to browse the whole disk
-from it.
+**A folder that does not exist is created. A folder that cannot be written to
+is refused, and the record goes to the default folder instead.** To change it
+per launch, use `--save-dir`. That wins over `.env`.
 
-You can also type a path and press **この場所にする** (use this path). **That
-one can point outside the home folder. A folder that does not exist is
-created.** A folder that cannot be written to is refused.
-
-Only when you sit at the caption PC, **Windowsの窓を開く** (open the Windows
-dialog) appears under the list. **That dialog opens on the caption PC screen**,
-so it is no use from another machine, and LiveCaption refuses it there: the
-person pressing the button would see nothing while a dialog sat open on the
-caption PC.
-
-Whichever way you choose, the change takes effect at once and is written to
-`.env`, so **the next launch starts with that folder.** The record that is open
-now is closed and reopened in the new folder.
-
-To change it per launch, use `--save-dir`. That wins over `.env`.
+### What is in the record
 
 The recognised text and the caption are paired. The timestamp is the time the
 recognition became final.
@@ -870,10 +909,10 @@ need them when you tune the settings.
 | `spec` | Present when the speculative translation was used. `total` is then smaller than `took` |
 | `dir` | The caption direction at that moment |
 
-- To read the record during the meeting, press **途中まで読む** under
-  **会議の記録** on the control page
-- **The `.md` file is written at exit.** If the PC loses power, rebuild it from
-  the `.jsonl` with `pixi run python scripts/transcript_to_md.py`
+- **The `.md` file is written when you press Stop and when the app exits.** If
+  the PC loses power, rebuild it from the `.jsonl` with
+  `pixi run python scripts/transcript_to_md.py`. (A downloaded `.md` is built
+  on the spot, so it is always current.)
 - To keep no record, start with `--no-save`
 - If no sentence was produced, no file is written
 
@@ -916,7 +955,7 @@ Options:
 | `--tunnel` | Open the tunnel at start-up. It is off by default |
 | `--no-browser` | Do not open the browser automatically |
 | `--no-save` | Keep no record of the meeting |
-| `--save-dir <folder>` | Where to write the record. **Wins over the folder chosen on the control page.** Default: your Downloads folder |
+| `--save-dir <folder>` | Where to write the record. **Wins over `LIVECAPTION_SAVE_DIR` in `.env`.** Default: `local/transcripts/` |
 | `--dry-run` | Send nothing to Zoom; print to the screen only |
 | `--from-file <wav>` | Play a WAV in real time instead of using a device. 24 kHz mono |
 | `--loop` | Repeat the `--from-file` file |

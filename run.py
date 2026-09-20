@@ -35,8 +35,9 @@ URLは会議ごとに別で、配信するのは操作画面で選んである1�
 --web を付けない起動（--token だけ、--dry-run だけ）は、押す手段が無いのですぐ始まる。
 
 **会議の記録は既定で残る。** 日本語の認識文と英語の字幕を対にして、
-**ユーザーのダウンロードフォルダ**に `live-caption_<日時>.jsonl` と `.md` で置く。
-要らないときは --no-save、置き場を変えるなら --save-dir。
+**`local/transcripts/`** に `live-caption_<日時>.jsonl` と `.md` で置く。
+**操作画面の「会議の記録」から落とせる。** 要らないときは --no-save、
+置き場を変えるなら .env の LIVECAPTION_SAVE_DIR か --save-dir。
 
 会議を開かずに全体を試す（録音を実時間で流す）:
 
@@ -207,17 +208,18 @@ def main() -> int:
         print("会議を開かずに試すなら --dry-run を付ける。")
         return 1
 
-    # 記録の置き場。優先順は --save-dir、.env、ダウンロードフォルダ。
+    # 記録の置き場。優先順は --save-dir、.env、既定（local/transcripts/）。
     # **使えない置き場でも起動は止めない。** 会議の当日に、フォルダが消えて
-    # いるというだけで字幕が出ないのは困る。断ってダウンロードフォルダに落とす。
-    save_dir = Path(args.save_dir or os.environ.get(config.SAVE_DIR_ENV, "").strip()
-                    or config.TRANSCRIPT_DIR)
+    # いるというだけで字幕が出ないのは困る。断って既定の置き場に落とす。
+    chosen = (args.save_dir or os.environ.get(config.SAVE_DIR_ENV, "").strip()
+              or str(config.TRANSCRIPT_DIR))
+    save_dir = Path(chosen)
     if not args.no_save:
         try:
             save_dir = config.check_save_dir(save_dir)
         except ValueError as exc:
-            print(f"記録の置き場が使えない（{exc}）ので、ダウンロードフォルダに落とす。")
-            save_dir = config.downloads_dir()
+            print(f"記録の置き場が使えない（{exc}）ので、{config.TRANSCRIPT_DIR} に落とす。")
+            save_dir = config.TRANSCRIPT_DIR
 
     # トークンは会議が始まらないと取れない。無いまま起動してよい。
     # --web を付けてあれば、ブラウザの操作画面から後で入れられる。

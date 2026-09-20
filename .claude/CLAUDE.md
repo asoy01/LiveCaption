@@ -89,8 +89,9 @@ docs/                 用語対訳表、調査メモ
 local/                作業物と HANDOFF.md（gitignore対象）
 ```
 
-**会議の記録はユーザーのダウンロードフォルダに出る**（`live-caption_<日時>.jsonl` と `.md`）。
-リポジトリの中には残らない。
+**会議の記録は `local/transcripts/` に溜まる**（`live-caption_<日時>.jsonl` と `.md`）。
+**操作画面から落とす。** 字幕PCは遠隔で操作するので、記録を取りに行かなくて済むように
+してある。置き場を変えるなら `.env` の `LIVECAPTION_SAVE_DIR`。
 
 ## Python
 

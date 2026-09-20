@@ -37,7 +37,6 @@ from . import asr as asr_mod
 from . import audio as audio_mod
 from . import captions as captions_mod
 from . import config, glossary
-from . import folder_pick
 from . import schedule as schedule_mod
 from . import segmenter as segmenter_mod
 from . import transcript as transcript_mod
@@ -321,12 +320,15 @@ class DirectionControl:
 
 
 class RecordControl:
-    """会議の記録の置き場。**操作画面から選び直す。**
+    """会議の記録。**字幕PCに溜めて、操作画面から落とす**（2026-09-20）。
 
-    既定はダウンロードフォルダだが、会議のたびにそこへ落ちると他のファイルと
-    混ざる。置き場を決めておきたい（2026-09-20 の麻生の指示）。
+    置き場は `local/transcripts/`。**画面からは選び直せない。** 字幕PCは常時
+    起動で、操作は tailnet 越しである。記録を取りに行くのに RustDesk を起こす
+    のが面倒だ、というのが元の問題なので、**落とせるようにすれば置き場を
+    動かす理由が無くなる。** 変えたい人は `.env` の `LIVECAPTION_SAVE_DIR`。
 
-    選び直すと `.env` に書くので、**次の起動もその置き場で始まる。**
+    （2026-09-20 の午前には、置き場を画面から選ぶ作りにしていた。フォルダを
+    選ぶ窓と、遠隔用のフォルダ一覧の2通り。落とせるようになったので両方消した。）
 
     呼ぶのはHTTPサーバのスレッドである。
     """
@@ -338,38 +340,34 @@ class RecordControl:
         return {
             "dir": str(self.app.settings.transcript_dir),
             "saving": self.app.settings.save,
-            # 窓を出せない機体（画面の無い Linux、tkinter の無い環境）では、
-            # 手入力だけを見せる。**押しても何も起きないボタンを置かない。**
-            "can_pick": folder_pick.available(),
         }
 
-    def set_dir(self, path: str) -> dict:
-        """置き場を選び直す。使えないパスは `ValueError` で弾く。
+    def latest_path(self) -> Path | None:
+        """落とせる記録の `.jsonl`。**中身のあるもののうち、いちばん新しい1本。**
 
-        **いま開いている記録は、その場で閉じて開き直す。** 閉じないと、
-        この会議の続きが前の置き場に書かれ、どちらにも半分ずつ残る。
+        **空のものは飛ばす。** 会議が終わると、本体は次の記録を開いて待つ
+        （`roll_transcript`）。いちばん新しいファイルをそのまま返すと、
+        会議のあとに落としたとき、1文も入っていない記録が出てくる。
 
-        **閉じ直しは本体のイベントループに渡す。** ここで直に閉じると、
-        字幕を書いている最中のファイルを別のスレッドから閉じることになり、
-        `_write` が拾わない `ValueError` を投げる（拾うのは `OSError` だけ）。
+        画面からファイルを指す文字列は受け取らない。**どれを返すかはここで
+        決める。** 操作画面には認証が無いので、そこへパスを渡す口を作らない。
         """
-        target = config.check_save_dir(path)
-        if target == self.app.settings.transcript_dir:
-            return self.status()
-        self.app.settings.transcript_dir = target
-        loop = self.app.zoom.loop
-        if self.app.transcript is not None:
-            if loop is None:
-                self.app.roll_transcript()
-            else:
-                loop.call_soon_threadsafe(self.app.roll_transcript)
-        print(f"[{now()}] 記録        置き場を変えた: {target}")
-        # **`.env` に書けなくても、この起動では効かせる。** 会議は止めない。
-        try:
-            config.save_env({config.SAVE_DIR_ENV: str(target)})
-        except OSError as exc:
-            print(f"[{now()}] 記録        .env に書けない: {exc}")
-        return self.status()
+        directory = Path(self.app.settings.transcript_dir)
+        for item in transcript_mod.scan(directory):
+            if item["lines"]:
+                return directory / f"{item['stem']}.jsonl"
+        return None
+
+    def latest(self) -> dict:
+        """落とせる記録が何かを画面に知らせる。無ければ `item` は None。"""
+        path = self.latest_path()
+        item = None
+        if path is not None:
+            for found in transcript_mod.scan(Path(self.app.settings.transcript_dir)):
+                if found["stem"] == path.stem:
+                    item = found
+                    break
+        return {"saving": self.app.settings.save, "item": item}
 
 
 class App:
@@ -511,13 +509,14 @@ class App:
         何週間も先になる。それまで `.md` は1本も書かれず、会議何十本ぶんが
         1つの `.jsonl` に溜まる。会議が終わるたびにここで区切る。
 
-        **`web.transcript` も差し替えること。** 差し替えないと、操作画面の
-        「途中まで読む」が閉じたほうを読み続ける。
+        **`web.transcript` も差し替えること。** 差し替えないと、いま書いている
+        記録がどれかを操作画面が取り違える。
 
         1文も無い記録は `close()` が消すので、会議の前後で2回呼んでも
         空ファイルは残らない。
 
-        呼ぶのは本体のイベントループ（スケジューラ）だけである。
+        呼ぶのは本体のイベントループだけである（スケジューラと、停止から
+        少し置いて呼ぶ `_close_record_soon`）。
         """
         if self.transcript is None:
             return None
@@ -696,6 +695,26 @@ class App:
             self._drop_speculation()
             # 差し替えで抜けたときは _gen_on が立ったままなので、そのまま開き直す。
             self._restart.clear()
+            # **止めて抜けたなら、記録を区切る。** 停止は「この会議は終わり」の
+            # 意味なので（配信もZoom字幕も閉じる）、記録もそこで閉じて `.md` を
+            # 書く。ここでは待たない。待つと、すぐ再開したときに開き直しが遅れる。
+            if not self.generating:
+                asyncio.create_task(self._close_record_soon())
+
+    async def _close_record_soon(self) -> None:
+        """停止から少し置いて、記録を区切る。
+
+        **すぐには閉じない。** 止めた時点で、最後の1文がまだ翻訳の途中のことが
+        ある。即座に区切ると、その1文だけが次の記録に落ちて、**中身1行の記録が
+        「最新」になる。**
+
+        **この間に再開したら区切らない。** 休憩で止めただけなら、会議の記録は
+        1本のままにする。
+        """
+        await asyncio.sleep(config.STOP_ROLL_WAIT_SEC)
+        if self.generating:
+            return
+        self.roll_transcript()
 
     def _on_delta(self, delta: str) -> None:
         cuts = self.segmenter.feed(delta)

@@ -53,11 +53,12 @@ import threading
 import time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 from . import captions as captions_mod
-from . import config, folder_pick, i18n, meetings, tunnel as tunnel_mod
+from . import config, i18n, meetings, tunnel as tunnel_mod
 from . import meetings_page
+from . import transcript as transcript_mod
 
 # 画面に残す履歴の数。これを超えた分は古いほうから捨てる。
 # 途中から開いた参加者に、直前の流れが見えるだけあればよい。
@@ -399,6 +400,19 @@ def _qr_filename(name: str) -> str:
     return f"livecaption-qr-{safe}.png" if safe else "livecaption-qr.png"
 
 
+def _attachment(name: str) -> str:
+    """`Content-Disposition` の中身。**日本語のファイル名を保つ。**
+
+    記録のファイル名には会議の名前が入る（`transcript.safe_filename`）。
+    ヘッダは ASCII しか運べないので、素の `filename=` に日本語を入れると、
+    ブラウザによって文字化けするか、名前が落ちる。RFC 5987 の `filename*` なら
+    UTF-8 で渡せる。**古いブラウザのために `filename=` も併せて置く**（そちらは
+    非ASCIIを落とした形）。両方あるとき、今のブラウザは `filename*` を採る。
+    """
+    plain = "".join(c for c in name if c.isascii() and c not in '"\\\r\n') or "record"
+    return f"attachment; filename=\"{plain}\"; filename*=UTF-8''{quote(name)}"
+
+
 def _head(title: str, lines_: int) -> str:
     return (
         '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
@@ -521,19 +535,19 @@ CONTROL_BODY = """
   body.manage .tabs { flex: 0 0 auto; margin: 12px 16px 0; }
   body.manage #paneMeet { flex: 1 1 auto; min-height: 0; }
 
-  /* 置き場を選ぶための一覧。**窓を重ねない。** この画面に重なる窓は1つも
-     無いので、ここだけ別の作りにしない。欄の中に開く。 */
-  .browse { border: 1px solid var(--line2); border-radius: 6px;
-            background: var(--field); padding: 8px 10px; margin-bottom: 9px; }
-  .browse .list { max-height: min(32vh, 260px); overflow-y: auto; margin: 6px 0; }
-  .browse .d {
-    display: block; width: 100%; text-align: left; border: 0; background: none;
-    color: var(--fg); font-size: var(--ui); padding: 5px 6px; border-radius: 4px;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  /* 記録の一覧。**高さを止めて、中だけを送る。** 無人で回すと1日に何本も
+     溜まるので、伸び放題にすると下の欄が押し出される。 */
+  /* 記録を落とすボタン。**リンクだが、他のボタンと同じに見せる。**
+     落とす先は見る人の端末なので、`<a download>` でないと渡せない。 */
+  a.dl {
+    color: var(--fg); background: var(--btn); border: 1px solid var(--line2);
+    border-radius: 6px; padding: 5px 10px; font-size: var(--ui);
+    text-decoration: none; cursor: pointer;
   }
-  .browse .d:hover { background: var(--hover); }
-  .browse .d.up { color: var(--muted); }
-  .browse .none { color: var(--muted); font-size: calc(var(--ui) - 2px); padding: 6px; }
+  a.dl:hover { background: var(--hover); }
+  /* 落とすものが無いときは、押しても何も起きないことを見た目で示す。 */
+  a.dl.off { color: var(--dim); background: var(--field); cursor: default; }
+  a.dl.off:hover { background: var(--field); }
 
   /* 見せ方の3つ。畳んだ見出しを縦に積む。 */
   .grp > .fold { margin-bottom: 7px; }
@@ -803,6 +817,13 @@ CONTROL_BODY = """
       <select id="meetPick"></select>
     </div>
     <div class="row2 hint" id="meetWhen"></div>
+    <!-- **予定を待たずに、この会議を1本回す。** 走る順序は予定の回と同じで
+         ある（配信 → Zoom参加 → 生成 → チャット）。「開始」には載せない。
+         あちらは音の取り込みと認識だけで、出口は開けない（2026-09-20）。 -->
+    <div class="row2">
+      <button id="meetStart" class="primary">この会議をいま始める</button>
+      <span class="hint" id="meetStartWhat"></span>
+    </div>
     <div class="row2" id="meetUrlRow" style="display:none">
       <span class="url" id="meetUrl"></span>
       <button class="copybtn" data-copy="meetUrl">URLをコピー</button>
@@ -911,41 +932,20 @@ CONTROL_BODY = """
   <div class="grp">
     <h2>会議の記録</h2>
     <div class="row2">
-      <button id="openLog">途中まで読む</button>
       <span id="logState"></span>
     </div>
-    <div class="row2" id="logPathRow" style="display:none">
-      <span class="url" id="logPath"></span>
-      <button class="copybtn" data-copy="logPath">パスをコピー</button>
-    </div>
+    <!-- **字幕PCに溜めて、ここから落とす。** 字幕PCは常時起動で、操作は
+         tailnet 越しである。記録を読むためだけに RustDesk を起こさなくてよい
+         ようにする（2026-09-20 の麻生の指示）。
+         **落とせるのは最新の1本だけである。** 古い記録が要ることは、まず無い。 -->
     <div class="row2">
-      <label class="lbl" for="saveDir">置き場</label>
-      <input type="text" id="saveDir" spellcheck="false" autocomplete="off">
+      <a class="dl" id="recMd" download>読める形 (.md)</a>
+      <a class="dl" id="recJsonl" download>原本 (.jsonl)</a>
     </div>
-    <div class="row2">
-      <button id="saveDirPick" class="primary">フォルダを選ぶ</button>
-      <button id="saveDirSet">この場所にする</button>
-      <span id="saveDirState"></span>
-    </div>
-    <!-- **画面の中でフォルダを辿る。** ネイティブの窓は字幕PCの画面にしか
-         出ないので、tailnet 越しには使えない。 -->
-    <div class="browse" id="browseBox" hidden>
-      <div class="row2" id="browseHead">
-        <span class="url" id="browseHere"></span>
-      </div>
-      <div class="list" id="browseList"></div>
-      <div class="row2">
-        <button id="browseTake" class="primary">ここにする</button>
-        <button id="browseClose">閉じる</button>
-      </div>
-      <div class="row2 hint" id="browseOut" style="display:none">
-        ホームフォルダの下だけを出している。
-        <button id="browseNative">Windowsの窓を開く</button>
-      </div>
-    </div>
-    <div class="row2 hint" id="saveDirHint">
-      選び直すと `.env` に書く。<b>次の起動もこの置き場で始まる。</b>
-      いま開いている記録は、その場で閉じて新しい置き場に開き直す。
+    <div class="row2 hint" id="recLatest"></div>
+    <div class="row2 hint">
+      記録は字幕PCの中に溜まる。<b>落とせるのは最新の1本である。</b>
+      置き場を変えるなら .env の LIVECAPTION_SAVE_DIR。
     </div>
   </div>
 
@@ -1049,12 +1049,11 @@ __FEED_JS__
   const msg = $("msg"), pill = $("zoomPill"), zoomState = $("zoomState");
   const tpill = $("tunnelPill"), tstate = $("tunnelState");
   const wayNetState = $("wayNetState"), wayZoomState = $("wayZoomState");
-  const saveDir = $("saveDir"), saveDirPick = $("saveDirPick");
-  const saveDirSet = $("saveDirSet"), saveDirState = $("saveDirState");
   const qrbox = $("qrbox"), qr = $("qr"), publicUrl = $("publicUrl");
   const qrsave = $("qrsave");
   const tkind = $("tkind"), tkindHint = $("tkindHint");
   const meetPick = $("meetPick"), meetCount = $("meetCount");
+  const meetStart = $("meetStart"), meetStartWhat = $("meetStartWhat");
   const meetWhen = $("meetWhen"), meetUrl = $("meetUrl");
   const meetUrlRow = $("meetUrlRow"), meetQr = $("meetQr");
   const schedState = $("schedState"), schedNext = $("schedNext");
@@ -1066,8 +1065,7 @@ __FEED_JS__
   const split = $("split"), sep = $("sep");
   const viewerUrl = $("viewerUrl"), openViewer = $("openViewer");
   const terrBox = $("tunnelErrBox"), terr = $("tunnelErr");
-  const openLog = $("openLog"), logState = $("logState");
-  const logPath = $("logPath"), logPathRow = $("logPathRow");
+  const logState = $("logState");
   let lastQr = "";
 
   function say(text, ok) { msg.textContent = text; msg.className = ok ? "ok" : "ng"; }
@@ -1284,52 +1282,25 @@ __FEED_JS__
     // --- 記録 ---
     // **読める形（.md）が書かれるのは終了時である。** 途中で見たいことがあるので、
     // そのときはここから読む。書き込みが失敗していたら、それを隠さない。
+    //
+    // **字幕PCの中のパスは出さない**（2026-09-20 の麻生の指示）。記録は下の
+    // 一覧から落とすので、どこに置いてあるかは読み手に関係が無い。
     const g = s.transcript || {};
     if (!g.on) {
       logState.textContent = "残さない（--no-save）";
-      logPath.textContent = "";
-      openLog.disabled = true;
     } else if (g.error) {
       logState.innerHTML = '<span class="ng">残せていない: ' + g.error + "</span>";
-      logPath.textContent = g.path || "";
-      openLog.disabled = true;
-    } else {
+    } else if (g.count > 0) {
       logState.textContent = g.count + " 文を記録した（終了時に読める形も書く）";
-      logPath.textContent = g.path || "";
-      openLog.disabled = (g.count === 0);
+    } else {
+      // **「0 文を記録した」とは書かない。** 下に「最新の記録」が出ているので、
+      // 落とせる記録が別にあるのに、0 と並べると取り違える。
+      logState.textContent = "";
     }
-    // 空のパス欄は、中身の無い箱として見えてしまう。出さない。
-    logPathRow.style.display = logPath.textContent ? "" : "none";
-
-    // --- 記録の置き場 ---
-    // **入力中は上書きしない。** 2秒ごとに状態を取りに行くので、書き換えると
-    // 手で打っている途中のパスが消える。
-    const rc = s.records || {};
-    if (document.activeElement !== saveDir && !saveDirDirty) {
-      saveDir.value = rc.dir || "";
-    }
-    saveDirPick.style.display = rc.can_pick ? "" : "none";
-  }
-
-  // --- 記録の置き場 -------------------------------------------------------
-  // **窓は字幕PCの画面に出る。** 別の機体から開いた操作画面では使えないので、
-  // そのときはサーバが断り、手入力に落ちる。
-  let saveDirDirty = false;
-  saveDir.addEventListener("input", () => { saveDirDirty = true; });
-
-  async function setSaveDir(body, busy) {
-    saveDirPick.disabled = true; saveDirSet.disabled = true;
-    saveDirState.textContent = busy;
-    try {
-      const st = await post("/api/savedir", body);
-      showStatus(st);
-      saveDirDirty = false;
-      saveDir.value = (st.records || {}).dir || saveDir.value;
-      saveDirState.textContent = st.records_cancelled ? "" : "置き場を変えた";
-    } catch (e) {
-      saveDirState.innerHTML = '<span class="ng">' + e.message + "</span>";
-    }
-    saveDirPick.disabled = false; saveDirSet.disabled = false;
+    // **最初の1文が入った時と、記録が入れ替わった時に問い合わせ直す。**
+    // どちらも「最新の1本」が変わる瞬間である。
+    const key = (g.path || "") + (g.count > 0 ? ":1" : ":0");
+    if (key !== recKey) { recKey = key; loadLatest(); }
   }
   // --- Zoomのチャットに投げる -------------------------------------------
   // **画面操作で投げている。** Zoom に会議中のチャットへ投稿する API は無い。
@@ -1353,81 +1324,54 @@ __FEED_JS__
     chatPost.disabled = false;
   });
 
-  saveDirSet.addEventListener("click", () =>
-    setSaveDir({ path: saveDir.value }, "確かめている…"));
-  saveDir.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); saveDirSet.click(); }
-  });
-
-  // --- 画面の中でフォルダを辿る -------------------------------------------
-  // **ネイティブの窓は、この機体の前でしか使えない。** 窓は字幕PCの画面に出る
-  // ので、tailnet 越しに押した人には何も見えない。こちらは、どこから開いても
-  // 同じように動く。
+  // --- 最新の記録のダウンロード -------------------------------------------
+  // **記録は字幕PCの中にある。** 遠隔で操作しているので、ここから落とせないと
+  // ファイルを取りに RustDesk を起こすことになる（2026-09-20 の麻生の指示）。
   //
-  // **出すのはホームフォルダの下だけである。** その外を選ぶときは、パスを直接
-  // 入れるか、機体の前でネイティブの窓を使う。
-  const browseBox = $("browseBox"), browseList = $("browseList");
-  const browseHere = $("browseHere"), browseTake = $("browseTake");
-  const browseClose = $("browseClose"), browseOut = $("browseOut");
-  const browseNative = $("browseNative");
-  let browseAt = "";
+  // **落とせるのは最新の1本だけである。** どれを落とすかはサーバが決めるので、
+  // 画面からファイルを指す文字列は送らない。
+  //
+  // 問い合わせるのは、開いたときと、記録が入れ替わったときだけである。
+  // **2秒ごとの状態には載せない。** そのたびにディスクを読む理由が無い。
+  const recMd = $("recMd"), recJsonl = $("recJsonl"), recLatest = $("recLatest");
+  let recKey = null;
 
-  // ネイティブの窓を出せるのは、この機体の前で開いたときだけである。
-  const atMachine = ["127.0.0.1", "localhost", "[::1]", "::1"]
-    .indexOf(location.hostname) >= 0;
+  function recReady(on) {
+    [recMd, recJsonl].forEach((a) => {
+      a.classList.toggle("off", !on);
+      if (on) { a.removeAttribute("aria-disabled"); }
+      else { a.setAttribute("aria-disabled", "true"); }
+    });
+  }
 
-  async function browseTo(path) {
-    browseList.textContent = "";
+  async function loadLatest() {
     try {
-      const r = await fetch("/api/folders?p=" + encodeURIComponent(path || ""));
+      const r = await fetch("/api/records/latest");
       const d = await r.json();
-      browseAt = d.path || "";
-      browseHere.textContent = browseAt;
-      if (d.up) { browseList.appendChild(dirRow("↑ 上へ", d.up, true)); }
-      (d.dirs || []).forEach((name) => {
-        // **区切りは付けずに繋ぐ。** Windows も Linux も、末尾の重複を許す。
-        browseList.appendChild(dirRow(name, browseAt + "/" + name, false));
-      });
-      if (d.error) {
-        const e = document.createElement("div");
-        e.className = "none ng"; e.textContent = d.error;
-        browseList.appendChild(e);
-      } else if (!(d.dirs || []).length) {
-        const e = document.createElement("div");
-        e.className = "none"; e.textContent = "中にフォルダが無い。";
-        browseList.appendChild(e);
+      const it = d.item;
+      if (!it) {
+        recReady(false);
+        recLatest.textContent = d.saving ? "まだ記録が無い。" : "残さない（--no-save）";
+        return;
       }
+      recReady(true);
+      recLatest.textContent = "最新の記録: "
+        + (it.label ? it.label + "　" : "") + it.when
+        + "　確定した文: " + it.lines;
     } catch (e) {
-      browseList.textContent = "";
-      const m = document.createElement("div");
-      m.className = "none ng"; m.textContent = String(e.message);
-      browseList.appendChild(m);
+      recReady(false);
+      recLatest.innerHTML = '<span class="ng">記録が読めない: ' + e.message + "</span>";
     }
   }
 
-  function dirRow(label, path, up) {
-    const b = document.createElement("button");
-    b.className = "d" + (up ? " up" : "");
-    b.textContent = label;
-    b.addEventListener("click", () => browseTo(path));
-    return b;
-  }
-
-  saveDirPick.addEventListener("click", () => {
-    if (!browseBox.hidden) { browseBox.hidden = true; return; }
-    browseBox.hidden = false;
-    browseOut.style.display = atMachine ? "" : "none";
-    browseTo(saveDir.value);
-  });
-  browseClose.addEventListener("click", () => { browseBox.hidden = true; });
-  browseTake.addEventListener("click", async () => {
-    await setSaveDir({ path: browseAt }, "確かめている…");
-    browseBox.hidden = true;
-  });
-  browseNative.addEventListener("click", async () => {
-    await setSaveDir({ pick: true }, "字幕PCの画面で選んでいる…");
-    browseBox.hidden = true;
-  });
+  // 押せない間は落としに行かない。**空のファイルを渡さない。**
+  [recMd, recJsonl].forEach((a) => a.addEventListener("click", (e) => {
+    if (a.classList.contains("off")) { e.preventDefault(); }
+  }));
+  recMd.href = "/api/records/file?fmt=md";
+  recJsonl.href = "/api/records/file?fmt=jsonl";
+  recReady(false);
+  loadLatest();
 
   // --- 字幕の生成 ---------------------------------------------------------
   async function setGen(on) {
@@ -1918,6 +1862,16 @@ __FEED_JS__
     } else {
       meetUrlRow.style.display = "none";
     }
+
+    // **押すと何が起きるかを、そのつど書く。** 会議ごとに違う（Zoomに入るか、
+    // チャットに投げるか）ので、ボタンの名前だけでは分からない。
+    const what = ["配信"];
+    if (live && live.zoom) { what.push("Zoomに入る"); }
+    what.push("字幕の生成");
+    if (live && live.chat) { what.push("チャットに投げる"); }
+    meetStartWhat.textContent = live ? what.join(" → ") : "";
+    // 回している間は押させない。止めるのは「いま止める」である。
+    meetStart.disabled = !live || ((sc || {}).state || "idle") !== "idle";
   }
 
   meetPick.addEventListener("change", async () => {
@@ -1926,6 +1880,17 @@ __FEED_JS__
                             { action: "select", id: meetPick.value }));
       say("配信する会議: " + meetPick.options[meetPick.selectedIndex].text, true);
     } catch (e) { say(String(e.message), false); }
+  });
+
+  meetStart.addEventListener("click", async () => {
+    meetStart.disabled = true;
+    try {
+      showStatus(await post("/api/schedule",
+                            { action: "start", id: meetPick.value }));
+      // **始まるまで数十秒かかる。** Zoomの起動と配信の立ち上げを含む。
+      // 進み具合は「いまの状態」に出る。
+      say("この会議を始める。進み具合は上に出る。", true);
+    } catch (e) { say(String(e.message), false); meetStart.disabled = false; }
   });
 
   meetQr.addEventListener("click", () => {
@@ -1957,7 +1922,6 @@ __COPY_JS__
 
   // --- 記録 ---------------------------------------------------------------
   // 別のタブに出す。**この画面は共有しないので、記録もここから出さない。**
-  openLog.addEventListener("click", () => { window.open("/api/transcript", "_blank"); });
 
   // --- 終了 ---------------------------------------------------------------
   // 本体が終わればサーバも消える。**返事が来なくても成功でありうる。**
@@ -2871,38 +2835,62 @@ def _control_handler(web: WebCaptions):
                     self._send_json(503, {"error": "字幕の向きの受け口が用意できていない。"})
                 else:
                     self._send_json(200, web.direction.status())
-            elif u.path == "/api/folders":
-                # **遠くからでも置き場を選べるようにする。** ネイティブの窓は
-                # 字幕PCの画面にしか出ないので、tailnet 越しには使えない
-                # （2026-09-20 の麻生の指示）。画面の中で辿れるようにする。
-                #
-                # **返すのはホームフォルダの下だけである。** 操作画面には認証が
-                # 無いので、ディスク全体を見せる口をここに足さない。
-                want = parse_qs(u.query).get("p", [""])[0]
-                self._send_json(200, config.browse(want))
+            elif u.path == "/api/records/latest":
+                # 落とせる記録が何か。**操作ポートにしか無い。**
+                if web.records is None:
+                    self._send_json(503, {"error": "記録の受け口が用意できていない。"})
+                else:
+                    self._send_json(200, web.records.latest())
+            elif u.path == "/api/records/file":
+                self._send_record(parse_qs(u.query).get("fmt", ["md"])[0])
             elif u.path == "/api/devices":
                 if web.audio is None:
                     self._send_json(503, {"error": "音声の受け口が用意できていない。"})
                 else:
                     self._send_json(200, web.audio.devices())
-            elif u.path == "/api/transcript":
-                self._send_transcript()
             else:
                 self.send_error(404)
 
-        def _send_transcript(self) -> None:
-            """ここまでの記録を読める形で返す。
+        def _send_record(self, fmt: str) -> None:
+            """**最新の記録を1本**、ダウンロードとして返す。
 
             **操作ポートにしか無い。** 会議の中身そのものなので、閲覧側や
-            トンネルの向こうからは触れない。ブラウザで読めるように
-            `text/plain` で返す（保存させるのが目的ではない）。
+            トンネルの向こうからは触れない。
+
+            **どれを返すかはサーバが決める。** 画面からファイルを指す文字列を
+            受け取らない。受け取れば、それを検算する口を作ることになる。
+
+            **`.md` は要求のたびに組み立てる。** ファイルとしての `.md` が
+            書かれるのは終了時だけなので、会議の最中と、電源ごと落ちた後には
+            無い。組み立てれば、どちらでも同じように落とせる。
+
+            **いま書いている記録には「まだ続いている」と書く**（`final`）。
+            終わった記録と同じ見出しにすると、途中のものを完成品と取り違える。
             """
-            if web.transcript is None:
-                self._send_bytes(404, "text/plain; charset=utf-8",
-                                 "記録を残さない設定で起動している（--no-save）。".encode())
+            if web.records is None:
+                self._send_json(503, {"error": "記録の受け口が用意できていない。"})
                 return
-            self._send_bytes(200, "text/plain; charset=utf-8",
-                             web.transcript.markdown().encode("utf-8"))
+            path = web.records.latest_path()
+            if path is None:
+                self._send_json(404, {"error": "まだ記録が無い。"})
+                return
+            stem = path.stem
+            live = web.transcript is not None and web.transcript.path.stem == stem
+            try:
+                if fmt == "jsonl":
+                    body = path.read_bytes()
+                    ctype = "application/x-ndjson"
+                    name = f"{stem}.jsonl"
+                else:
+                    body = transcript_mod.markdown_of(
+                        path, final=not live).encode("utf-8")
+                    ctype = "text/markdown; charset=utf-8"
+                    name = f"{stem}.md"
+            except OSError as exc:
+                self._send_json(500, {"error": f"記録が読めない: {exc}"})
+                return
+            self._send_bytes(200, ctype, body,
+                             {"Content-Disposition": _attachment(name)})
 
         def _send_qr(self, url: str, query: dict | None = None) -> None:
             """閲覧URLのQRコードを返す。
@@ -2950,7 +2938,7 @@ def _control_handler(web: WebCaptions):
                             "/api/engine", "/api/device", "/api/glossary",
                             "/api/tuning", "/api/tuning/save", "/api/direction",
                             "/api/lang", "/api/meetings", "/api/schedule",
-                            "/api/savedir", "/api/chat"):
+                            "/api/chat"):
                 self.send_error(404)
                 return
             try:
@@ -2969,10 +2957,6 @@ def _control_handler(web: WebCaptions):
 
             if path == "/api/schedule":
                 self._schedule(body)
-                return
-
-            if path == "/api/savedir":
-                self._savedir(body)
                 return
 
             if path == "/api/chat":
@@ -3106,40 +3090,6 @@ def _control_handler(web: WebCaptions):
                 return
             self._send_json(200, dict(web.status(), chat=done))
 
-        def _savedir(self, body: dict) -> None:
-            """会議の記録の置き場を選び直す。
-
-            `pick` が来たらフォルダ選択の窓を出す。`path` が来たらそれを使う。
-
-            **窓は字幕PCの画面に出る。** 遠くの機体から開いた操作画面では、
-            押した人には何も見えないまま、字幕PCの画面に窓が残る。無人で回す
-            機体でそれをやると、予定の会議がその窓の後ろで始まる。
-            **127.0.0.1 から来た要求でなければ、窓は開かない。**
-            """
-            if web.records is None:
-                self._send_json(503, {"error": "記録の受け口が用意できていない。"})
-                return
-            if body.get("pick"):
-                peer = self.client_address[0] if self.client_address else ""
-                if peer not in ("127.0.0.1", "::1"):
-                    self._send_json(400, {"error":
-                        "フォルダを選ぶ窓は字幕PCの画面に出る。"
-                        "別の機体からは使えない。パスを直接入れること。"})
-                    return
-                chosen = folder_pick.pick(
-                    web.records.status().get("dir", ""), "LiveCaption")
-                if not chosen:
-                    # 取り消し。**失敗ではない。** 画面に赤い字を出さない。
-                    self._send_json(200, dict(web.status(), records_cancelled=True))
-                    return
-                body = {"path": chosen}
-            try:
-                web.records.set_dir(str(body.get("path", "")))
-            except ValueError as exc:
-                self._send_json(400, {"error": str(exc)})
-                return
-            self._send_json(200, web.status())
-
         def _stop_outputs(self) -> dict:
             """字幕の生成を止めるとき、出口も一緒に閉じる。
 
@@ -3197,19 +3147,28 @@ def _control_handler(web: WebCaptions):
             self._send_json(200, web.status())
 
         def _schedule(self, body: dict) -> None:
-            """予定の見張りへの指示。**止める・飛ばす・失敗を消す、の3つだけ。**"""
+            """予定の見張りへの指示。いま始める・止める・飛ばす・失敗を消す。"""
             if web.scheduler is None:
                 self._send_json(503, {"error": "予定の受け口が用意できていない。"})
                 return
             action = str(body.get("action", ""))
-            if action == "stop":
-                web.scheduler.stop_now()
-            elif action == "skip":
-                web.scheduler.skip_next()
-            elif action == "ack":
-                web.scheduler.ack()
-            else:
-                self._send_json(400, {"error": f"知らない操作: 「{action}」。"})
+            try:
+                if action == "start":
+                    # **予定を待たずに、選んだ会議を1本回す。** 走る順序は
+                    # 予定の回と同じである（配信 → Zoom → 生成 → チャット）。
+                    web.scheduler.start_now(str(body.get("id", "")))
+                elif action == "stop":
+                    web.scheduler.stop_now()
+                elif action == "skip":
+                    web.scheduler.skip_next()
+                elif action == "ack":
+                    web.scheduler.ack()
+                else:
+                    self._send_json(400, {"error": f"知らない操作: 「{action}」。"})
+                    return
+            except ValueError as exc:
+                # 会議を選んでいない、もう回している、など。操作した人に返す。
+                self._send_json(400, {"error": str(exc)})
                 return
             self._send_json(200, web.status())
 

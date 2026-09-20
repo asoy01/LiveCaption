@@ -5,7 +5,7 @@
 `.jsonl` は1文ごとに書いて流してあるので、落ちる直前までが残っている。
 
     pixi run python scripts/transcript_to_md.py                       # いちばん新しいものを直す
-    pixi run python scripts/transcript_to_md.py <ダウンロード>/live-caption_2026-09-08_143012.jsonl
+    pixi run python scripts/transcript_to_md.py local/transcripts/live-caption_2026-09-08_143012.jsonl
     pixi run python scripts/transcript_to_md.py --all                 # .md が無いものを全部
 
 書式は本体（`src/live_caption/transcript.py` の `render()`）を呼んで作る。
@@ -50,7 +50,8 @@ def main() -> int:
     if args.path:
         targets = [Path(args.path)]
     else:
-        # **接頭辞で絞る。** ダウンロードフォルダには他の .jsonl も落ちてくる。
+        # **接頭辞で絞る。** 置き場は変えられるので、無関係な .jsonl が
+        # 同じフォルダにあることがある。
         found = sorted(Path(args.dir).glob(f"{config.TRANSCRIPT_PREFIX}*.jsonl"))
         if not found:
             print(f"記録が無い: {args.dir}")

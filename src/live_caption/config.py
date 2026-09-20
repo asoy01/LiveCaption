@@ -334,126 +334,35 @@ HOST_TOKEN_KINDS = ("tailscale",)
 # **既定で残す。** 誤認識は日本語の側にしか現れないので、用語表を育てるのに要る。
 # 会議の内容が字幕PCのディスクに残るので、要らないときは --no-save で止められる。
 #
-# **置き場はユーザーのダウンロードフォルダ**（麻生の指示、2026-09-08）。
-# 会議のあとすぐ開けるところに出す。置き場を変えるなら --save-dir。
+# **置き場は `local/transcripts/`**（麻生の指示、2026-09-20）。**字幕PCの中に
+# 溜めておいて、操作画面から落とす。** 字幕PCは常時起動で、操作は tailnet 越し
+# である。ダウンロードフォルダに出しても、取りに行くには RustDesk が要る。
+# 記録を読むためだけに遠隔操作を起こすのは重い。
 #
-# 名前に `live-caption_` を付ける。ダウンロードフォルダは他のファイルと
-# 混ざるので、**日付だけの名前では何のファイルか分からない。**
-# `scripts/transcript_to_md.py` もこの接頭辞で探す。
-
-
-def downloads_dir() -> Path:
-    """ユーザーのダウンロードフォルダを返す。
-
-    **場所は動かせる。** Windowsは「既知のフォルダ」の設定を見る。
-    見つからなければ `~/Downloads`。それも無ければ作る。
-    """
-    if os.name == "nt":
-        try:
-            import winreg
-
-            key = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders"
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as k:
-                # ダウンロードフォルダの既知のフォルダID
-                path, _ = winreg.QueryValueEx(
-                    k, "{374DE290-123F-4565-9164-39C4925E467B}"
-                )
-            if path:
-                return Path(os.path.expandvars(path))
-        except OSError:
-            pass
-    else:
-        # Linux は XDG の設定を見る。無ければ ~/Downloads。
-        xdg = os.environ.get("XDG_DOWNLOAD_DIR", "").strip()
-        if xdg:
-            return Path(os.path.expandvars(xdg))
-    return Path.home() / "Downloads"
-
-
-TRANSCRIPT_DIR = downloads_dir()
+# （2026-09-08 から 2026-09-20 まではダウンロードフォルダだった。そのときの
+# 理由は「会議のあとすぐ開ける」ことで、字幕PCの前に座る前提だった。）
+#
+# 置き場を変えるなら `.env` の `LIVECAPTION_SAVE_DIR` か `--save-dir`。
+#
+# 名前に `live-caption_` を付ける。`scripts/transcript_to_md.py` もこの接頭辞で
+# 探す（`*.jsonl` で探すと、無関係なファイルを拾う）。
+TRANSCRIPT_DIR = PROJECT_ROOT / "local" / "transcripts"
 TRANSCRIPT_PREFIX = "live-caption_"
 
-# 操作画面から選び直した置き場。`.env` のこの名前に書く。
+# 置き場を変えるときに書く環境変数。`.env` に書けば次の起動から効く。
 SAVE_DIR_ENV = "LIVECAPTION_SAVE_DIR"
 
-
-# 画面から辿れる範囲。**ホームフォルダの外へは出さない。**
-# 操作画面には認証が無く、守っているのは「どこから届くか」だけである
-# （tailnet の中なら誰でも開ける）。ディスク全体を見せる口を、そこに足さない。
-def browse_root() -> Path:
-    return Path.home()
-
-
-# Windows のファイル属性。stat の st_file_attributes に立つ。
-_FILE_HIDDEN = 0x2
-_FILE_SYSTEM = 0x4
-
-# 1回に返すフォルダの数。**上限を付ける。** 数千個入ったフォルダを開いたときに、
-# 画面が固まるのと、送る量が膨らむのを防ぐ。
-BROWSE_LIMIT = 400
-
-
-def browse(path: str | Path = "") -> dict:
-    """ホームフォルダの下を辿る。1階層ぶんのフォルダ名を返す。
-
-    **範囲の外は、黙ってホームフォルダに戻す。** 断り書きを出しても、画面から
-    行けない場所なので意味が無い。`..` を並べた要求もここで吸収される。
-
-    **シンボリックリンクと接合点を追った後で判定する。** `resolve()` の前に
-    文字列で見ると、ホームの下に置いたリンクから外へ出られる。
-    """
-    root = browse_root()
-    try:
-        root = root.resolve()
-    except OSError:
-        pass
-    text = str(path).strip().strip('"')
-    try:
-        target = Path(os.path.expandvars(text)).expanduser().resolve() if text else root
-    except OSError:
-        target = root
-    if target != root and root not in target.parents:
-        target = root
-    if not target.is_dir():
-        target = root
-
-    names: list[str] = []
-    error = ""
-    try:
-        with os.scandir(target) as it:
-            for entry in it:
-                if len(names) >= BROWSE_LIMIT:
-                    error = "フォルダが多いので、途中までしか出せない。"
-                    break
-                # 隠しフォルダは出さない。**探しているものは、まず入っていない。**
-                if entry.name.startswith("."):
-                    continue
-                try:
-                    if not entry.is_dir():
-                        continue
-                    # Windows の「隠し」「システム」も落とす。ホームフォルダには
-                    # `Application Data` や `Cookies` のような、昔との互換のための
-                    # 接合点が並んでいる。**開いても中身は見えない。**
-                    # 一覧に出すと、押しても何も起きない行になる。
-                    attrs = getattr(entry.stat(follow_symlinks=False),
-                                    "st_file_attributes", 0)
-                    if attrs & (_FILE_HIDDEN | _FILE_SYSTEM):
-                        continue
-                    names.append(entry.name)
-                except OSError:
-                    continue
-    except OSError as exc:
-        error = f"そのフォルダは読めない: {exc}"
-    names.sort(key=str.casefold)
-
-    up = "" if target == root else str(target.parent)
-    return {
-        "root": str(root),
-        "path": str(target),
-        "up": up,
-        "dirs": names,
-        "error": error,
-    }
+# 「停止」を押してから、記録を区切るまでの秒数。
+#
+# **停止は「この会議は終わり」の意味である**（配信もZoom字幕も閉じる）。記録も
+# そこで閉じて `.md` を書く。閉じないと、落とした `.md` に「会議はまだ続いている」
+# と書かれたままになる（麻生の指摘、2026-09-20）。
+#
+# **すぐには閉じない。** 止めた時点で、最後の1文がまだ翻訳の途中のことがある
+# （翻訳の中央値 0.9秒、行の間隔 0.6秒）。即座に区切ると、その1文だけが次の
+# 記録に落ちる。3秒待てば、書き終わってから区切れる。
+# **この間に再開したら区切らない。** 休憩で止めただけなら、記録は1本のままにする。
+STOP_ROLL_WAIT_SEC = 3.0
 
 
 def check_save_dir(path: str | Path) -> Path:

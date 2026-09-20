@@ -222,32 +222,17 @@ EN: dict[str, str] = {
 
     # --- 会議の記録 ---
     "会議の記録": "Meeting record",
-    # --- 記録の置き場 ---
-    "置き場": "Folder",
-    "フォルダを選ぶ": "Choose a folder",
-    "この場所にする": "Use this path",
-    "↑ 上へ": "↑ Up",
-    "ここにする": "Use this one",
-    "閉じる": "Close",
-    "ホームフォルダの下だけを出している。":
-        "Only folders under the home folder are listed. ",
-    "Windowsの窓を開く": "Open the Windows dialog",
-    "中にフォルダが無い。": "No folders in here.",
-    "フォルダが多いので、途中までしか出せない。":
-        "Too many folders to list them all.",
-    "そのフォルダは読めない: ": "That folder cannot be read: ",
-
-    "置き場を変えた": "Folder changed",
-    "字幕PCの画面で選んでいる…": "Choosing on the caption PC screen…",
-    "確かめている…": "Checking…",
-    "選び直すと `.env` に書く。": "The choice is written to `.env`. ",
-    "次の起動もこの置き場で始まる。": "The next launch starts with this folder.",
-    "いま開いている記録は、その場で閉じて新しい置き場に開き直す。":
-        "The record that is open now is closed and reopened in the new folder.",
-    "フォルダを選ぶ窓は字幕PCの画面に出る。別の機体からは使えない。パスを直接入れること。":
-        "The folder dialog opens on the caption PC screen, so it is no use from "
-        "another machine. Type the path instead.",
+    "読める形 (.md)": "Readable (.md)",
+    "原本 (.jsonl)": "Original (.jsonl)",
+    "最新の記録: ": "Latest record: ",
+    "確定した文: ": "Sentences: ",
+    "まだ記録が無い。": "No record yet.",
+    "記録は字幕PCの中に溜まる。": "The records stay on the caption PC. ",
+    "落とせるのは最新の1本である。": "You can download the latest one.",
+    "置き場を変えるなら .env の LIVECAPTION_SAVE_DIR。":
+        "To change the folder, set LIVECAPTION_SAVE_DIR in .env.",
     "記録の受け口が用意できていない。": "The record control is not available.",
+    "記録が読めない: ": "The record cannot be read: ",
     "フォルダを指定すること。": "Give a folder.",
     "絶対パスで指定すること。": "Give an absolute path.",
     "フォルダではない。": "That is not a folder.",
@@ -264,6 +249,18 @@ EN: dict[str, str] = {
     "設定": "Setup",
     "音量メーターは「この会議」の側に出る。":
         "The level meter is on the This meeting tab.",
+    "この会議をいま始める": "Start this meeting now",
+    "配信": "Delivery",
+    "字幕の生成": "Caption generation",
+    "Zoomに入る": "join Zoom",
+    "チャットに投げる": "post to the chat",
+    "この会議を始める。進み具合は上に出る。":
+        "Starting this meeting. The progress is shown above.",
+    "いま会議を回している。先に「いま止める」を押すこと。":
+        "A meeting is running. Press Stop now first.",
+    "先に、配信する会議を選ぶこと。": "Pick the meeting to deliver first.",
+    "会議の一覧が用意できていない。": "The meeting list is not available.",
+    "本体がまだ動いていない。": "The engine is not running yet.",
     "予定の入力・追加・削除は、上の「会議の管理」で行う。":
         "Add, edit and delete meetings on the Manage meetings tab above. ",
     "向きは選んだ時点で切り替わる。": "The direction changes the moment you pick it. ",
@@ -271,9 +268,6 @@ EN: dict[str, str] = {
     "配信の失敗": "delivery failed",
     "送信中": "sending",
     "登録済み": "token set",
-
-    "途中まで読む": "Read it so far",
-    "パスをコピー": "Copy the path",
 
     # --- 音声の入力 ---
     "音声の入力": "Audio input",

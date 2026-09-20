@@ -167,6 +167,46 @@ class Scheduler:
         self._teardown("操作画面から止めた")
         return self.status()
 
+    def start_now(self, meeting_id: str = "") -> dict:
+        """**いま、この会議を1本始める。** 予定の時刻を待たない。
+
+        走る順序は予定の回とまったく同じである（`_begin`）。配信を始め、記録を
+        会議の名前で切り替え、Zoomに入り、生成を開始し、チャットに投げる。
+        **同じ道を通す。** 手動のために別の順序を書くと、片方だけ直す日が来る。
+
+        予定を入れていない会議を、その場で1本回すためのものである。会議に
+        `chat` の印が付いていれば、**押した時と3分後**にチャットへ投げる
+        （予定の回では、定刻と3分後）。Zoom のURLが空なら、入りに行かない。
+
+        **待たずに返す。** `_begin` はZoomの起動と配信の立ち上げを含むので、
+        数十秒かかる。HTTPの返事をそこまで止めない。進み具合は `status()` の
+        `state` と `note` に出る。
+
+        呼ぶのはHTTPサーバのスレッドである。
+        """
+        if self.state != IDLE:
+            raise ValueError("いま会議を回している。先に「いま止める」を押すこと。")
+        store = self.app.web.meetings if self.app.web else None
+        if store is None:
+            raise ValueError("会議の一覧が用意できていない。")
+        want = str(meeting_id) or store.status()["active"]
+        found = [m for m in store.items() if m.id == want]
+        if not found:
+            raise ValueError("先に、配信する会議を選ぶこと。")
+        loop = self.app.zoom.loop
+        if loop is None:
+            raise ValueError("本体がまだ動いていない。")
+        meeting = found[0]
+        # **ここで掴んだことにする。** `_begin` が状態を立てるのは輪の中なので、
+        # それまでの数秒に見張りが別の回を始められる。
+        self.state = JOINING
+        self.note = f"「{meeting.name}」をいま始める"
+        occurrence = store.occurrence_key(datetime.now())
+        asyncio.run_coroutine_threadsafe(
+            self._begin_guarded(meeting, occurrence), loop)
+        print(f"[{now_str()}] 予定        操作画面から「{meeting.name}」を始める")
+        return self.status()
+
     def skip_next(self) -> dict:
         """次の回を済ませたことにして飛ばす。「明日は出ない」ときに使う。"""
         store = self.app.web.meetings if self.app.web else None
@@ -181,6 +221,25 @@ class Scheduler:
         print(f"[{now_str()}] 予定        {nxt[0]['at']} の"
               f"「{nxt[0]['name']}」を飛ばした")
         return self.status()
+
+    async def _begin_guarded(self, meeting, occurrence: str) -> None:  # noqa: ANN001
+        """`start_now` から投げる `_begin`。**例外を外に出さない。**
+
+        `run_coroutine_threadsafe` で投げた輪は誰も待たないので、例外が出ても
+        どこにも現れない。**そして状態は JOINING のまま固まる。** そうなると、
+        以後どの会議も始まらない（見張りは JOINING を「回している」と見る）。
+        `run_forever` が `_tick` に対してやっているのと同じ始末をする。
+        """
+        try:
+            await self._begin(meeting, occurrence)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            self._fail(f"いま始められない: {type(exc).__name__}: {exc}")
+            try:
+                self._teardown("始められなかったので片付けた")
+            except Exception:  # noqa: BLE001
+                self.state = IDLE
 
     # --- 見張り -------------------------------------------------------------
 

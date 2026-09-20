@@ -121,8 +121,10 @@ data/recordings/         audio used for comparing recognisers (not in git)
 local/                   working files (not in git)
 ```
 
-The record of each meeting is written to **your Downloads folder** as
-`live-caption_<date>.jsonl` and `.md`. Nothing is written inside the repository.
+The record of each meeting is written to **`local/transcripts/`** as
+`live-caption_<date>.jsonl` and `.md`. **You download it from the control
+page**, so you do not have to reach the caption PC to read it. To keep the
+records somewhere else, set `LIVECAPTION_SAVE_DIR` in `.env`.
 
 ## Requirements
 

@@ -10,14 +10,15 @@
 
 ## ファイルは2つできる
 
-**置き場は既定でユーザーのダウンロードフォルダ**（`config.downloads_dir()`）。
-会議のあとすぐ開けるところに出す。変えるなら `--save-dir`。
+**置き場は既定で `local/transcripts/`**（`config.TRANSCRIPT_DIR`）。**字幕PCの
+中に溜めておいて、操作画面の「会議の記録」から落とす。** 変えるなら `.env` の
+`LIVECAPTION_SAVE_DIR` か `--save-dir`。
 
-    ダウンロード/live-caption_2026-09-08_143012.jsonl   1行 = 確定した1文。逐次追記する
-    ダウンロード/live-caption_2026-09-08_143012.md      読める形。終了時に書く
+    local/transcripts/live-caption_2026-09-08_143012.jsonl   1行 = 確定した1文。逐次追記する
+    local/transcripts/live-caption_2026-09-08_143012.md      読める形。終了時に書く
 
-**名前に `live-caption_` を付ける。** ダウンロードフォルダは他のファイルと混ざる。
-日付だけの名前では、何のファイルか分からない。
+**名前に `live-caption_` を付ける。** 置き場を他のフォルダに変えられるので、
+日付だけの名前では、何のファイルか分からなくなる。
 
 **`.jsonl` が原本である。1文が確定するたびに書いて流す。** 最後にまとめて書くと、
 字幕アプリが落ちたときに会議1本ぶんが消える。1時間の会議でそこを賭けにしない。
@@ -317,3 +318,86 @@ def load(path: Path) -> tuple[dict, list[dict]]:
         elif obj.get("type") == "line":
             records.append(obj)
     return meta, records
+
+
+# --- 置き場にある記録を一覧する ---------------------------------------------
+#
+# **操作画面から落とすために要る**（2026-09-20）。字幕PCは常時起動で、操作は
+# tailnet 越しである。記録を読むためだけに遠隔操作を起こさなくて済むようにする。
+
+
+def _count_lines(path: Path) -> int:
+    """確定した文の数。**メタの1行を引く。**
+
+    全部読むが、数百KBなので一覧を出すたびに読んでも気にならない。
+    `load()` を使わないのは、JSONの解析まではしなくてよいからである。
+    """
+    total = 0
+    try:
+        with path.open("rb") as fh:
+            while chunk := fh.read(65536):
+                total += chunk.count(b"\n")
+    except OSError:
+        return 0
+    return max(total - 1, 0)
+
+
+def scan(directory: Path) -> list[dict]:
+    """置き場にある記録を、**新しい順に**返す。
+
+    `live-caption_2026-09-08_143012_KAGRA朝礼.jsonl` のような名前から、日時と
+    会議名を取り出す。**`.jsonl` だけを見る。** `.md` は同じ幹で組を成すので、
+    2つ並べると同じ会議が2行になる。
+
+    接頭辞で絞るのは、置き場を他のフォルダに変えられるためである。無関係な
+    `.jsonl` を拾って、それを記録として見せてはいけない。
+    """
+    out: list[dict] = []
+    try:
+        found = sorted(Path(directory).glob(f"{config.TRANSCRIPT_PREFIX}*.jsonl"))
+    except OSError:
+        return out
+    for path in found:
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        stem = path.stem
+        rest = stem[len(config.TRANSCRIPT_PREFIX):]
+        # 「2026-09-08_143012」までが日時で、その後ろがあれば会議名である。
+        when, _, label = rest.partition("_")
+        clock, _, label2 = label.partition("_")
+        if len(clock) == 6 and clock.isdigit():
+            when = f"{when} {clock[:2]}:{clock[2:4]}:{clock[4:]}"
+            label = label2
+        out.append({
+            "stem": stem,
+            "label": label,
+            "when": when,
+            "lines": _count_lines(path),
+            "bytes": stat.st_size,
+            "updated": _clock(stat.st_mtime),
+            # 読める形が既にあるか。無くても `.md` は組み立てて返せる。
+            "md": path.with_suffix(".md").exists(),
+        })
+    out.sort(key=lambda r: r["stem"], reverse=True)
+    return out
+
+
+def markdown_of(path: Path, final: bool = True) -> str:
+    """`.jsonl` から読める形を組み立てる。
+
+    **`.md` があっても、こちらから作る。** `.md` が書かれるのは終了時だけなので、
+    会議の最中や、電源ごと落ちた後の記録では、無いか古い。組み立てる先は1つに
+    しておく（`scripts/transcript_to_md.py` と同じ `render()`）。
+
+    終了時刻はファイルの更新時刻で代用する。`.jsonl` には終了の行が無い。
+    最後の1文を書いた時刻なので、実際の終了とは数秒ずれる。
+    """
+    path = Path(path)
+    meta, records = load(path)
+    try:
+        ended = _clock(path.stat().st_mtime)
+    except OSError:
+        ended = ""
+    return render(meta, records, ended=ended, final=final)

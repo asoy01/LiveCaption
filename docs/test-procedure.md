@@ -149,9 +149,9 @@ ticked under 用語集 (glossary) for this meeting, and **字幕の向き** (dir
 matches the language the meeting is held in. A meeting on one subject needs that
 subject's table; another meeting may not.
 
-**You do not have to take notes during the meeting.** The record is saved in
-your Downloads folder. The recognised text and the caption are paired, so you
-can collect the misrecognitions afterwards. The `.md` file is easier to read.
+**You do not have to take notes during the meeting.** The record is saved on
+the caption PC and you download it from the control page. The recognised text
+and the caption are paired, so you can collect the misrecognitions afterwards. The `.md` file is easier to read.
 **If a word makes no sense, ask the speaker. Do not guess.**
 
 ---
@@ -225,24 +225,27 @@ Press Ctrl+C to stop. A summary is printed.
 
 **It is saved by default.** You do not have to turn it on.
 
-The files go to **your Downloads folder**.
+The files go to **`local/transcripts/`** on the caption PC. **You download
+them from the control page**, under **Meeting record** on the **This meeting**
+tab.
 
 ```
-Downloads/live-caption_2026-09-08_143012.jsonl   appended one sentence at a time
-Downloads/live-caption_2026-09-08_143012.md      readable form, written at exit
+local/transcripts/live-caption_2026-09-08_143012.jsonl   appended one sentence at a time
+local/transcripts/live-caption_2026-09-08_143012.md      readable form, written at exit
 ```
 
-The names start with `live-caption_`. The Downloads folder holds many other
-files, so a date alone would not tell you what the file is. Use `--save-dir` to
-put it somewhere else.
+The names start with `live-caption_`, so you can tell the records apart from
+whatever else is in the folder. Set `LIVECAPTION_SAVE_DIR` in `.env`, or use
+`--save-dir`, to put them somewhere else.
 
 The recognised text and the caption are paired. The timestamp is the time the
 recognition became final.
 
-- To read the record during the meeting, press **途中まで読む** under
-  **会議の記録** on the control page
-- **The `.md` file is written at exit.** If the PC loses power, rebuild it from
-  the `.jsonl` with `pixi run python scripts/transcript_to_md.py`
+- **Only the latest record can be downloaded from the control page.** For an
+  older meeting, take the file from the folder on the caption PC
+- **The `.md` file is written when you press Stop and when the app exits.** If
+  the PC loses power, rebuild it from the `.jsonl` with
+  `pixi run python scripts/transcript_to_md.py`
 - To keep no record, start with `--no-save`
 - If no sentence was produced, no file is written
 
@@ -362,9 +365,9 @@ pixi run caption --web 8090 --control-port 8091
      to read
 8. When it is over, press **終了** under **アプリの終了** on the control page. **The tab and the
    terminal window both close**
-9. After the meeting, the record is in your Downloads folder as
-   `live-caption_*.md`. **Collect the misrecognitions and add them to the third
-   column of the right table in `etc/glossary/`.** The next meeting will be
+9. After the meeting, download the record as `.md` from the control page.
+   **Collect the misrecognitions and add them to the third column of the right
+   table in `etc/glossary/`.** The next meeting will be
    better. The header of the `.md` says which tables were used
 
 ---
