@@ -136,8 +136,8 @@ EN: dict[str, str] = {
     "Zoomの会議の窓が無い。": "There is no Zoom meeting window.",
     "貼り付けの途中で、前面の窓が入れ替わった。":
         "Another window came to the front while pasting.",
-    "ファイルを貼れなかった。URLだけは届いている。":
-        "The file could not be pasted. The URL did arrive.",
+    "ファイルを添付できなかった。URLだけは届いている。":
+        "The file could not be attached. The URL did arrive.",
     "字幕が出たら、ZoomのチャットにURLとQRを投げる":
         "Post the URL and a QR code to the Zoom chat once captions start",
     "参加者全員にURLが見える。":

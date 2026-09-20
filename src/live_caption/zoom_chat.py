@@ -64,7 +64,6 @@ MESSAGE = (
 FOCUS_SEC = 0.35        # 窓を前面に出してから落ち着くまで
 OPEN_CHAT_SEC = 4.0     # Alt+H のあと、チャットの窓が出るまで待つ上限
 PASTE_SEC = 0.9         # 文字を貼ってから Enter まで
-PASTE_FILE_SEC = 2.0    # ファイルを貼ってから Enter まで
 SENT_SEC = 1.5          # Enter のあと、次へ進むまで
 
 
@@ -73,13 +72,13 @@ SENT_SEC = 1.5          # Enter のあと、次へ進むまで
 # =========================================================================
 
 CF_UNICODETEXT = 13
-CF_HDROP = 15
 GMEM_MOVEABLE = 0x0002
 KEYEVENTF_KEYUP = 0x0002
 INPUT_KEYBOARD = 1
 SW_RESTORE = 9
 
-VK = {"RETURN": 0x0D, "MENU": 0x12, "CONTROL": 0x11, "H": 0x48, "V": 0x56}
+VK = {"RETURN": 0x0D, "MENU": 0x12, "CONTROL": 0x11, "H": 0x48,
+      "V": 0x56, "ESCAPE": 0x1B}
 
 # **引数と戻り値の型を必ず宣言すること。** 既定は 32bit int なので、64bit の
 # ハンドルが切り詰められ、`OverflowError` になる（2026-09-20 に踏んだ）。
@@ -108,11 +107,6 @@ class _INPUTUNION(ctypes.Union):
 
 class _INPUT(ctypes.Structure):
     _fields_ = [("type", wintypes.DWORD), ("u", _INPUTUNION)]
-
-
-class _DROPFILES(ctypes.Structure):
-    _fields_ = [("pFiles", wintypes.DWORD), ("pt", wintypes.POINT),
-                ("fNC", wintypes.BOOL), ("fWide", wintypes.BOOL)]
 
 
 def _key(vk: int, up: bool = False) -> _INPUT:
@@ -263,27 +257,148 @@ def clip_set_text(text: str) -> bool:
         user32.CloseClipboard()
 
 
-def clip_set_files(paths: list[Path]) -> bool:
-    """ファイルそのものを載せる。エクスプローラでコピーしたのと同じ形。
-
-    **画像を CF_DIB で載せてはいけない。** Zoom が乱数の名前を付けて送るので、
-    受け取った人には何のファイルか分からない。こちらなら名前が残る。
-    """
-    head = _DROPFILES(pFiles=ctypes.sizeof(_DROPFILES), pt=wintypes.POINT(0, 0),
-                      fNC=False, fWide=True)
-    names = "".join(str(p) + "\x00" for p in paths) + "\x00"
-    if not _clip_open():
-        return False
-    try:
-        user32.EmptyClipboard()
-        return _clip_put(CF_HDROP, bytes(head) + names.encode("utf-16-le"))
-    finally:
-        user32.CloseClipboard()
-
-
 # =========================================================================
 # 本体
 # =========================================================================
+
+
+# --- ファイルの添付 ---------------------------------------------------------
+#
+# **クリップボードでファイルを渡さない。** ファイル一覧（CF_HDROP）を載せると、
+# RustDesk のクリップボード同期が落ちる（2026-09-20 に切り分けた。文字だけなら
+# 落ちない）。麻生の指示で、Zoom の添付ボタンから拾わせる形にした。
+#
+# **こちらのほうが確かでもある。** 添付ボタンを押すと標準の Windows ファイル
+# ダイアログ（`#32770`）が開くので、中の部品を ID で掴んでパスを入れられる。
+# 座標に頼るのは、最初の1回の押下だけである。
+
+# 添付ボタンの位置。**チャットの窓の左下からの距離**（96dpi 換算）。
+# 実測（Zoom 7.0.6、Windows、2026-09-20。168dpi のとき、左から167・下から48）。
+ATTACH_FROM_LEFT = 95
+ATTACH_FROM_BOTTOM = 27
+FILE_DIALOG_CLASS = "#32770"
+# ファイルダイアログの部品。Windows の共通ダイアログで決まっている番号である。
+DLG_FILENAME = 1148
+DLG_OPEN = 1
+DLG_CANCEL = 2
+DIALOG_SEC = 6.0        # 添付ボタンを押してから、ダイアログが出るまでの上限
+DIALOG_GONE_SEC = 8.0   # 開くを押してから、ダイアログが消えるまでの上限
+
+WM_SETTEXT = 0x000C
+BM_CLICK = 0x00F5
+MOUSEEVENTF_LEFTDOWN = 0x0002
+MOUSEEVENTF_LEFTUP = 0x0004
+DPI_PER_MONITOR_V2 = -4
+
+
+def _dpi_aware():
+    """この糸だけ、画面の実寸で座標を扱うようにする。
+
+    **本体は画面の実寸を知らないまま動いている。** そのままだと
+    `GetWindowRect` が引き伸ばされた座標を返し、押す場所がずれる。
+    プロセス全体の設定を変えると、画面の取り込みや他の窓に響くので、糸だけ変える。
+    """
+    try:
+        user32.SetThreadDpiAwarenessContext.restype = ctypes.c_void_p
+        user32.SetThreadDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+        return user32.SetThreadDpiAwarenessContext(
+            ctypes.c_void_p(DPI_PER_MONITOR_V2))
+    except (AttributeError, OSError):
+        return None
+
+
+def _dpi_restore(token) -> None:  # noqa: ANN001
+    if token:
+        try:
+            user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(token))
+        except (AttributeError, OSError):
+            pass
+
+
+def _file_dialog() -> int:
+    """Zoom が出しているファイルダイアログ。無ければ 0。"""
+    return _find_window({FILE_DIALOG_CLASS})
+
+
+def _click(x: int, y: int) -> None:
+    """その場所を1回押す。**押す前の位置に必ず戻す。**"""
+    where = wintypes.POINT()
+    user32.GetCursorPos(ctypes.byref(where))
+    try:
+        user32.SetCursorPos(x, y)
+        time.sleep(0.2)
+        user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+        time.sleep(0.05)
+        user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+    finally:
+        time.sleep(0.2)
+        user32.SetCursorPos(where.x, where.y)
+
+
+def attach(chat: int, path: Path) -> bool:
+    """チャットにファイルを添付して送る。**クリップボードは使わない。**
+
+    添付ボタンを押す位置だけが座標頼みである。**押してもダイアログが出なければ、
+    Escape を叩いて必ず戻す。** 隣には画面取り込みのボタンがあるので、外した
+    ままにすると、そちらが開いたまま会議が続くことになる。
+    """
+    if not _raise(chat):
+        return False
+    token = _dpi_aware()
+    try:
+        rect = wintypes.RECT()
+        user32.GetWindowRect(chat, ctypes.byref(rect))
+        try:
+            scale = (user32.GetDpiForWindow(chat) or 96) / 96.0
+        except (AttributeError, OSError):
+            scale = 1.0
+        _click(rect.left + int(ATTACH_FROM_LEFT * scale),
+               rect.bottom - int(ATTACH_FROM_BOTTOM * scale))
+    finally:
+        _dpi_restore(token)
+
+    deadline = time.monotonic() + DIALOG_SEC
+    dialog = 0
+    while time.monotonic() < deadline:
+        time.sleep(0.25)
+        dialog = _file_dialog()
+        if dialog:
+            break
+    if not dialog:
+        # 何か別のものが開いたかもしれない。**開いたままにしない。**
+        _send("ESCAPE")
+        print("  [チャット] 添付の窓が出てこない。QRは送らない。")
+        return False
+
+    edit = user32.GetDlgItem(dialog, DLG_FILENAME)
+    if edit:
+        # ComboBoxEx32 の中の Edit が本体である。
+        inner = user32.FindWindowExW(edit, None, "ComboBox", None)
+        if inner:
+            edit = user32.FindWindowExW(inner, None, "Edit", None) or edit
+    if not edit:
+        user32.SendMessageW(user32.GetDlgItem(dialog, DLG_CANCEL), BM_CLICK, 0, 0)
+        return False
+    user32.SendMessageW(edit, WM_SETTEXT, 0, ctypes.c_wchar_p(str(path)))
+    time.sleep(0.3)
+    user32.SendMessageW(user32.GetDlgItem(dialog, DLG_OPEN), BM_CLICK, 0, 0)
+
+    gone = time.monotonic() + DIALOG_GONE_SEC
+    while time.monotonic() < gone:
+        time.sleep(0.25)
+        if not user32.IsWindow(dialog) or not user32.IsWindowVisible(dialog):
+            break
+    else:
+        # 開けなかった（パスが違う、など）。**閉じてから帰る。**
+        user32.SendMessageW(user32.GetDlgItem(dialog, DLG_CANCEL), BM_CLICK, 0, 0)
+        print("  [チャット] 添付の窓が閉じない。QRは送らない。")
+        return False
+
+    if not _raise(chat):
+        return False
+    _send("RETURN")
+    time.sleep(SENT_SEC)
+    return True
 
 
 def compose(url: str, direction: str = "") -> str:
@@ -379,11 +494,9 @@ def post(text: str, files: list[Path] | None = None) -> dict:
         for path in files:
             if not Path(path).exists():
                 continue
-            ok = _paste_and_send(chat, lambda p=path: clip_set_files([Path(p)]),
-                                 PASTE_FILE_SEC)
-            if not ok:
+            if not attach(chat, Path(path)):
                 # **ここで止めない。** 文字は既に届いている。
-                done["why"] = "ファイルを貼れなかった。URLだけは届いている。"
+                done["why"] = "ファイルを添付できなかった。URLだけは届いている。"
                 break
             done["files"] += 1
     finally:
