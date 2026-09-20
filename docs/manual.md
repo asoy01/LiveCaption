@@ -586,21 +586,24 @@ arrived**.
 
 #### When it posts
 
-**Two minutes after the scheduled start time.** LiveCaption itself starts a few
-minutes earlier, but **it does not post then.**
+**Twice: at the scheduled start time, and three minutes later.** The message is
+the same both times. LiveCaption itself starts a few minutes earlier, but **it
+does not post then.**
 
 The reason is how Zoom works. **Zoom chat does not show what was said before you
 joined.** Posting before the start time leaves nothing for the people who join
-on time. The two extra minutes are there because not everyone is in the room at
-the exact minute.
+on time. The second post is for the people who come in a little late.
 
-**So people who join late do not get it.** That is a Zoom limit and there is
-nothing this side can do about it. For a meeting where people join late, put the
-caption URL in the Zoom invitation as well, or press **Zoomのチャットに投げる**
-(post to the Zoom chat) by hand during the meeting.
+**Anyone who joins more than three minutes late still misses it.** That is a
+Zoom limit and there is nothing this side can do about it. For a meeting where
+people join late, put the caption URL in the Zoom invitation as well, or press
+**Zoomのチャットに投げる** (post to the Zoom chat) by hand during the meeting.
 
-To change the wait, edit `SCHEDULE_CHAT_AFTER_MIN` in
-`src/live_caption/config.py`. There is no `.env` setting for it.
+**If Zoom is slow to join and the first post slips, the second is held back by
+at least a minute**, so the same text never appears twice within seconds.
+
+To change the times, edit `SCHEDULE_CHAT_AT_MIN` in
+`src/live_caption/config.py`. There is no `.env` setting for them.
 
 **It also waits for Zoom to finish joining.** After the `zoommtg:` link is
 opened, Zoom takes anywhere from tens of seconds to a few minutes to show the

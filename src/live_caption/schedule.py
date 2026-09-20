@@ -113,11 +113,10 @@ class Scheduler:
         self._joined_zoom = False
         # 音が一度でも届いたか。届いたら、以後は待機室を疑わない。
         self._saw_audio = False
-        # チャットへの投稿がまだ残っているか。**Zoomの窓が出るまで待つ。**
-        self._chat_left = False
+        # チャットへ投げる回の時刻。**空になるまで、来るたびに投げる。**
+        self._chat_todo: list[datetime] = []
+        self._chat_total = 0
         self._chat_next = 0.0
-        self._chat_from = datetime.max
-        self._chat_until = datetime.max
 
     # --- 操作画面に返す -----------------------------------------------------
 
@@ -249,7 +248,7 @@ class Scheduler:
         self._we_started_tunnel = False
         self._joined_zoom = bool(meeting.zoom)
         self._saw_audio = False
-        self._chat_left = False
+        self._chat_todo = []
         print(f"[{now_str()}] 予定        「{meeting.name}」を始める（{occurrence}）")
 
         # 1. 配信する会議を切り替える。
@@ -307,16 +306,16 @@ class Scheduler:
         #    数分かかる（実測: 起動の5秒後にはまだ無かった）。
         #
         #    時刻と窓の両方が揃うのを `_watch_running` が待つ。
-        self._chat_left = bool(meeting.chat)
         self._chat_next = 0.0
-        try:
-            start_at = datetime.strptime(occurrence, meetings.TIME_FMT)
-        except ValueError:
-            start_at = datetime.now()
-        self._chat_from = start_at + timedelta(
-            minutes=config.SCHEDULE_CHAT_AFTER_MIN)
-        self._chat_until = self._chat_from + timedelta(
-            seconds=config.SCHEDULE_CHAT_WAIT_SEC)
+        self._chat_todo = []
+        if meeting.chat:
+            try:
+                start_at = datetime.strptime(occurrence, meetings.TIME_FMT)
+            except ValueError:
+                start_at = datetime.now()
+            self._chat_todo = [start_at + timedelta(minutes=m)
+                               for m in config.SCHEDULE_CHAT_AT_MIN]
+        self._chat_total = len(self._chat_todo)
 
     async def _try_chat(self) -> None:
         """会議の窓が出ていたら、チャットに投げる。出るまで何度でも見に来る。
@@ -328,25 +327,29 @@ class Scheduler:
         **別のスレッドで投げること。** 投げるのに8秒ほどかかる。本体の
         イベントループで待つと、そのあいだ音の取り込みも字幕も止まる。
         """
-        if not self._chat_left:
+        if not self._chat_todo:
             return
-        # **開始時刻を過ぎるまで投げない。** 早く投げると、後から入ってきた人に
-        # 何も残らない。Zoomのチャットは、入る前の発言が見えない。
+        # **その回の時刻を過ぎるまで投げない。** 早く投げると、後から入ってきた
+        # 人に何も残らない。Zoomのチャットは、入る前の発言が見えない。
         wall = datetime.now()
-        if wall < self._chat_from:
+        if wall < self._chat_todo[0]:
             return
         now = time.monotonic()
         if now < self._chat_next:
             return
         self._chat_next = now + config.SCHEDULE_CHAT_RETRY_SEC
-        late = wall > self._chat_until
+        late = wall > self._chat_todo[0] + timedelta(
+            seconds=config.SCHEDULE_CHAT_WAIT_SEC)
+        # 何回目か。**記録に残す。** 2回投げるので、どちらが落ちたかが要る。
+        which = self._chat_total - len(self._chat_todo) + 1
+        round_ = f"（{which}/{self._chat_total}回目）"
 
         from . import zoom_chat
 
         if not zoom_chat.meeting_window():
             if late:
-                self._chat_left = False
-                print(f"[{now_str()}] 予定        チャットに投げられない: "
+                self._chat_todo.pop(0)
+                print(f"[{now_str()}] 予定        チャットに投げられない{round_}: "
                       "Zoomの会議の窓が出てこない")
             return
 
@@ -354,31 +357,45 @@ class Scheduler:
         url = (web.public_url() or web.viewer_url()) if web else ""
         if not url:
             if late:
-                self._chat_left = False
-                print(f"[{now_str()}] 予定        チャットに投げる先のURLが無い")
+                self._chat_todo.pop(0)
+                print(f"[{now_str()}] 予定        チャットに投げる先のURLが無い{round_}")
             return
 
         name = self.meeting_name
         try:
             done = await asyncio.to_thread(self._post_chat_now, url, name)
         except Exception as exc:  # noqa: BLE001
-            self._chat_left = False
-            print(f"[{now_str()}] 予定        チャットに投げられない: "
+            self._chat_todo.pop(0)
+            print(f"[{now_str()}] 予定        チャットに投げられない{round_}: "
                   f"{type(exc).__name__}: {exc}")
             return
 
         if done["text"]:
-            self._chat_left = False
+            self._chat_todo.pop(0)
+            self._space_out_next()
             extra = "（QRも）" if done["files"] else ""
-            print(f"[{now_str()}] 予定        チャットにURLを投げた{extra}")
+            print(f"[{now_str()}] 予定        チャットにURLを投げた{round_}{extra}")
             if not done["files"]:
                 # ホストがファイル送信を切っていると、こうなる。**URLは届いている。**
                 print(f"[{now_str()}] 予定        QRは送れなかった。URLだけ届いている。")
             return
         # 貼っている途中で前面が入れ替わった、など。**もう一度だけ見に来る。**
         if late:
-            self._chat_left = False
-            print(f"[{now_str()}] 予定        チャットに投げられない: {done['why']}")
+            self._chat_todo.pop(0)
+            why = done["why"]
+            print(f"[{now_str()}] 予定        チャットに投げられない{round_}: {why}")
+
+    def _space_out_next(self) -> None:
+        """次の回を、いまから少なくとも `SCHEDULE_CHAT_GAP_SEC` 先へずらす。
+
+        **Zoomの参加が遅れると、1回目が押し出される。** そのとき2回目の時刻を
+        既に過ぎていると、同じ文が数秒差で2つ並ぶ。壊れているように見える。
+        """
+        if not self._chat_todo:
+            return
+        floor = datetime.now() + timedelta(seconds=config.SCHEDULE_CHAT_GAP_SEC)
+        if self._chat_todo[0] < floor:
+            self._chat_todo[0] = floor
 
     @staticmethod
     def _post_chat_now(url: str, name: str) -> dict:
@@ -527,11 +544,10 @@ class Scheduler:
         self._we_started_tunnel = False
         self._joined_zoom = False
         self._saw_audio = False
-        # チャットへの投稿がまだ残っているか。
-        self._chat_left = False
+        # チャットへ投げる回。**畳むときに捨てる。**
+        self._chat_todo = []
+        self._chat_total = 0
         self._chat_next = 0.0
-        self._chat_from = datetime.max
-        self._chat_until = datetime.max
 
     def _leave_zoom(self) -> None:
         """Zoomから出る。**こちらが起こしたときだけ。**
