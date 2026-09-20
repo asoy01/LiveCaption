@@ -1,0 +1,59 @@
+# LiveCaption を Docker で回す。
+#
+# **段階1。エンジンだけである。** 会議ソフトはまだ入っていない。
+# 音は WAV で代用する。段階2で Tailscale のサイドカー、段階3で Zoom と
+# PulseAudio が足される。
+#
+#   docker compose build
+#   docker compose run --rm engine --from-file /samples/excerpt75.wav --dry-run
+#
+# **osmium で動かす前に ConnMan の除外一覧を直しておくこと。**
+# 直っていないと、コンテナ起動から数十秒遅れてホストの外向き通信が死ぬ。
+# 詳細は HANDOFF.md の「ConnMan が Docker の veth を掴む」。
+
+name: livecaption
+
+services:
+  engine:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: livecaption-engine:dev
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      TZ: Asia/Tokyo
+      # tailnet 上の名前。**変えると配ってあった閲覧URLが死ぬ。**
+      TS_HOSTNAME: livecaption
+      # TS_AUTHKEY は .env から入る（署名済みの鍵）。
+    # **userspace-networking では足りない。** 操作画面を tailnet に出すには、
+    # 100.x のアドレスが実際のインターフェースに載っている必要がある。
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      # **`local/` はまるごとボリュームに載せる。** ここが消えると、
+      # 会議IDが変わって閲覧URLが毎回別物になり、Zoom字幕の `seq` も巻き戻る。
+      # 中身は meetings.json・seq_state.json・direction_state.json・
+      # glossary_state.json・ui_lang_state.json・tunnel_kind.json・transcripts/。
+      #
+      # **Dropbox の中には書かない。** 会議の記録が全部クラウドに上がることになる。
+      - state:/app/local
+      # **Tailscale の状態。消すと署名からやり直しになる。**
+      # ホスト名も変わるので、配ってあった閲覧URLが死ぬ。
+      - tailscale:/var/lib/tailscale
+      # 段階1の試験用の音。段階3で本物の会議の音に置き換わる。
+      - ./local/SampleRecordings/_wav24k:/samples:ro
+    ports:
+      # **閲覧画面だけを出す。** 操作画面(8081)はコンテナの中の 127.0.0.1 に
+      # 留まるので、ここからは届かない。操作画面には認証が無いためで、
+      # tailnet から開けるようにするのは段階2（Tailscale のサイドカー）である。
+      - "127.0.0.1:8080:8080"
+    init: true
+    stop_grace_period: 15s
+
+volumes:
+  state:
+  tailscale:

@@ -84,10 +84,17 @@ StartLiveCaption.bat  会議で使う入口。ダブルクリックで起動す�
 run.py                起動と引数の解釈
 src/live_caption/     字幕システム本体
 scripts/              単発の検証スクリプト
+compose.yml           Dockerで回すときの入口（移行中）
+docker/Dockerfile     字幕コンテナの作り方
 data/recordings/      比較用の会議録音（gitignore対象）
 docs/                 用語対訳表、調査メモ
 local/                作業物と HANDOFF.md（gitignore対象）
 ```
+
+**Windows版は凍結し、Linux/Docker に一本化する**（2026-09-20 に決定）。
+常時起動の Linux 機 osmium で回す。段階0（会議ソフトの選定）と段階1
+（エンジンのコンテナ化）は済んだ。**進め方と実測は `local/HANDOFF.md` の
+「字幕PCをやめて、Dockerに移す」にある。Docker に触る前に読むこと。**
 
 **会議の記録は `local/transcripts/` に溜まる**（`live-caption_<日時>.jsonl` と `.md`）。
 **操作画面から落とす。** 字幕PCは遠隔で操作するので、記録を取りに行かなくて済むように

@@ -3,3 +3,8 @@ pixi.lock merge=binary linguist-language=YAML linguist-generated=true -diff
 
 # Batch files must keep CRLF, or cmd.exe mis-parses multi-line blocks
 *.bat text eol=crlf
+
+# Shell scripts and the Dockerfile must keep LF. A CRLF here makes the
+# container fail with "#!/bin/sh^M: no such file or directory".
+*.sh text eol=lf
+docker/Dockerfile text eol=lf
