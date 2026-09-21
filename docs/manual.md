@@ -149,13 +149,19 @@ cd LiveCaption
 
 Run every command below inside this folder.
 
-### 2.2 Write the API key into `.env`
+### 2.2 Create `.env` and write the API key
 
-Copy the sample and put your OpenAI key in it.
+**Every setting goes in `.env`.** The API key, the Tailscale name that comes
+next, and whether it runs resident are all in that one file. **You never edit
+the code.**
+
+Copy the sample to create it.
 
 ```sh
 cp .env.example .env
 ```
+
+Write one `NAME=value` per line. The OpenAI key alone is enough to start.
 
 ```
 OPENAI_API_KEY=sk-...
@@ -163,12 +169,20 @@ OPENAI_API_KEY=sk-...
 
 Create the key at [platform.openai.com](https://platform.openai.com).
 
+**`.env` belongs to this machine alone.** The rest of the repository is the
+same everywhere, so `git pull` never overwrites your settings. **In exchange,
+you carry the file by hand when you move to another machine.**
+
 `.env` is not in Git (`.gitignore` lists it). **It is also kept out of the
 Docker build context** (`.dockerignore`), so the key cannot be stored in an
 image layer.
 
+**Make LiveCaption read the file again after you edit it.** It reads `.env`
+only at start-up. With Docker, run `docker compose up -d` to recreate the
+container. **`restart` does not read it again.**
+
 `.env.example` describes the other settings as well. **You do not need any of
-them yet.**
+them yet.** Section 9 lists every name you can write and the details to watch.
 
 ### 2.3 Prepare Tailscale
 
@@ -312,12 +326,48 @@ signing key on your tailnet, so **anyone who has it can add as many trusted node
 as they like.** Tailnet Lock then gives no protection. **This is one
 more reason to prefer (a).**
 
-#### Limit which devices reach the control page
+#### The ACL — who reaches what
 
-**Use your ACL to limit which devices reach the control page.** Without that
-limit, anyone you invited to your tailnet can open the control page. Anyone who
-opens it can quit the app, start delivering, and **read the meeting
-record**.
+**The ACL is the rule that says which people on your tailnet can connect to
+which nodes.** You write it as one JSON document in the Tailscale admin console
+(Access Controls). There is one per tailnet, so **editing it affects your other
+nodes too.**
+
+**On a tailnet with only you on it, the default works.** The default lets
+everyone reach everything, so you can skip this and LiveCaption still runs.
+**Read on in two cases.**
+
+**(1) You invited other people to your tailnet.** Without a limit, they can open
+the control page too. Anyone who opens it can quit the app, start delivering,
+and **read the meeting record**. **The control page has no authentication**, so
+the address a request comes from is the only thing protecting it. Without this
+limit there is nothing.
+
+Here is an example that allows only your own devices. Write your own user name
+instead of `autogroup:member`.
+
+```json
+{
+  "acls": [
+    {"action": "accept", "src": ["your-name@example.com"],
+     "dst": ["tag:livecaption:8081,8443,6080,6443"]}
+  ]
+}
+```
+
+**(2) You tagged the node and you want Funnel.** The default ACL gives `funnel`
+to `autogroup:member`, but **a tagged device is no longer a member.** Without
+the `nodeAttrs` below, delivery will not start.
+
+```json
+{
+  "tagOwners": {"tag:livecaption": ["your-name@example.com"]},
+  "nodeAttrs": [{"target": ["tag:livecaption"], "attr": ["funnel"]}]
+}
+```
+
+**A change takes effect at once.** You do not have to restart the node. The full
+syntax is at [tailscale.com/kb/1018/acls](https://tailscale.com/kb/1018/acls).
 
 ### 2.4 Settings that differ per machine
 
@@ -1407,35 +1457,17 @@ have to edit the code.**
 The defaults themselves are in `src/live_caption/config.py`. They come from
 measurement, so override them in `.env` only when you have a reason.
 
-### 9.0 What `.env` is for
+### 9.0 Details to watch in `.env`
 
-`.env` is a text file in the top folder of the repository, one `NAME=value` per
-line. **It is not in the repository, so you create it yourself.** There is a
-sample in `.env.example`.
+**Section 2.2 covers how to create `.env`.** This section adds the details that
+matter later.
 
-```
-OPENAI_API_KEY=sk-...
-TS_HOSTNAME=livecaption-laptop
-LIVECAPTION_RESTART=no
-```
-
-**This one file carries everything that differs between machines.** The rest of
-the repository is the same everywhere, so `git pull` never overwrites your
-settings.
-
-Five things to know.
-
-- **`.env` is not in Git** (`.gitignore`), and it is **kept out of the Docker
-  build context** (`.dockerignore`), so your key cannot be baked into an image
-  layer. **The other side of that: you carry it by hand when you move to another
-  machine**
 - **A value in `.env` is used instead of the environment variable of the same
   name.** If both exist, `.env` wins. **A line with an empty value changes
   nothing**, so the environment variable survives
-- **Make LiveCaption read the file again after you edit it.** It reads `.env`
-  once, at start-up. With Windows native, start the app again. With Docker, run
-  `docker compose up -d`, which recreates the container. **`restart`, and
-  `stop` followed by `start`, do not read it again**
+- **How you reload it depends on the setup.** With Windows native, start the app
+  again. With Docker, run `docker compose up -d`, which recreates the container.
+  **`restart`, and `stop` followed by `start`, do not read it again**
 - **A typo does not stop a meeting.** A value that is not a valid number is
   reported and the default is used instead. **Read the start-up output**
 - **Under Docker, a value written directly in `environment:` in `compose.yml`
