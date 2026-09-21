@@ -286,10 +286,42 @@ EN: dict[str, str] = {
     "英語 → 日本語": "English → Japanese",
 
     # --- 用語集 ---
+    # **長い順に置き換わる。** 短い鍵を先に書いても、長い鍵が優先される。
+    "用語集 ": "Glossary ",
     "用語集": "Glossary",
     "名前で絞り込む": "Filter by name",
     "全部選ぶ": "Select all",
     "全部外す": "Clear all",
+    "アップロード": "Upload",
+    "落とす": "Download",
+    "消す": "Delete",
+    "同じ名前があれば置き換える。": "A table with the same name is replaced. ",
+    "ファイル名が表の名前になる。": "The file name becomes the table name. ",
+    "いま使っている表を置き換えると、その場で読み直す。":
+        "Replacing a table you are using reloads it right away.",
+    "ファイルを選ぶこと。": "Choose a file first.",
+    " を置いた。": " is in place.",
+    " を消した。": " is deleted.",
+    " を消す。戻せない。": " will be deleted. This cannot be undone.",
+    "取っておくなら、先に落としてから消すこと。":
+        "Download it first if you want to keep it.",
+
+    # --- 中の画面を覗く口 ---
+    "中の画面": "The screen inside",
+    "覗く口を開ける": "Open a way to look in",
+    "覗く口を開けた。用が済んだら閉じること。":
+        "The way in is open. Close it when you are done.",
+    "覗く口を閉じた。": "The way in is closed.",
+    "開いている": "open",
+    "閉じている": "closed",
+    "閉じる": "Close",
+    "　VNCクライアントからは ": "  From a VNC client, use ",
+    "。**認証は無い。** 用が済んだら閉じること。":
+        ". **There is no password.** Close it when you are done.",
+    "会議ソフトへのサインインと、自動参加が詰まったときに開ける。":
+        "Open it to sign in to the meeting client, or when joining gets stuck. ",
+    "認証が無いので、常用しないこと。":
+        "There is no password, so do not leave it open.",
 
     # --- 遅延の調整 ---
     "遅延の調整": "Delay tuning",

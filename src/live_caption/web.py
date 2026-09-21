@@ -459,7 +459,11 @@ __FEED_JS__
 
 # --- 操作画面 ---------------------------------------------------------------
 
-CONTROL_BODY = """
+# **raw 文字列にしてある。** 中身は JavaScript なので、`\n` と書いたら
+# JS のエスケープとして届いてほしい。素の文字列だと Python が先に食べて
+# 本物の改行になり、**JS の文字列が行をまたいで、画面全体が動かなくなる。**
+# 一度これで操作画面が丸ごと死んだ（2026-09-21）。
+CONTROL_BODY = r"""
   /* --- 設定の欄の文字の大きさ ---------------------------------------------
      **1か所で決める。** 以前は 11px〜13px を各所に直接書いていて、全体として
      小さすぎた。会議中に読むものなので、読めることを優先する。
@@ -1495,11 +1499,14 @@ __FEED_JS__
         rm.addEventListener("click", async e => {
           e.preventDefault(); e.stopPropagation();
           // **消すのは戻せない。** 落としてからでないと取り返せないので確かめる。
-          if (!confirm("用語集「" + s.name + "」を消す。戻せない。\n"
-                       + "取っておくなら、先に「落とす」で保存すること。")) { return; }
+          // **JS の文字列に `「」` を書かないこと。** 訳表で `"` に化けて
+          // リテラルがそこで閉じ、**画面のスクリプト全体が死ぬ。**
+          // 日本語では何ともないので、英語にした人にだけ起きる。
+          if (!confirm("用語集 " + s.name + " を消す。戻せない。\n"
+                       + "取っておくなら、先に落としてから消すこと。")) { return; }
           try {
             showGlossary(await post("/api/glossary/delete", { name: s.name }));
-            say("用語集「" + s.name + "」を消した。", true);
+            say("用語集 " + s.name + " を消した。", true);
           } catch (err) { say(String(err.message), false); }
         });
         lab.append(cb, n, c, dl, rm);
@@ -1608,7 +1615,7 @@ __FEED_JS__
       const name = f.name.replace(/[.]tsv$/i, "");
       showGlossary(await post("/api/glossary/upload", { name, text }));
       glossFile.value = "";
-      say("用語集「" + name + "」を置いた。", true);
+      say("用語集 " + name + " を置いた。", true);
     } catch (e) {
       say(String(e.message), false);
     }
