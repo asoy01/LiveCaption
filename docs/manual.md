@@ -427,20 +427,29 @@ so you do not have to start it again.**
 (`restart: unless-stopped`). An always-on machine is then ready for
 a scheduled meeting.
 
-### 2.6 Sign in to Zoom
+### 2.6 VNC — looking inside the container
 
-**The Zoom client inside the container starts signed out.** Sign in once by
-hand so that it can join meetings on its own. **Use VNC.**
+**The Zoom client inside the container is signed out, and it joins meetings
+that way.** Joining, captioning and leaving were all measured without a
+sign-in. **You can skip this section for normal use.**
 
-On the control page, open the **Setup** tab → "VNC" → **Start**. Open the URL it
-shows and you see the screen inside the container.
+On the control page, open the **Setup** tab → "VNC" → **Start**, and you see
+the screen inside the container.
 
 ```
 https://livecaption.<tailnet>.ts.net:6443/vnc.html
 ```
 
-Sign in to Zoom, then press **Stop**. **The sign-in is kept in a volume, so you
-do not have to do it again.**
+Two situations call for it.
+
+**(1) The automatic join is stuck.** A waiting room, a wrong passcode, or an
+update dialog all look the same from outside: no sound arrives. **On the screen
+you can see which one it is.**
+
+**(2) The meeting needs a signed-in user.** When the host restricts the
+meeting to authenticated users, the container cannot join without a sign-in.
+**Only then**, open Zoom over VNC and sign in. **The sign-in is kept in a
+volume, so you do it once.**
 
 **VNC has no password.** Only the tailnet boundary protects it. **Start it when
 you need it and stop it afterwards.** You can start and stop it during a
@@ -1044,7 +1053,8 @@ no trouble when LiveCaption runs with nobody watching.
 
 The rest of this section is about Windows native. **Under Docker the
 settings are already done.** They are written when the container starts, so you
-can skip the rest. All you need is the Zoom sign-in (2.6).
+can skip the rest. **No Zoom sign-in is needed either**, except for a meeting
+restricted to authenticated users (2.6).
 
 With Windows native, if you use automatic joining, set these **once** in
 the Zoom client. They are not per-meeting.
@@ -1582,7 +1592,7 @@ ignores a bad value silently**, so read the start-up output.
 | It is on the tailnet but cannot reach other nodes | **Tailnet Lock.** The node is not signed. Get the node key with `tailscale lock status` and sign it on a machine that holds a signing key (2.3) |
 | Delivery will not start | Does your ACL have `funnel` under `nodeAttrs`? A tagged device leaves `autogroup:member` and loses Funnel without that line (2.3) |
 | The host loses its network when the container runs | **ConnMan** (3.2, Linux only). It breaks tens of seconds later, so checking right after start-up tells you nothing |
-| It cannot get into Zoom | Has the sign-in expired? **Start VNC and look at the Zoom window** (2.6). It may be in a waiting room |
+| It cannot get into Zoom | **Start VNC and look at the Zoom window** (2.6). It is in a waiting room, the passcode is wrong, or **the meeting is asking a signed-in user to join** |
 | The glossary stays empty | This repository contains no tables (2.7). Upload yours from the control page |
 | You cannot find the meeting records | They are in the volume. Downloading from the control page is the quick way |
 | It starts again after you pressed quit | That is `restart: unless-stopped`. To stop it completely, use `docker compose stop` (5.6) |
