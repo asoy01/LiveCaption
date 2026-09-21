@@ -44,10 +44,17 @@ services:
       # **用語対訳表は state ボリュームの中に置く。** 操作画面から足したり
       # 消したりする利用者データなので、イメージに焼き込むと作り直しで消える。
       LIVECAPTION_GLOSSARY_DIR: /app/local/glossary
-      TS_HOSTNAME: livecaption
-      # **上の `restart` と対にすること。** 操作画面の「終了」の見え方が変わる。
+      # tailnet 上の名前。**機体ごとに変えること。** 同じ tailnet で2台が
+      # 同じ名前を名乗ると、あとから来たほうが `livecaption-1` にされる。
+      # **閲覧URLのホスト名が変わるので、前もって配ってあったURLが死ぬ。**
+      # ここは `.env` から取る。**直書きに戻さないこと。** `environment:` は
+      # `env_file:` より強いので、直書きすると `.env` の値が黙って無視される。
+      TS_HOSTNAME: "${TS_HOSTNAME:-livecaption}"
+      # **下の `restart` と同じ変数である。対にする必要がない形にしてある。**
+      # 操作画面の「終了」は、戻ってくるなら「再起動」と書かなければならない。
       # 勝手に戻ってくるのに「終了」と書いてあると、押した人は壊れたと思う。
-      LIVECAPTION_RESTARTS: "1"
+      # 2つの変数に分けると、片方だけ直して文言が実際と食い違う日が来る。
+      LIVECAPTION_RESTART: "${LIVECAPTION_RESTART:-unless-stopped}"
       # TS_AUTHKEY は .env から入る（署名済みの鍵）。
       # 起動と同時に VNC を上げたいときに 1 にする。Zoom へのサインインなど、
       # コンテナの中の画面を人が操作する必要があるときに使う。
@@ -85,7 +92,8 @@ services:
       # 開くためにある。**操作画面(8081)は出さない。** 認証が無いので、
       # tailnet の中だけに置く（コンテナ自身が tailnet のノードになっている）。
       - "127.0.0.1:8080:8080"
-    # **必ず入れること。** これが無いと、次の2つが起きる。
+    # **常時起動の機体では `unless-stopped` のままにすること**（既定）。
+    # 外すと2つ起きる。
     #
     #   ホストを再起動すると、字幕システムが上がってこない。常時起動の機体で
     #   予定の会議に備える前提が崩れる。
@@ -95,8 +103,13 @@ services:
     #   使う」という前提が、そこで途切れる。
     #
     # `unless-stopped` なので、`docker compose stop` で止めたものは上がってこない。
-    # **「終了」は「再起動」になる**（下の LIVECAPTION_RESTARTS と対にすること）。
-    restart: unless-stopped
+    # 意図して止める道は残る。
+    #
+    # **会議のときだけ起こすノートPCでは `.env` に `LIVECAPTION_RESTART=no`。**
+    # そうしないと、Docker Desktop を立ち上げるたびに字幕システムが勝手に上がり、
+    # 予定を入れてあれば Zoom にまで入る。**上の環境変数と同じ変数なので、
+    # 片方だけ直すことはできない。**
+    restart: "${LIVECAPTION_RESTART:-unless-stopped}"
     init: true
     stop_grace_period: 15s
 

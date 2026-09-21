@@ -456,13 +456,22 @@ VNC_ENV = "LIVECAPTION_VNC"
 # **Docker では戻ってくる**（compose の `restart: unless-stopped`）。
 # そのとき「終了」は「再起動」である。**勝手に戻ってくるのに「終了」と
 # 書いてあると、押した人は壊れたと思う。** 画面の文言をここで切り替える。
-RESTARTS_ENV = "LIVECAPTION_RESTARTS"
+#
+# **compose が `restart:` に渡すのと同じ変数を、同じ値のまま読む。**
+# 以前は `LIVECAPTION_RESTARTS`（0/1）という別の変数だった。2つに分けると、
+# 片方だけ直して、画面の文言だけが実際と食い違う日が来る。
+# Windows のネイティブ起動では、この変数が無いので False になる。
+RESTART_ENV = "LIVECAPTION_RESTART"
+
+# Docker の restart policy のうち、**正常終了しても入れ直すもの**。
+# `on-failure` は終了コード 0 では戻さないので、ここには入れない。
+# 操作画面の「終了」は 0 で終わる。
+_RESTART_ALWAYS = ("always", "unless-stopped")
 
 
 def restarts() -> bool:
     """終わらせても、外の仕組みが入れ直してくれるか。"""
-    return os.environ.get(RESTARTS_ENV, "").strip().lower() in (
-        "1", "true", "yes", "on")
+    return os.environ.get(RESTART_ENV, "").strip().lower() in _RESTART_ALWAYS
 
 
 @dataclass
