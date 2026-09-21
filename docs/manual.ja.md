@@ -352,7 +352,7 @@ Tailscale の管理画面（Access Controls）で、JSON を1つ書きます。t
 書き方の詳細は [tailscale.com/kb/1018/acls](https://tailscale.com/kb/1018/acls) に
 あります。
 
-### 2.4 このマシンだけの設定
+### 2.4 マシン固有の設定
 
 **1つめは `TS_HOSTNAME` です。** 2.3 で説明したとおり、2台以上で使うときに変えます。
 
@@ -516,7 +516,7 @@ ConnMan が `tailscale0` を掴んで落とします。**このとき `tailscale
 ip addr show tailscale0
 ```
 
-### 3.3 このマシンだけの設定（2.4 の読み替え）
+### 3.3 マシン固有の設定（2.4 の読み替え）
 
 **常駐させます。** `LIVECAPTION_RESTART` は書かないでください。既定の
 `unless-stopped` のままにすると、ホストを再起動してもコンテナが自分で戻ってきます。

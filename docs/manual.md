@@ -369,7 +369,7 @@ the `nodeAttrs` below, delivery will not start.
 **A change takes effect at once.** You do not have to restart the node. The full
 syntax is at [tailscale.com/kb/1018/acls](https://tailscale.com/kb/1018/acls).
 
-### 2.4 Settings that differ per machine
+### 2.4 Machine-specific settings
 
 **The first one is `TS_HOSTNAME`.** Section 2.3 covers it: change the name when
 you run more than one machine.
@@ -539,7 +539,7 @@ problem. Check the interface instead:
 ip addr show tailscale0
 ```
 
-### 3.3 Settings that differ per machine (replaces 2.4)
+### 3.3 Machine-specific settings (replaces 2.4)
 
 **Let it run resident.** Do not set `LIVECAPTION_RESTART`. With the default
 `unless-stopped`, the container starts again by itself after a host reboot,
