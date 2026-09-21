@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import time
 from pathlib import Path
 
@@ -981,6 +982,23 @@ class App:
 
         # ブラウザから開始したときに捨て字幕を送れるよう、ループを渡しておく。
         self.zoom.loop = asyncio.get_running_loop()
+
+        # **SIGTERM でも片付ける。** Docker の `stop` / `restart` はこれを送る。
+        # Python の既定は即死で、**`finally` を通らない。** 実測で次が起きていた
+        # （2026-09-21）。
+        #
+        #   記録の `.md` が書かれない。`.jsonl` は追記済みなので中身は残るが、
+        #   読める形にならない。**会議の最中に止めると、これが起きる。**
+        #   1文も無い回の空の `.jsonl` が消されず、溜まっていく
+        #   Zoomからも配信からも抜けないまま落ちる
+        #
+        # 受け口は操作画面の「終了」と同じである。**別の道を作らない。**
+        # Windows には `add_signal_handler` が無い。Ctrl+C は従来どおり。
+        try:
+            self.zoom.loop.add_signal_handler(
+                signal.SIGTERM, self.request_stop, "SIGTERM")
+        except (NotImplementedError, RuntimeError, AttributeError, ValueError):
+            pass
         if start_now:
             self.set_generating(True)
 

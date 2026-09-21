@@ -104,6 +104,10 @@ RUN mkdir -p /home/livecaption/.config
 COPY run.py ./
 COPY src/ ./src/
 COPY etc/ ./etc/
+# **復旧の道具も入れる。** `transcript_to_md.py` は、`.md` が書かれないまま
+# 落ちたときに記録を読める形へ戻すためのものである。**それが要る場面は、
+# だいたいコンテナの中に手が届かない場面である。** 入れておかないと使えない。
+COPY scripts/ ./scripts/
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
