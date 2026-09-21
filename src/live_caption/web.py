@@ -1203,8 +1203,8 @@ __FEED_JS__
     // **勝手に戻ってくるのに「終了」と書いてあると、押した人は壊れたと思う。**
     if (s.restarts && !restartsShown) {
       restartsShown = true;
-      quitTitle.textContent = "アプリの入れ直し";
-      quit.textContent = "入れ直す";
+      quitTitle.textContent = "アプリの再起動";
+      quit.textContent = "再起動";
       quitHint.textContent =
         "止まったあと、十数秒で戻ってくる。様子がおかしいときに使う";
     }
@@ -2072,7 +2072,7 @@ __COPY_JS__
     // **戻ってくる仕掛けがあるなら、そう言う。** 押した人が「終わった」と
     // 思って帰ってしまうと、動いているのに誰も見ていない状態になる。
     const back = restartsShown;
-    if (!confirm(back ? "字幕アプリを入れ直す。十数秒で戻ってくる。"
+    if (!confirm(back ? "字幕アプリを再起動する。十数秒で戻ってくる。"
                       : "字幕アプリを終了する。よろしいですか。")) { return; }
     quit.disabled = true;
     try { await post("/api/shutdown", {}); } catch (e) { /* 上の通り */ }
@@ -2088,7 +2088,7 @@ __COPY_JS__
     for (const b of [save, start, stop, quit, tstart, tstop, gstart, gstop,
                      devReload]) { b.disabled = true; }
     devices.disabled = true; meterBar.style.width = "0";
-    say(back ? "入れ直している。十数秒したら、この画面を開き直すこと。"
+    say(back ? "再起動している。十数秒したら、この画面を開き直すこと。"
              : "終了した。この画面を閉じる。", true);
 
     // このタブを閉じる。**閉じられないことがある。**

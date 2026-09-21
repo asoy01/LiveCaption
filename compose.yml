@@ -85,7 +85,7 @@ services:
     #   使う」という前提が、そこで途切れる。
     #
     # `unless-stopped` なので、`docker compose stop` で止めたものは上がってこない。
-    # **「終了」は「入れ直し」になる**（下の LIVECAPTION_RESTARTS と対にすること）。
+    # **「終了」は「再起動」になる**（下の LIVECAPTION_RESTARTS と対にすること）。
     restart: unless-stopped
     init: true
     stop_grace_period: 15s

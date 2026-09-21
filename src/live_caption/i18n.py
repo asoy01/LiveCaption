@@ -340,14 +340,14 @@ EN: dict[str, str] = {
     # --- アプリの終了 ---
     # **Docker では「入れ直し」になる。** compose が入れ直すので、押しても
     # 十数秒で戻ってくる。長い鍵を先に置く（置換は長い順）。
-    "字幕アプリを入れ直す。十数秒で戻ってくる。":
+    "字幕アプリを再起動する。十数秒で戻ってくる。":
         "LiveCaption will restart. It comes back in a few seconds.",
-    "入れ直している。十数秒したら、この画面を開き直すこと。":
+    "再起動している。十数秒したら、この画面を開き直すこと。":
         "Restarting. Open this page again in a few seconds.",
     "止まったあと、十数秒で戻ってくる。様子がおかしいときに使う":
         "It comes back a few seconds after it stops. Use it when something looks wrong",
-    "アプリの入れ直し": "Restart LiveCaption",
-    "入れ直す": "Restart",
+    "アプリの再起動": "Restart LiveCaption",
+    "再起動": "Restart",
     "アプリの終了": "Quit LiveCaption",
     "音声の取り込みも文字起こしも止まる": "Audio capture and transcription both stop",
 
