@@ -45,11 +45,18 @@ from .zoom_chat import DIRECTION_EN, MESSAGE, compose, qr_file  # noqa: F401
 #: （2026-09-21、1600x1200 の画面）。揺らぎを拾わない程度に取る。
 CHAT_WIDTH_DELTA = 50
 
+#: チャットの入力欄の位置。**窓の右下からの距離で持つ。**
+#: チャットの欄は窓の右端に付くので、右からの距離が動かない。
+#: 実測（2026-09-21、会議の窓 1629x800 のとき画面の (1400, 890)）。
+INPUT_FROM_RIGHT = 229
+INPUT_FROM_BOTTOM = 110
+
 #: それぞれの段の待ち。
 FOCUS_SEC = 0.4         # 窓を前面に出してから落ち着くまで
 OPEN_CHAT_SEC = 6.0     # Alt+H のあと、窓が広がるまで待つ上限
 PASTE_SEC = 0.9         # 貼ってから Enter まで
 SENT_SEC = 1.5          # Enter のあと、次へ進むまで
+IMAGE_PASTE_SEC = 2.0   # 画像を貼ってから、下絵が出るまで
 
 
 def _run(args: list[str], timeout: float = 10.0, text_in: str | None = None) -> str:
@@ -178,6 +185,62 @@ def open_chat() -> str:
     return win_id if w2 and w2 > w1 else ""
 
 
+# --- 添付 -------------------------------------------------------------------
+
+
+def _clip_set_image(path: Path) -> bool:
+    """画像をクリップボードに載せる。`xclip` は選択の持ち主として居座る。"""
+    try:
+        subprocess.Popen(
+            ["xclip", "-selection", "clipboard", "-t", "image/png",
+             "-i", str(path)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL)
+    except OSError:
+        return False
+    time.sleep(0.8)
+    return True
+
+
+def _click_input(win_id: str) -> bool:
+    """チャットの入力欄を押して、焦点を入れる。"""
+    geo = zoom_join._geometry(win_id)
+    if geo is None:
+        return False
+    x, y, w, h = geo
+    _run(["xdotool", "mousemove",
+          str(x + w - INPUT_FROM_RIGHT), str(y + h - INPUT_FROM_BOTTOM)],
+         timeout=8)
+    time.sleep(0.3)
+    _run(["xdotool", "click", "1"], timeout=8)
+    time.sleep(0.5)
+    return True
+
+
+def attach(win_id: str, path: Path) -> bool:
+    """QRをチャットに載せる。載せられたら True。
+
+    **添付ボタンは使わない。クリップボードから貼る。**
+    添付ボタンを押すと Qt のファイルダイアログが開く道もあるのだが、
+    **一度は開いたきり、以後どう押しても反応しなかった**（2026-09-21）。
+    原因を掴めていないものを、無人で回す経路には置かない。
+
+    貼る形のほうが結果も良い。**チャットに画像として直に出る**ので、受け取った
+    人は落とさずにその場で読み取れる。Windows 版で問題になった「ファイル名が
+    乱数になって何のファイルか分からない」も起きない。
+    """
+    if not _clip_set_image(path):
+        return False
+    if not _focused(win_id):
+        return False
+    _click_input(win_id)
+    _run(["xdotool", "key", "--window", win_id, "ctrl+v"], timeout=8)
+    time.sleep(IMAGE_PASTE_SEC)
+    _run(["xdotool", "key", "--window", win_id, "Return"], timeout=8)
+    time.sleep(SENT_SEC)
+    return True
+
+
 # --- 投稿 -------------------------------------------------------------------
 
 
@@ -211,14 +274,19 @@ def post(text: str, files: list[Path] | None = None) -> dict:
         _run(["xdotool", "key", "--window", win_id, "Return"], timeout=8)
         time.sleep(SENT_SEC)
         done["text"] = True
+
+        # **QRは文面のあと。** 先に送ると、URLより前に絵だけが並ぶ。
+        for path in files or []:
+            if not Path(path).is_file():
+                continue
+            if attach(win_id, Path(path)):
+                done["files"] += 1
+            else:
+                # **「送った」と嘘をつかない。** 文面は届いているので、
+                # URLは読み手に渡っている。
+                done["error"] = "QRを載せられなかった。文面は投げた。"
     finally:
         # **奪ったクリップボードは戻す。** 戻せるのは文字だけである。
         if saved is not None:
             clip_set_text(saved)
-
-    # 添付は未実装。**「送った」と嘘をつかない。**
-    if files:
-        done["error"] = (
-            "QRの添付は Linux 版では未実装である。文面だけ投げた。"
-            "URLは文面に入っているので、読み手は困らない。")
     return done
