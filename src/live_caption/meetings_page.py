@@ -278,10 +278,10 @@ BODY = """</style>
     const autorow = document.createElement("label");
     autorow.className = "autorow";
     const auto = document.createElement("input");
-    // **予定がまだ無い会議は、印を付けた状態で出す。** ここを開いた人は、
-    // 予定を入れて回すつもりで開いている。既に予定がある会議は、保存されている
-    // 値をそのまま出す（外したものを勝手に戻さない）。
-    auto.type = "checkbox"; auto.checked = it.start ? !!it.auto : true;
+    // **保存されている値をそのまま出す。** 印の既定は作るときに決まっていて、
+    // 自分で足した会議には最初から入っている（`meetings.py` の `create`）。
+    // ここで付け直すと、外したものが勝手に戻る。
+    auto.type = "checkbox"; auto.checked = !!it.auto;
     auto.addEventListener("change", mark);
     autorow.appendChild(auto);
     autorow.appendChild(document.createTextNode(
@@ -294,8 +294,8 @@ BODY = """</style>
       + "外に出せない内容の会議では印を付けないこと。";
     body.appendChild(warn);
 
-    // **Zoomのチャットに投げる印。** これも既定は切りである。押すと、会議の
-    // 参加者全員に字幕のURLが見える。
+    // **Zoomのチャットに投げる印。** 押すと、会議の参加者全員に字幕のURLが
+    // 見える。既定は `auto` と同じ扱いである。
     const chatrow = document.createElement("label");
     chatrow.className = "autorow";
     const chat = document.createElement("input");

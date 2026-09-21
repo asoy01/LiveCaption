@@ -55,9 +55,12 @@ class Meeting:
     lead_min: int = 2          # 何分前に動き出すか
     silence_min: float = 10.0  # 無音がこれだけ続いたら畳む
     max_min: int = 180         # 安全上限。無音でなくてもここで必ず止める
-    auto: bool = False         # **自動で回す印。既定は切り。** 理由は下
-    # **Zoomのチャットに字幕のURLを投げる印。既定は切り。**
-    # 投げると、会議の参加者全員にURLが見える。外に出せない会議では付けないこと。
+    # **自動で回す印。dataclass の既定は切り。** 保存済みの会議に後から足した欄
+    # なので、書いていなければ切りとして読む。**自分で足した会議には `create` が
+    # 入れる。** 数合わせで作る会議は、ここの既定のまま切りである。
+    auto: bool = False
+    # **Zoomのチャットに字幕のURLを投げる印。** 扱いは `auto` と同じ。
+    # 投げると、会議の参加者全員にURLが見える。外に出せない会議では外すこと。
     chat: bool = False
     last_fired: str = ""       # 済ませた回の `start`。**時刻ではなく回を書く**
     host_id: str = ""          # ホストがトークンを貼るURLの経路（Phase 6）
@@ -171,6 +174,8 @@ class Store:
         if not self._items:
             # **1つも無い状態を作らない。** 閲覧URLが決まらないと、画面もQRも
             # 出せない。今日の日付で1つ作っておく。
+            # **`create` と違い、印は何も付けない。** 人が頼んで作ったものでは
+            # ないので、Zoomにも入らないし、チャットにも投げない。
             self._items = [Meeting(_new_id(), str(date.today()), str(date.today()))]
             self._active = self._items[0].id
             self._save_locked()
@@ -224,6 +229,12 @@ class Store:
         """会議を1つ足す。**足すだけで、配信の相手は変えない。**
 
         先の会議のURLを作っている最中に、今日の配信が切り替わっては困る。
+
+        **自分で足した会議は `auto` と `chat` を入れた状態で作る。** 名前を打って
+        まで足すのは、その会議を回すつもりだからである。要らなければ外せばよい。
+        **数合わせで作る会議（`_load_locked` と `remove` の代わりの1つ）は
+        入れない。** そちらは人が頼んだものではなく、閲覧URLを絶やさないために
+        あるだけなので、勝手に外へ出してはいけない。
         """
         name = str(name).strip()[:NAME_MAX]
         if not name:
@@ -231,7 +242,8 @@ class Store:
         with self._lock:
             if any(m.name == name for m in self._items):
                 raise ValueError(f"同じ名前の会議がある: 「{name}」。")
-            self._items.append(Meeting(_new_id(), name, str(date.today())))
+            self._items.append(Meeting(_new_id(), name, str(date.today()),
+                                       auto=True, chat=True))
             self._save_locked()
             return self._status_locked()
 
@@ -267,6 +279,7 @@ class Store:
             self._items = [m for m in self._items if m.id != meeting_id]
             changed = meeting_id == self._active
             if not self._items:
+                # 上と同じ。**代わりに作る1つには、印を付けない。**
                 self._items = [Meeting(_new_id(), str(date.today()), str(date.today()))]
             if changed:
                 self._active = self._items[0].id
