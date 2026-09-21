@@ -104,9 +104,23 @@ class Vnc:
                 # ラッパーで、既定では自分で `setsid` して切り離す。こちらが掴んだ
                 # 子は即座に終わるので、**「上がらなかった」と誤判定したうえ、
                 # 本物が野良で残る**（2026-09-21 に踏んだ）。
+                #
+                # **`-localhost no` が要る。** TigerVNC の既定は localhost だけで、
+                # そのままだと VNC クライアントから繋げない。ブラウザ（noVNC）は
+                # `http` では Windows のクリップボードを読めない（secure context で
+                # ないので `navigator.clipboard` が無い）。**手で貼らずに済ませたい
+                # なら、VNC クライアントで直に繋ぐしかない。**
+                #
+                # **`--I-KNOW-THIS-IS-INSECURE` を付けている。** TigerVNC は、
+                # 認証なしで localhost 以外に出すことを拒む。もっともな警告だが、
+                # **同じ箱の 6080（noVNC）が既に tailnet 全体へ認証なしで出ている**
+                # ので、5900 を開けても露出の種類は変わらない。守っているのは
+                # 「tailnet の中からしか届かない」の一点である。
+                # 既定では動かさず、要るときだけ操作画面から開ける。
                 self._procs.append(subprocess.Popen(
                     ["x0vncserver", "-fg", "-display", display,
                      "-rfbport", str(config.VNC_RFB_PORT),
+                     "-localhost", "no", "--I-KNOW-THIS-IS-INSECURE",
                      "-SecurityTypes", "None", "-AlwaysShared"],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     stdin=subprocess.DEVNULL))
