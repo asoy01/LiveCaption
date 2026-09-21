@@ -137,6 +137,31 @@ while ! xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; do
   sleep 0.1
 done
 openbox >/var/log/openbox.log 2>&1 &
+
+# **xterm の既定は小さすぎて読めない。** VNC から中を触るときの端末なので、
+# 読める大きさと、日本語の出るフォントにしておく。
+#
+# **`UXTerm` のぶんも書くこと。** openbox の右クリックが起こすのは
+# `x-terminal-emulator` で、その実体は `uxterm`（UTF-8 版）である。
+# クラス名が `XTerm` ではなく `UXTerm` なので、片方だけでは当たらない。
+#
+# **毎回上書きする。** この設定はこちらのものである。変えるなら Dockerfile 側。
+# **CJK の等幅を直に指定してはいけない。** ASCII まで全角幅で描かれ、
+# 文字が間延びしたうえ、窓が画面からはみ出す（実測で 1874px、画面は 1600px）。
+# `monospace` にしておけば、fontconfig が半角の等幅を選び、日本語だけ
+# Noto CJK に落ちる。
+cat > "$HOME/.Xresources" <<'XRES'
+*faceName: monospace
+*faceSize: 12
+*background: #101010
+*foreground: #e8e8e8
+*saveLines: 5000
+*selectToClipboard: true
+XTerm*VT100.geometry: 110x32
+UXTerm*VT100.geometry: 110x32
+XRES
+xrdb -merge "$HOME/.Xresources" 2>/dev/null || true
+
 echo "画面:       $DISPLAY (${LIVECAPTION_SCREEN:-1600x1200x24})"
 
 # **Zoom の設定。** 既にあれば触らない。サインイン後の設定を消さないためである。

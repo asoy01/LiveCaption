@@ -41,10 +41,14 @@ class Vnc:
     # --- 使えるかどうか -----------------------------------------------------
 
     def _missing(self) -> str:
-        """使えない理由。使えるなら空。"""
+        """使えない理由。使えるなら空。
+
+        **`autocutsel` は要求しない。** 無ければクリップボードが繋がらない
+        だけで、画面は見られる。
+        """
         if not os.environ.get("DISPLAY"):
             return "画面が無い（DISPLAY が空）。Windows では使わない。"
-        for cmd in ("x11vnc", "websockify"):
+        for cmd in ("x0vncserver", "websockify"):
             if shutil.which(cmd) is None:
                 return f"{cmd} が入っていない。"
         if not Path(config.NOVNC_ROOT).is_dir():
@@ -90,16 +94,25 @@ class Vnc:
                 return self._status_locked()
             display = os.environ["DISPLAY"]
             try:
-                # `-forever` = 見る人が居なくなっても待ち続ける。
-                # `-shared`  = 2人以上が同時に見られる。
+                # **TigerVNC を使う。** x11vnc の古い cut-text は Latin-1 しか
+                # 運べず、クリップボードの日本語が `???` になる。
+                # `-AlwaysShared` = 2人以上が同時に見られる。
+                # `-SecurityTypes None` = パスワードを持たない。
+                # **守っているのは tailnet の中だけという一点である。**
+                #
+                # **`-fg` を必ず付けること。** Debian の `x0vncserver` は perl の
+                # ラッパーで、既定では自分で `setsid` して切り離す。こちらが掴んだ
+                # 子は即座に終わるので、**「上がらなかった」と誤判定したうえ、
+                # 本物が野良で残る**（2026-09-21 に踏んだ）。
                 self._procs.append(subprocess.Popen(
-                    ["x11vnc", "-display", display, "-forever", "-shared",
-                     "-nopw", "-quiet", "-rfbport", str(config.VNC_RFB_PORT)],
+                    ["x0vncserver", "-fg", "-display", display,
+                     "-rfbport", str(config.VNC_RFB_PORT),
+                     "-SecurityTypes", "None", "-AlwaysShared"],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     stdin=subprocess.DEVNULL))
-                # **x11vnc が待ち受けるまで少し待つ。** すぐ websockify を
-                # 向けると、繋がらないまま上がったように見える。
-                time.sleep(0.5)
+                # **待ち受けるまで少し待つ。** すぐ websockify を向けると、
+                # 繋がらないまま上がったように見える。
+                time.sleep(1.0)
                 self._procs.append(subprocess.Popen(
                     ["websockify", f"--web={config.NOVNC_ROOT}",
                      str(config.VNC_WEB_PORT),
@@ -117,8 +130,11 @@ class Vnc:
                 # 片方だけ落ちた状態で「上がっている」と言わない。
                 self._error = "上がらなかった。ポートが空いているか確かめること。"
                 self._stop_locked()
-            else:
-                self._error = ""
+                return self._status_locked()
+
+            # **クリップボードの橋渡しは要らない。** TigerVNC が X の選択を
+            # 自分で見張る（`autocutsel` を足していた時期があったが、不要）。
+            self._error = ""
             return self._status_locked()
 
     def stop(self) -> dict:

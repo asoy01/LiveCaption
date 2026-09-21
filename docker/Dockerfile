@@ -79,7 +79,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libxcomposite1 libxdamage1 libxrandr2 libatk1.0-0 libatk-bridge2.0-0 \
       libatspi2.0-0 libcups2 libpango-1.0-0 libcairo2 libgtk-3-0 \
       fonts-noto-cjk xvfb openbox xdotool x11-utils wmctrl imagemagick \
-      x11vnc novnc websockify \
+      `# VNC。**x11vnc ではなく TigerVNC の x0vncserver を使う。**` \
+      `# x11vnc が使う古い cut-text は Latin-1 しか運べず、クリップボードの` \
+      `# 日本語が ??? になる（2026-09-21 に実測）。TigerVNC は拡張クリップボードに` \
+      `# 対応していて、双方向で UTF-8 が通る。どちらも既存の画面に貼り付く形で、` \
+      `# 使い方は変わらない。` \
+      tigervnc-scraping-server novnc websockify \
+      `# openbox の右クリックは x-terminal-emulator を呼ぶので、xterm が要る。` \
+      `# 実体は uxterm になる。xrdb は x11-xserver-utils にある。` \
+      xterm xclip x11-xserver-utils \
  && rm -rf /var/lib/apt/lists/*
 
 # **`latest` のままにする。** Zoom は古いクライアントを会議から締め出すので、
