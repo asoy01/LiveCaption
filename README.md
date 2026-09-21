@@ -68,7 +68,7 @@ You can use all three at the same time.
 |---|---|---|---|
 | Zoom caption API | Required | Each person turns on "Show Captions" | Through Zoom |
 | Screen share | Not required | You share the viewer page full screen | No |
-| Hand out a URL | Not required | People open a URL on their own device | Through Tailscale Funnel, or Cloudflare on Windows |
+| Give people a URL | Not required | People open a URL on their own device | Through Tailscale Funnel, or Cloudflare on Windows |
 
 ## How it works
 
