@@ -216,7 +216,14 @@ EN: dict[str, str] = {
         "The field is masked, and it clears after you register.",
 
     # --- 画面共有 ---
-    "画面共有で見せる": "Show by screen share",
+    "閲覧画面を自分で開く": "Open the viewer yourself",
+    "外には出ない。": "It does not leave your tailnet. ",
+    "自分で見るか、この画面を全画面にして画面共有する。":
+        "Watch it yourself, or make it full screen and share your screen. ",
+    "未公開の結果を扱う会議は、配信せずにこれで見せる。":
+        "For a meeting with unpublished results, use this instead of the tunnel.",
+    "操作画面のほうは共有しないこと。": "Do not share this control page. ",
+    "共有するのは閲覧画面である。": "Share the viewer page instead.",
     "閲覧画面を開く": "Open the viewer page",
     "この画面は共有しないこと。": "Never share this page.",
     "共有するのは閲覧画面のほう。": "Share the viewer page instead.",

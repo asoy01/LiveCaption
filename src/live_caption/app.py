@@ -951,7 +951,7 @@ class App:
                 print(f"            {extra}  "
                       "（tailnet の中から。**ACLで絞ること**）")
             print(f"閲覧画面:   {self.web.viewer_url()}"
-                  f"  （{self.web.lines}行。全画面にして画面共有する）")
+                  f"  （{self.web.lines}行。外には出ない）")
             state = self.web.tunnel.status()["state"] if self.web.tunnel else "off"
             if state == "on":
                 print(f"配信URL:    {self.web.public_url()}  （参加者に配る）")

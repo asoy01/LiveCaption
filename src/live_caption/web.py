@@ -895,7 +895,7 @@ CONTROL_BODY = r"""
     </details>
 
     <details class="fold" id="wayShare">
-      <summary><span class="n">画面共有で見せる</span><span class="c"></span></summary>
+      <summary><span class="n">閲覧画面を自分で開く</span><span class="c"></span></summary>
       <div class="body">
         <div class="row2">
           <span class="url" id="viewerUrl"></span>
@@ -905,7 +905,11 @@ CONTROL_BODY = r"""
           <button class="copybtn" data-copy="viewerUrl">URLをコピー</button>
         </div>
         <div class="row2 hint">
-          <b>この画面は共有しないこと。</b>共有するのは閲覧画面のほう。
+          <b>外には出ない。</b>自分で見るか、この画面を全画面にして画面共有する。
+          未公開の結果を扱う会議は、配信せずにこれで見せる。
+        </div>
+        <div class="row2 hint">
+          <b>操作画面のほうは共有しないこと。</b>共有するのは閲覧画面である。
         </div>
       </div>
     </details>
@@ -2189,8 +2193,22 @@ class WebCaptions:
         return self.meetings.viewer_path
 
     def viewer_url(self) -> str:
-        """自分の機体から開く閲覧URL。画面共有で見せるときはこれ。"""
-        host = "localhost" if self.bind in ("127.0.0.1", "0.0.0.0", "") else self.bind
+        """**外に出さずに開く閲覧URL。** 配信（Funnel）を張らずに字幕を見る道。
+
+        **届くアドレスを返すこと。** `0.0.0.0` で待ち受けているとき、以前は
+        `localhost` を返していた。**コンテナで動かすと、それは箱の中を指す。**
+        誰も開けない URL を「これで見られる」と出していた（麻生の指摘、
+        2026-09-21）。
+
+        `0.0.0.0` なら tailnet の名前を優先する。実際にそこで待ち受けている。
+        名前が取れないときだけ `localhost` に落ちる（機体の前で使う場合）。
+        """
+        host = self.bind
+        if host in ("127.0.0.1", ""):
+            host = "localhost"
+        elif host == "0.0.0.0":  # noqa: S104
+            names = self.control_names()
+            host = names[-1] if names else "localhost"
         return f"http://{host}:{self.port}{self.viewer_path}"
 
     def control_url(self) -> str:
