@@ -102,6 +102,7 @@ EN: dict[str, str] = {
     "始まらなかったので片付けた": "It never started, so the meeting was shut down",
     "安全上限で止めた": "Stopped at the hard cap",
     "無音が続いたので止めた": "Stopped after a long silence",
+    "会議が始まらないので止めた": "Stopped because the meeting never started",
     "音声の入力を開けない: ": "Cannot open the audio input: ",
     "生成が始まらない。": "Caption generation does not start.",
     "会議を選べない: ": "Cannot select the meeting: ",

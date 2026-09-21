@@ -123,6 +123,10 @@ class Scheduler:
         self._joined_zoom = False
         # 音が一度でも届いたか。届いたら、以後は待機室を疑わない。
         self._saw_audio = False
+        # 回の始まりの `last_sentence_at`。**これが動いたら「誰かが喋った」。**
+        # 振幅（`_saw_audio`）では代用できない。参加者を待っている間の暗騒音でも
+        # 立ってしまうからである。
+        self._sentence_mark = 0.0
         # チャットへ投げる回の時刻。**空になるまで、来るたびに投げる。**
         self._chat_todo: list[datetime] = []
         self._chat_total = 0
@@ -134,8 +138,11 @@ class Scheduler:
         left_silence = -1.0
         left_max = -1.0
         if self.state == RUNNING:
-            quiet = time.monotonic() - self.app.last_sentence_at
-            left_silence = max(0.0, self._silence_limit() - quiet)
+            # **画面に出す残りは、実際に効いている時計のものにする。**
+            # 冒頭はもっと長く待つので、そこで短い数字を見せると、
+            # 「もうすぐ切れる」と誤解させる。
+            quiet, limit, _why = self._quiet_state()
+            left_silence = max(0.0, limit - quiet)
             left_max = max(0.0, self._max_limit() - (time.monotonic() - self.started_at))
         return {
             "state": self.state,
@@ -355,6 +362,7 @@ class Scheduler:
         self.state = ARMING
         self.app.engine.set_running(True)
         self.started_at = time.monotonic()
+        self._sentence_mark = self.app.last_sentence_at
         why = await self._arm()
         if why:
             self._fail(why)
@@ -541,6 +549,31 @@ class Scheduler:
     def _silence_limit(self) -> float:
         return self._silence_min * 60.0
 
+    def _quiet_state(self) -> tuple[float, float, str]:
+        """`(黙っている秒数, 上限, 止めるときの一言)`。
+
+        **「まだ誰も喋っていない」と「会議が終わった」は別である。**
+        会議の冒頭は、参加者を待って数分の無言が続くのが普通である
+        （麻生の指摘、2026-09-21）。そこで無音の時計を回すと、**始まる前の
+        会議を畳んでしまう。**
+
+        だから、最初の1文が出るまでは別の時計で見る。区別に使うのは
+        **文が出たかどうか**で、振幅ではない。参加者を待っている間の暗騒音でも
+        振幅は立つので、それでは区別にならない。
+
+        始まらないまま置き去りにはしない。上限を過ぎたら畳む。認識の接続は
+        黙っていても課金されるので、空の会議に何時間も座らせない。
+        """
+        now = time.monotonic()
+        if self.app.last_sentence_at != self._sentence_mark:
+            # 一度は喋った。以後は「途切れてから」を見る。
+            return now - self.app.last_sentence_at, self._silence_limit(), \
+                "無音が続いたので止めた"
+        # まだ一文も出ていない。参加してからの時間で見る。
+        # **会議ごとの設定のほうが長ければ、そちらを立てる。**
+        limit = max(self._silence_limit(), config.SCHEDULE_OPENING_SEC)
+        return now - self.started_at, limit, "会議が始まらないので止めた"
+
     def _max_limit(self) -> float:
         return self._max_min * 60.0
 
@@ -569,10 +602,9 @@ class Scheduler:
             # **無音でなくても必ず止める。** 課金が止まらないのを防ぐ最後の砦。
             self._teardown("安全上限で止めた", detail=f"{self._max_min}分")
             return
-        quiet = time.monotonic() - self.app.last_sentence_at
-        if quiet > self._silence_limit():
-            self._teardown("無音が続いたので止めた",
-                           detail=f"{self._silence_min:g}分")
+        quiet, limit, why = self._quiet_state()
+        if quiet > limit:
+            self._teardown(why, detail=f"{limit / 60:g}分")
 
     # --- 片付け -------------------------------------------------------------
 
