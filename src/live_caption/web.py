@@ -1033,10 +1033,10 @@ CONTROL_BODY = r"""
   </div>
 
   <div class="grp">
-    <h2>アプリの終了</h2>
+    <h2 id="quitTitle">アプリの終了</h2>
     <div class="row2">
       <button id="quit" class="danger">終了</button>
-      <span class="hint">音声の取り込みも文字起こしも止まる</span>
+      <span class="hint" id="quitHint">音声の取り込みも文字起こしも止まる</span>
     </div>
     <div class="row2"><span id="msg"></span></div>
   </div>
@@ -1073,6 +1073,8 @@ __FEED_JS__
   const aerrBox = $("audioErrBox"), aerr = $("audioErr");
   let devLoaded = false;
   const quit = $("quit"), tstart = $("tstart"), tstop = $("tstop");
+  const quitTitle = $("quitTitle"), quitHint = $("quitHint");
+  let restartsShown = false;
   const msg = $("msg"), pill = $("zoomPill"), zoomState = $("zoomState");
   const tpill = $("tunnelPill"), tstate = $("tunnelState");
   const wayNetState = $("wayNetState"), wayZoomState = $("wayZoomState");
@@ -1195,6 +1197,17 @@ __FEED_JS__
   function showStatus(s) {
     // --- VNC。会議中でも起動・停止できる ---
     showVnc(s.vnc);
+
+    // --- 「終了」は、戻ってくる仕掛けの有無で意味が変わる ---
+    // Docker では compose が入れ直すので、押しても十数秒で戻る。
+    // **勝手に戻ってくるのに「終了」と書いてあると、押した人は壊れたと思う。**
+    if (s.restarts && !restartsShown) {
+      restartsShown = true;
+      quitTitle.textContent = "アプリの入れ直し";
+      quit.textContent = "入れ直す";
+      quitHint.textContent =
+        "止まったあと、十数秒で戻ってくる。様子がおかしいときに使う";
+    }
 
     // --- 字幕の生成。**これが親の関門である。** ---
     gpill.textContent = s.generating ? "生成: 中" : "生成: 停止中";
@@ -2056,7 +2069,11 @@ __COPY_JS__
   // 本体が終わればサーバも消える。**返事が来なくても成功でありうる。**
   // 通信の失敗を失敗として出さないこと。
   quit.addEventListener("click", async () => {
-    if (!confirm("字幕アプリを終了する。よろしいですか。")) { return; }
+    // **戻ってくる仕掛けがあるなら、そう言う。** 押した人が「終わった」と
+    // 思って帰ってしまうと、動いているのに誰も見ていない状態になる。
+    const back = restartsShown;
+    if (!confirm(back ? "字幕アプリを入れ直す。十数秒で戻ってくる。"
+                      : "字幕アプリを終了する。よろしいですか。")) { return; }
     quit.disabled = true;
     try { await post("/api/shutdown", {}); } catch (e) { /* 上の通り */ }
     ended = true;
@@ -2071,16 +2088,22 @@ __COPY_JS__
     for (const b of [save, start, stop, quit, tstart, tstop, gstart, gstop,
                      devReload]) { b.disabled = true; }
     devices.disabled = true; meterBar.style.width = "0";
-    say("終了した。この画面を閉じる。", true);
+    say(back ? "入れ直している。十数秒したら、この画面を開き直すこと。"
+             : "終了した。この画面を閉じる。", true);
 
     // このタブを閉じる。**閉じられないことがある。**
     // ブラウザは「スクリプトが開いた窓」しか閉じさせない。この画面はアプリが
     // webbrowser.open() で開いたものなので、閉じる要求が黙って無視される場合がある。
     // そのときのために、閉じられなかったと分かる画面を出す。
-    window.close();
-    setTimeout(() => {
-      if (ended) { showClosed(); }
-    }, 400);
+    // **戻ってくるなら、タブを閉じない。** 開き直す先がこの画面である。
+    if (!back) {
+      window.close();
+      setTimeout(() => {
+        if (ended) { showClosed(); }
+      }, 400);
+    } else {
+      showClosed();
+    }
   });
 
   function showClosed() {
@@ -2378,6 +2401,8 @@ class WebCaptions:
             "level": 0.0, "dropped": 0, "error": ""}
         st["viewer_url"] = self.viewer_url()
         st["public_url"] = self.public_url()
+        # 終わらせても戻ってくるか。**「終了」の文言が変わる。**
+        st["restarts"] = config.restarts()
         # VNC。**Windows では「使えない」で返る**（DISPLAY が無い）。
         st["vnc"] = self.vnc.status() if self.vnc else {
             "on": False, "available": False, "error": "",

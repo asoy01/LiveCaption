@@ -452,6 +452,18 @@ NOVNC_ROOT = "/usr/share/novnc"
 # 1 なら起動した時点から上げる。既定は上げない（操作画面から開ける）。
 VNC_ENV = "LIVECAPTION_VNC"
 
+# --- 終わらせても戻ってくるか -------------------------------------------------
+# **Docker では戻ってくる**（compose の `restart: unless-stopped`）。
+# そのとき「終了」は「入れ直し」である。**勝手に戻ってくるのに「終了」と
+# 書いてあると、押した人は壊れたと思う。** 画面の文言をここで切り替える。
+RESTARTS_ENV = "LIVECAPTION_RESTARTS"
+
+
+def restarts() -> bool:
+    """終わらせても、外の仕組みが入れ直してくれるか。"""
+    return os.environ.get(RESTARTS_ENV, "").strip().lower() in (
+        "1", "true", "yes", "on")
+
 
 @dataclass
 class Settings:
