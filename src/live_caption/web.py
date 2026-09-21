@@ -2172,7 +2172,7 @@ class WebCaptions:
         self.tuning = None
         # 字幕の向き（app.DirectionControl）。
         self.direction = None
-        # 予定された会議を回す見張り（schedule.Scheduler）。
+        # 予定された会議を回すスケジューラ（schedule.Scheduler）。
         self.scheduler = None
         # VNC（vnc.Vnc）。**会議中でも起動・停止できる。**
         self.vnc = None
@@ -2243,7 +2243,7 @@ class WebCaptions:
         return f"{url}{self.viewer_path}" if url else ""
 
     def _upcoming(self) -> list[dict]:
-        """これから来る回。**予定の表示が見張りに依存しないようにする。**"""
+        """これから来る回。**予定の表示がスケジューラに依存しないようにする。**"""
         try:
             return self.meetings.upcoming(datetime.now(), limit=3)
         except Exception:  # noqa: BLE001
@@ -2383,10 +2383,10 @@ class WebCaptions:
         # **会議ごとの閲覧URLも一緒に返す。** 前もって配るURLは、配信していない
         # あいだも見えていないと意味がない。
         st["meetings"] = self.meetings_status()
-        # 予定の見張りの状態。**2秒ごとの状態取得に相乗りさせる。**
+        # スケジューラの状態。**2秒ごとの状態取得に相乗りさせる。**
         # 無人で回すものは、次に何が起きるかが先に読めないと怖い。
         #
-        # **次の予定は、見張りが居なくても出す。** 起動直後、本体が組み上がるまでの
+        # **次の予定は、スケジューラが居なくても出す。** 起動直後、本体が組み上がるまでの
         # 短い間は `scheduler` がまだ入っていない。そこで予定が空に見えると、
         # 「予定が消えた」と誤解させる。予定は会議の一覧が持っているので、
         # そちらから直に読む。
@@ -3420,7 +3420,7 @@ def _control_handler(web: WebCaptions):
             self._send_json(200, web.status())
 
         def _schedule(self, body: dict) -> None:
-            """予定の見張りへの指示。いま始める・止める・飛ばす・失敗を消す。"""
+            """スケジューラへの指示。いま始める・止める・飛ばす・失敗を消す。"""
             if web.scheduler is None:
                 self._send_json(503, {"error": "予定の受け口が用意できていない。"})
                 return

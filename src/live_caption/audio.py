@@ -169,7 +169,7 @@ class Capture:
     def quiet_for(self) -> float:
         """最後に音が来てから何秒たったか。
 
-        **`take_peak()` と違い、読んでも値を消さない。** 見張りが何度でも呼ぶので、
+        **`take_peak()` と違い、読んでも値を消さない。** 無音の見張りが何度でも呼ぶので、
         操作画面のメーターから値を奪わないよう、別に持ってある。
         """
         return max(0.0, time.monotonic() - self._voice_at)

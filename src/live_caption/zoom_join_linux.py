@@ -251,7 +251,7 @@ def join(text: str, name: str = "") -> str:
             _click(x + w // 2, y + AUDIO_FROM_TOP)
 
     # 音が来るまで待つ。**来なくても例外にしない。** 待機室で待たされている
-    # だけかもしれない。見張り（schedule.py）が無音で畳む。
+    # だけかもしれない。スケジューラ（schedule.py）が無音で畳む。
     _wait(_audio_attached, AUDIO_READY_WAIT_SEC)
     return url
 

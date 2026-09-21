@@ -437,7 +437,7 @@ class App:
         self.glossary = GlossaryControl(self)
         self.tuning = TuningControl(self)
         self.dir_control = DirectionControl(self)
-        # 予定された会議を無人で回す見張り（schedule.py）。
+        # 予定された会議を無人で回すスケジューラ（schedule.py）。
         self.scheduler = schedule_mod.Scheduler(self)
         # VNC（vnc.py）。**コンテナで動かすときだけ使える。**
         # Windows では DISPLAY が無いので、操作画面には「使えない」と出る。
@@ -1007,9 +1007,9 @@ class App:
             asyncio.create_task(self._watch_idle()),
             asyncio.create_task(self._dispatch()),
             asyncio.create_task(self._post()),
-            # 予定された会議を回す見張り。**予定が1つも無くても回しておく。**
+            # 予定された会議を回すスケジューラ。**予定が1つも無くても回しておく。**
             # 動きの分かれ目を減らすためで、費用は寝ているコルーチン1本ぶんである。
-            # **この見張りは決して返らない。** 返ると下の wait を抜けてアプリが畳まれる。
+            # **これは決して返らない。** 返ると下の wait を抜けてアプリが畳まれる。
             asyncio.create_task(self.scheduler.run_forever()),
             # ブラウザから終了を頼まれたら、これが完了して下の wait を抜ける。
             asyncio.create_task(self.stop_requested.wait()),

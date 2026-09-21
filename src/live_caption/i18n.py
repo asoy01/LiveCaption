@@ -56,7 +56,7 @@ EN: dict[str, str] = {
     "このURLをQRで配る。参加者はブラウザで開くだけでよい。":
         "Hand out this URL as a QR code. People only open it in a browser.",
 
-    # --- 次にやること（予定の見張り） ---
+    # --- 次にやること（スケジューラ） ---
     # **ここも二重引用符を入れてはいけない。** JavaScript の文字列に入る。
     "次にやること": "Coming up",
     "了解": "Got it",
@@ -79,7 +79,7 @@ EN: dict[str, str] = {
     "次の予定を飛ばした。": "Skipped the next one.",
     "飛ばす予定が無い。": "There is nothing to skip.",
 
-    # --- 見張りが出す一言（schedule.py から状態に載ってくる） ---
+    # --- スケジューラが出す一言（schedule.py から状態に載ってくる） ---
     # **数字を混ぜた文はここに置けない。** 置き換えは固定の文にしか効かない。
     # 数字は端末のログにだけ出す。
     "本体を組み立てているところ": "Still starting up",
@@ -106,7 +106,7 @@ EN: dict[str, str] = {
     "音声の入力を開けない: ": "Cannot open the audio input: ",
     "生成が始まらない。": "Caption generation does not start.",
     "会議を選べない: ": "Cannot select the meeting: ",
-    "見張りで例外: ": "Error in the scheduler: ",
+    "スケジューラで例外: ": "Error in the scheduler: ",
 
     # --- 予定の入力 ---
     "予定を保存した: ": "Schedule saved: ",
