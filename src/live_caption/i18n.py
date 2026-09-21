@@ -294,7 +294,7 @@ EN: dict[str, str] = {
     "全部外す": "Clear all",
     "アップロード": "Upload",
     "ダウンロード": "Download",
-    "削除": "Delete",
+    # 「削除」は予定の欄に既にある（上の「会議の管理」）。足さない。
     "同じ名前があれば置き換える。": "A table with the same name is replaced. ",
     "ファイル名が表の名前になる。": "The file name becomes the table name. ",
     "いま使っている表を置き換えると、その場で読み直す。":
@@ -306,22 +306,22 @@ EN: dict[str, str] = {
     "取っておくなら、先にダウンロードすること。":
         "Download it first if you want to keep it.",
 
-    # --- 中の画面を覗く口 ---
-    "中の画面": "The screen inside",
-    "覗く口を開ける": "Open a way to look in",
-    "覗く口を開けた。用が済んだら閉じること。":
-        "The way in is open. Close it when you are done.",
-    "覗く口を閉じた。": "The way in is closed.",
-    "開いている": "open",
-    "閉じている": "closed",
-    "閉じる": "Close",
+    # --- VNC ---
+    "VNCを起動した。用が済んだら停止すること。":
+        "VNC is running. Stop it when you are done.",
+    "VNCを停止した。": "VNC is stopped.",
+    "起動": "Start",
+    # 「停止」は字幕の生成の欄に既にある。足さない。
+    # **「停止中」は足すこと。** 無いと「停止」だけが訳されて「中」が残る。
+    "停止中": "stopped",
+    "動作中": "running",
     "　VNCクライアントからは ": "  From a VNC client, use ",
-    "。**認証は無い。** 用が済んだら閉じること。":
-        ". **There is no password.** Close it when you are done.",
-    "会議ソフトへのサインインと、自動参加が詰まったときに開ける。":
-        "Open it to sign in to the meeting client, or when joining gets stuck. ",
+    "。**認証は無い。** 用が済んだら停止すること。":
+        ". **There is no password.** Stop it when you are done.",
+    "会議ソフトへのサインインと、自動参加が詰まったときに使う。":
+        "Use it to sign in to the meeting client, or when joining gets stuck. ",
     "認証が無いので、常用しないこと。":
-        "There is no password, so do not leave it open.",
+        "There is no password, so do not leave it running.",
 
     # --- 遅延の調整 ---
     "遅延の調整": "Delay tuning",

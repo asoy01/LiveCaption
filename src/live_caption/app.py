@@ -438,7 +438,7 @@ class App:
         self.dir_control = DirectionControl(self)
         # 予定された会議を無人で回す見張り（schedule.py）。
         self.scheduler = schedule_mod.Scheduler(self)
-        # 中の画面を覗く口（vnc.py）。**コンテナで動かすときだけ使える。**
+        # VNC（vnc.py）。**コンテナで動かすときだけ使える。**
         # Windows では DISPLAY が無いので、操作画面には「使えない」と出る。
         self.vnc = vnc_mod.Vnc()
         # run() で受け取る。操作画面から入力を差し替えるために持っておく。
@@ -490,17 +490,17 @@ class App:
             web.records = RecordControl(self)
             # 予定の状態と、止める・飛ばす・失敗を消す、の操作。
             web.scheduler = self.scheduler
-            # 中の画面を覗く口。**会議中でも開け閉めできる**ようにしてある。
+            # VNC。**会議中でも起動・停止できる**ようにしてある。
             web.vnc = self.vnc
             # **既定では上げない。** 認証が無いので、要るときだけ画面から開ける。
             if os.environ.get(config.VNC_ENV, "").strip().lower() in (
                     "1", "true", "yes", "on"):
                 st = self.vnc.start()
                 if st["on"]:
-                    print(f"画面の口:   上げた（ポート {st['web_port']}）。"
+                    print(f"VNC:        起動した（ポート {st['web_port']}）。"
                           "**認証は無い。**")
                 else:
-                    print(f"画面の口:   上げられない（{st['error']}）")
+                    print(f"VNC:        起動できない（{st['error']}）")
         self.sentences: asyncio.Queue[segmenter_mod.Cut] = asyncio.Queue()
         self.inflight: asyncio.Queue = asyncio.Queue(maxsize=MAX_INFLIGHT)
         self.stats = {"sentences": 0, "lines": 0}

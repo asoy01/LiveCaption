@@ -975,10 +975,10 @@ CONTROL_BODY = r"""
   </div>
 
   <div class="grp" id="vncGrp" style="display:none">
-    <h2>中の画面</h2>
+    <h2>VNC</h2>
     <div class="row2">
-      <button id="vncOn">覗く口を開ける</button>
-      <button id="vncOff">閉じる</button>
+      <button id="vncOn">起動</button>
+      <button id="vncOff">停止</button>
       <span id="vncState"></span>
     </div>
     <div class="row2 hint" id="vncHint"></div>
@@ -1189,7 +1189,7 @@ __FEED_JS__
   }
 
   function showStatus(s) {
-    // --- 中の画面を覗く口。会議中でも開け閉めできる ---
+    // --- VNC。会議中でも起動・停止できる ---
     showVnc(s.vnc);
 
     // --- 字幕の生成。**これが親の関門である。** ---
@@ -1630,12 +1630,12 @@ __FEED_JS__
     glossUp.disabled = false;
   });
 
-  // --- 中の画面を覗く口 ---------------------------------------------------
-  // **会議中でも開け閉めできる。** 会議ソフトへのサインインと、自動参加が
-  // 詰まったときの様子見に使う。認証が無いので、既定では開けていない。
+  // --- VNC ----------------------------------------------------------------
+  // **会議中でも起動・停止できる。** 会議ソフトへのサインインと、自動参加が
+  // 詰まったときの様子見に使う。認証が無いので、既定では動かさない。
   function showVnc(v) {
     if (!v) { return; }
-    // 使えない環境（Windows には画面の口が無い）では、欄ごと出さない。
+    // 使えない環境（Windows には画面が無い）では、欄ごと出さない。
     vncGrp.style.display = (v.available || v.on) ? "" : "none";
     vncOn.disabled = v.on || !v.available;
     vncOff.disabled = !v.on;
@@ -1644,17 +1644,17 @@ __FEED_JS__
       // サーバ側で名前を組み立てると、tailnet 名・IP・localhost のどれで
       // 開いているかで食い違う。
       const u = "http://" + location.hostname + ":" + v.web_port + "/vnc.html";
-      vncState.textContent = "開いている";
+      vncState.textContent = "動作中";
       vncHint.innerHTML = "";
       const a = document.createElement("a");
       a.href = u; a.target = "_blank"; a.rel = "noopener"; a.textContent = u;
       vncHint.append(a, document.createTextNode(
         "　VNCクライアントからは " + location.hostname + ":" + v.rfb_port
-        + "。**認証は無い。** 用が済んだら閉じること。"));
+        + "。**認証は無い。** 用が済んだら停止すること。"));
     } else {
-      vncState.textContent = v.error ? "" : "閉じている";
+      vncState.textContent = v.error ? "" : "停止中";
       vncHint.textContent = v.error
-        || "会議ソフトへのサインインと、自動参加が詰まったときに開ける。"
+        || "会議ソフトへのサインインと、自動参加が詰まったときに使う。"
            + "認証が無いので、常用しないこと。";
     }
   }
@@ -1663,7 +1663,7 @@ __FEED_JS__
     vncOn.disabled = vncOff.disabled = true;
     try {
       showVnc(await post("/api/vnc", { on }));
-      say(on ? "覗く口を開けた。用が済んだら閉じること。" : "覗く口を閉じた。", true);
+      say(on ? "VNCを起動した。用が済んだら停止すること。" : "VNCを停止した。", true);
     } catch (e) {
       say(String(e.message), false);
     }
@@ -2140,7 +2140,7 @@ class WebCaptions:
         self.direction = None
         # 予定された会議を回す見張り（schedule.Scheduler）。
         self.scheduler = None
-        # 中の画面を覗く口（vnc.Vnc）。**会議中でも開け閉めできる。**
+        # VNC（vnc.Vnc）。**会議中でも起動・停止できる。**
         self.vnc = None
         self.on_shutdown = None
         # 配信の経路（Cloudflare / Tailscale）。`tunnel.Delivery` が両方を持つ。
@@ -2353,7 +2353,7 @@ class WebCaptions:
             "level": 0.0, "dropped": 0, "error": ""}
         st["viewer_url"] = self.viewer_url()
         st["public_url"] = self.public_url()
-        # 中の画面を覗く口。**Windows では「使えない」で返る**（DISPLAY が無い）。
+        # VNC。**Windows では「使えない」で返る**（DISPLAY が無い）。
         st["vnc"] = self.vnc.status() if self.vnc else {
             "on": False, "available": False, "error": "",
             "web_port": config.VNC_WEB_PORT, "rfb_port": config.VNC_RFB_PORT}
@@ -3143,7 +3143,7 @@ def _control_handler(web: WebCaptions):
                 # ここを起動時の設定だけにすると、いちばん中を見たい
                 # 「会議中に様子がおかしい」ときに、作り直すしかなくなる。
                 if web.vnc is None:
-                    self._send_json(503, {"error": "画面の口が用意できていない。"})
+                    self._send_json(503, {"error": "VNCの受け口が用意できていない。"})
                     return
                 st = (web.vnc.start() if bool(body.get("on"))
                       else web.vnc.stop())
