@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -63,6 +64,22 @@ _POLL_SEC = 0.5
 #: 前回が不正終了だと「Zoom quit unexpectedly」が前面に出て、
 #: 座標で押す手順がそこで止まる。
 CRASH_REPORT_DIR = Path.home() / ".zoom" / "reports"
+
+#: 参加のあと、窓の顔ぶれを何秒見張るか。**診断のためだけのものである。**
+#:
+#: 「AI Companionは有効です。」のダイアログが**ほぼ毎回出る**（麻生、
+#: 2026-09-21）。手で閉じなくても字幕は出るので、**邪魔はしていない。**
+#: しかし名前も大きさも分かっていないので、`_preview_window()` が
+#: これを掴まない保証が無い。**いまの安全は順番の運で成り立っている。**
+#: プレビュー窓が先に出るから先に拾われているだけで、Zoom が既に
+#: 起動していて前の会議のダイアログが残っていれば、そちらを押しにいく。
+#:
+#: **このダイアログは会議に入った後に出るので、`join()` が返るまでには
+#: 見えない。** だから参加のあとも少しのあいだ見張る。
+#: **名前が分かったら `_preview_window()` の除外に足して、この見張りは
+#: まるごと消してよい。**
+WATCH_AFTER_JOIN_SEC = 20.0
+WATCH_STEP_SEC = 5.0
 
 
 def _run(args: list[str], timeout: float = 10.0) -> str:
@@ -200,6 +217,68 @@ def _audio_dialog() -> tuple[str, int, str] | None:
     return None
 
 
+def _label(name: str, geo: tuple[int, int, int, int] | None) -> str:
+    """その窓が何なのか。**`_preview_window()` と同じ条件で見ること。**
+
+    条件を別に書くと、ログが「候補ではない」と言っている窓を
+    `_preview_window()` が拾う日が来る。
+    """
+    low = name.lower()
+    if low in {n.lower() for n in HOME_WINDOW_NAMES}:
+        return "常駐の窓口"
+    if low in {n.lower() for n in MEETING_WINDOW_NAMES}:
+        return "会議の窓"
+    if AUDIO_DIALOG_HINT in low:
+        return "音声ダイアログ"
+    if geo is None:
+        return "大きさが取れない（候補外）"
+    if geo[2] < MIN_PREVIEW_W or geo[3] < MIN_PREVIEW_H:
+        return f"小さいので候補外（{MIN_PREVIEW_W}x{MIN_PREVIEW_H} 未満）"
+    return "★プレビュー窓の候補"
+
+
+def _log_windows(stage: str) -> None:
+    """見えている Zoom の窓を、名前と大きさで残す。
+
+    **窓の無い運用では `docker compose logs` だけが手がかりである。**
+    ここに出しておけば、次の実会議がそのまま記録になる。VNC を見張る人が
+    要らない。
+    """
+    try:
+        wins = _windows()
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [参加] 窓を見られない（{stage}）: {exc}")
+        return
+    if not wins:
+        print(f"  [参加] 窓（{stage}）: 無し")
+        return
+    print(f"  [参加] 窓（{stage}）: {len(wins)}個")
+    for win_id, _pid, name in wins:
+        geo = _geometry(win_id)
+        size = f"{geo[2]}x{geo[3]}+{geo[0]}+{geo[1]}" if geo else "大きさ不明"
+        print(f"  [参加]   {name!r} {size}  {_label(name, geo)}")
+
+
+def _watch_windows_later() -> None:
+    """参加のあとしばらく、窓の顔ぶれを残す。**別の糸で回す。**
+
+    **`join()` を待たせてはいけない。** 待たせると、そのぶん字幕の生成も
+    チャットへの投稿も遅れる。診断のためだけのものに本筋を待たせない。
+
+    糸は daemon にする。溜め込む待ちを持たないので、終了を妨げない
+    （`queue.get()` で居座る糸とは別物である）。
+    """
+    def run() -> None:
+        watched = 0.0
+        while watched < WATCH_AFTER_JOIN_SEC:
+            time.sleep(WATCH_STEP_SEC)
+            watched += WATCH_STEP_SEC
+            _log_windows(f"参加の{int(watched)}秒後")
+
+    threading.Thread(
+        target=run, name="zoom-window-watch", daemon=True).start()
+
+
 def join(text: str, name: str = "") -> str:
     """Zoom を起こして会議に入らせる。投げたURLを返す。
 
@@ -235,7 +314,11 @@ def join(text: str, name: str = "") -> str:
     # --- プレビュー窓の「Join」 ---------------------------------------------
     # **`enableShowPreviewWndToJoin=false` は効かない**（段階0）。
     win = _wait(_preview_window, PREVIEW_WAIT_SEC)
-    if win is not None:
+    _log_windows("プレビュー窓を待った後")
+    if win is None:
+        print("  [参加] プレビュー窓が出てこなかった。Joinは押していない。")
+    else:
+        print(f"  [参加] プレビュー窓として {win[2]!r} を押す")
         geo = _geometry(win[0])
         if geo is not None:
             x, y, w, h = geo
@@ -244,7 +327,9 @@ def join(text: str, name: str = "") -> str:
     # --- 音声ダイアログの「Join with Computer Audio」 -----------------------
     # **入室と「音に入る」は別の操作である。** ここを押すまで音は来ない。
     dlg = _wait(_audio_dialog, AUDIO_DIALOG_WAIT_SEC)
-    if dlg is not None:
+    if dlg is None:
+        print("  [参加] 音声ダイアログが出てこなかった。音は来ない見込み。")
+    else:
         geo = _geometry(dlg[0])
         if geo is not None:
             x, y, w, h = geo
@@ -253,6 +338,11 @@ def join(text: str, name: str = "") -> str:
     # 音が来るまで待つ。**来なくても例外にしない。** 待機室で待たされている
     # だけかもしれない。スケジューラ（schedule.py）が無音で畳む。
     _wait(_audio_attached, AUDIO_READY_WAIT_SEC)
+    _log_windows("音に入った後")
+
+    # **AI Companion のダイアログは、ここから先に出る。** 別の糸に投げて、
+    # 本筋は待たせない（`WATCH_AFTER_JOIN_SEC` の説明を読むこと）。
+    _watch_windows_later()
     return url
 
 
