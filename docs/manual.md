@@ -251,8 +251,9 @@ Tailscale:  100.x.x.x  (livecaption.<tailnet>.ts.net)
 用語集:     /app/local/glossary（3 個）        3 glossary tables found
 画面:       :99 (1600x1200x24)                 the screen is up
 Zoom:       設定を書いた（speaker_volume=255） Zoom is configured
-操作画面:   http://100.x.x.x:8081              the control page
-            https://livecaption.<tailnet>.ts.net:8443
+操作        https でも開ける: https://livecaption.<tailnet>.ts.net:8443
+操作画面:   http://localhost:8081              the control page
+            http://livecaption.<tailnet>.ts.net:8081
 ```
 
 **That `https://...:8443` is the control page you use every day.** Open it from

@@ -233,8 +233,9 @@ Tailscale:  100.x.x.x  (livecaption.<tailnet>.ts.net)
 用語集:     /app/local/glossary（3 個）
 画面:       :99 (1600x1200x24)
 Zoom:       設定を書いた（speaker_volume=255）
-操作画面:   http://100.x.x.x:8081  （tailnet の中から。ACLで絞ること）
-            https://livecaption.<tailnet>.ts.net:8443  （同上。証明書は Tailscale）
+操作        https でも開ける: https://livecaption.<tailnet>.ts.net:8443
+操作画面:   http://localhost:8081  （自分だけ。共有しないこと）
+            http://livecaption.<tailnet>.ts.net:8081  （tailnet の中から。ACLで絞ること）
 ```
 
 **この `https://...:8443` が、普段使う操作画面です。** tailnet に入っている端末の
