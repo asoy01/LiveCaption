@@ -421,7 +421,13 @@ class Scheduler:
         which = self._chat_total - len(self._chat_todo) + 1
         round_ = f"（{which}/{self._chat_total}回目）"
 
-        from . import zoom_chat
+        # **機体で実装が違う。** Windows は窓のクラスとクリップボードAPI、
+        # Linux（コンテナ）は Xvfb の上の窓と `xdotool` である。
+        # 口は同じ（`meeting_window` / `compose` / `qr_file` / `post`）。
+        if os.name == "nt":
+            from . import zoom_chat
+        else:
+            from . import zoom_chat_linux as zoom_chat
 
         if not zoom_chat.meeting_window():
             if late:
@@ -477,7 +483,13 @@ class Scheduler:
     @staticmethod
     def _post_chat_now(url: str, name: str) -> dict:
         """**別のスレッドで動く。** ここから本体の状態を触らないこと。"""
-        from . import zoom_chat
+        # **機体で実装が違う。** Windows は窓のクラスとクリップボードAPI、
+        # Linux（コンテナ）は Xvfb の上の窓と `xdotool` である。
+        # 口は同じ（`meeting_window` / `compose` / `qr_file` / `post`）。
+        if os.name == "nt":
+            from . import zoom_chat
+        else:
+            from . import zoom_chat_linux as zoom_chat
 
         shot = zoom_chat.qr_file(url, name)
         return zoom_chat.post(zoom_chat.compose(url), [shot] if shot else [])

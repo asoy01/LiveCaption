@@ -3301,7 +3301,13 @@ def _control_handler(web: WebCaptions):
                 self._send_json(400, {"error": "投げる先のURLがまだ無い。"})
                 return
             try:
-                from . import zoom_chat
+                # **機体で実装が違う。** Windows は窓のクラスとクリップボードAPI、
+                # Linux（コンテナ）は Xvfb の上の窓と `xdotool` である。
+                # 口は同じ（`meeting_window` / `compose` / `qr_file` / `post`）。
+                if os.name == "nt":
+                    from . import zoom_chat
+                else:
+                    from . import zoom_chat_linux as zoom_chat
 
                 live = web.meetings.active_id
                 name = next((m.name for m in web.meetings.items()

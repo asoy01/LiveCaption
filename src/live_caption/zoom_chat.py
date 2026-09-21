@@ -40,8 +40,16 @@ from pathlib import Path
 
 from . import config, zoom_join
 
-user32 = ctypes.windll.user32
-kernel32 = ctypes.windll.kernel32
+# **Linux からも import できるようにしてある。** 窓を触る関数は Windows で
+# しか動かないが、**文面とQRの組み立て（`compose` / `qr_file`）は機体を選ばない。**
+# Linux 版（`zoom_chat_linux.py`）がそこだけ借りる。**複製しないこと。**
+# 一度やって内容がずれた（HANDOFF「プロンプトと用語表は本体に一本化した」）。
+# Windows での動きは変わらない。
+if hasattr(ctypes, "windll"):
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+else:
+    user32 = kernel32 = None
 
 # チャットの窓のクラス名。**実測**（上の説明を見ること）。
 CHAT_WINDOW_CLASS = "ZConfChatPopupContainerWndClass"
@@ -82,17 +90,19 @@ VK = {"RETURN": 0x0D, "MENU": 0x12, "CONTROL": 0x11, "H": 0x48,
 
 # **引数と戻り値の型を必ず宣言すること。** 既定は 32bit int なので、64bit の
 # ハンドルが切り詰められ、`OverflowError` になる（2026-09-20 に踏んだ）。
-kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
-kernel32.GlobalAlloc.restype = ctypes.c_void_p
-kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
-kernel32.GlobalLock.restype = ctypes.c_void_p
-kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
-kernel32.GlobalFree.argtypes = [ctypes.c_void_p]
-kernel32.GlobalFree.restype = ctypes.c_void_p
-user32.GetClipboardData.argtypes = [wintypes.UINT]
-user32.GetClipboardData.restype = ctypes.c_void_p
-user32.SetClipboardData.argtypes = [wintypes.UINT, ctypes.c_void_p]
-user32.SetClipboardData.restype = ctypes.c_void_p
+# **Windows のときだけ。** Linux では `user32` も `kernel32` も None である。
+if user32 is not None:
+    kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    kernel32.GlobalAlloc.restype = ctypes.c_void_p
+    kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalFree.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalFree.restype = ctypes.c_void_p
+    user32.GetClipboardData.argtypes = [wintypes.UINT]
+    user32.GetClipboardData.restype = ctypes.c_void_p
+    user32.SetClipboardData.argtypes = [wintypes.UINT, ctypes.c_void_p]
+    user32.SetClipboardData.restype = ctypes.c_void_p
 
 
 class _KEYBDINPUT(ctypes.Structure):
