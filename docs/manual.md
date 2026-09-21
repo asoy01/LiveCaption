@@ -17,7 +17,7 @@ the audio the meeting software plays, so it works with any meeting software.
 
 **LiveCaption joins the meeting as a silent participant.** It never speaks. It
 only makes captions from the audio it hears. The reason for this design is in
-section 12, "How it works".
+section 11, "How it works".
 
 **There are three ways to run it.**
 
@@ -25,24 +25,24 @@ section 12, "How it works".
 |---|---|---|
 | **Windows + Docker** (recommended) | One Windows PC and Docker Desktop | **One laptop is enough.** Start it for each meeting |
 | **Linux + Docker** | One Linux machine and Docker | Leave it on an always-on machine and let it join scheduled meetings on its own |
-| **Windows native** | One Windows PC and VB-CABLE | No Docker. **This way is no longer updated** |
+| **Windows native** | One Windows PC and VB-CABLE | No Docker. **This way is frozen** |
 
 In both Docker setups, **the meeting software and the audio devices are
-inside the container.** Docker is the only thing you install on that machine,
-and **you can still join the same meeting yourself.** The steps are in
-section 2, "Install (Windows + Docker)". Section 3, "Install (Linux +
-Docker)", covers what differs on Linux.
+inside the container.** Docker is the only thing you install, and **you can
+still join the same meeting yourself.** The steps are in section 2, "Install
+(Windows + Docker)". Section 3, "Install (Linux + Docker)", covers what
+differs on Linux.
 
-Windows native is in section 4, "Install (Windows native)". **That way is
-frozen.** All existing features remain, but no new features go into it.
+Windows native is in Appendix A, "Install (Windows native)". It still works,
+but no new features go into it.
 
 **Running a meeting is the same in all three.** The control page, the schedule,
-the glossary and the meeting record do not differ. From section 5 on, this
+the glossary and the meeting record do not differ. In sections 4 to 11, this
 manual names every place where the three ways differ.
 
 **You can schedule meetings and let LiveCaption run with nobody watching.** At
 the set time it joins Zoom, starts delivering, and stops when the meeting is
-over. See section 6, "Scheduled meetings".
+over. See section 5, "Scheduled meetings".
 
 ---
 
@@ -68,20 +68,23 @@ over. See section 6, "Scheduled meetings".
 **You need an Intel or AMD machine.** The image is amd64 only, so it does not
 run on an Apple Silicon Mac. Zoom publishes no arm64 build for Linux.
 
-**To run it without Docker (Windows native):**
+**To run it without Docker (Windows native).** The steps are in Appendix A.
 
 | Item | Notes |
 |---|---|
-| A Windows PC | Used only for captions |
+| A second Windows PC | **The caption PC.** It joins the meeting as a silent participant, so you need it in addition to the PC you speak from |
 | VB-CABLE | A free virtual audio cable. [vb-audio.com/Cable/](https://vb-audio.com/Cable/) |
 | pixi | Builds the Python environment. [pixi.sh](https://pixi.sh) |
 | Git | Used to fetch the repository |
+
+**The text calls that machine the caption PC.** Only Windows native needs one;
+with Docker the container does the same job on the machine you already use.
 
 Speech recognition costs **$0.017 per minute**, so about one US dollar per hour.
 Translation costs much less.
 
 Silence is billed too, so press Stop for a long break. **Stop also stops
-delivery and the Zoom captions** (see step 4 in section 5), and you have to
+delivery and the Zoom captions** (see step 4 in section 4), and you have to
 start those again afterwards. For a break of a few minutes, leave it running.
 
 ---
@@ -93,7 +96,7 @@ first, then read section 3, "Install (Linux + Docker)", for the three steps that
 differ.
 
 You install it once. **In sections 2 and 3, the machine that runs Docker is
-called the host.** From section 5 on, the host means the host of the Zoom
+called the host.** From section 4 on, the host means the host of the Zoom
 meeting, because the button on the control page is called "Show the host URL".
 
 Docker is the only thing you install on the host. **The meeting software, the
@@ -112,7 +115,7 @@ other. **You do not need VB-CABLE.**
 | Screen | Your usual screen | Inside the container (fixed at 1600x1200) |
 | Audio | Your speakers and microphone | A virtual audio device inside the container |
 
-To install without Docker, see section 4, "Install (Windows native)". **That
+To install without Docker, see Appendix A, "Install (Windows native)". **That
 way is frozen.**
 
 ### 2.0 Install Docker Desktop
@@ -325,7 +328,7 @@ LIVECAPTION_RESTART=no
 
 You then start it with `docker compose up -d` before a meeting and stop it with
 `docker compose down` afterwards. **The button on the control page changes its
-wording as well** (6.6). On an always-on machine you need neither line.
+wording as well** (5.6). On an always-on machine you need neither line.
 
 ### 2.5 Start it
 
@@ -393,7 +396,7 @@ desktop → `Terminal emulator`.
 ### 2.7 Add your glossary tables
 
 **This repository contains no tables.** `etc/glossary/` is empty. Terms differ by
-field, so make your own. The format and how to build them are in section 7,
+field, so make your own. The format and how to build them are in section 6,
 "The glossary".
 
 There is a sample in `docs/glossary-example.tsv`.
@@ -493,226 +496,7 @@ machine.
 
 ---
 
-## 4. Install (Windows native)
-
-**This way is frozen.** It still works and keeps all its features, but no new
-features go into it. For a new installation, use section 2, "Install (Windows +
-Docker)".
-
-Do this once on the caption PC.
-
-### 4.1 Install VB-CABLE
-
-Download it from [vb-audio.com/Cable/](https://vb-audio.com/Cable/).
-**Run the installer as administrator, then restart the PC.**
-
-### 4.2 Set both CABLE devices to 48000 Hz
-
-After the restart, open the Windows sound settings and check these two devices.
-
-| Device | Format |
-|---|---|
-| `CABLE Input` (playback) | **48000 Hz**, 16 bit |
-| `CABLE Output` (recording) | **48000 Hz**, 16 bit |
-
-**Set both to 48000 Hz.** If the two rates differ, Windows resamples the audio
-and the sound is distorted. LiveCaption opens the device at 48000 Hz and converts
-the audio to 24000 Hz itself.
-
-### 4.3 Install pixi
-
-pixi builds the Python environment. **You do not have to install Python
-separately.** pixi installs the version this project needs.
-
-Open PowerShell and run one of these.
-
-```powershell
-winget install prefix-dev.pixi
-```
-
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm -useb https://pixi.sh/install.ps1 | iex"
-```
-
-**Open a new PowerShell window afterwards.** An older window does not see the
-new PATH. Then check that pixi is installed.
-
-```powershell
-pixi --version
-```
-
-Git is installed the same way. Skip this if you already have it.
-
-```powershell
-winget install Git.Git
-```
-
-### 4.4 Fetch the repository
-
-Put it anywhere you like. A path with no spaces and no non-ASCII characters is
-the safe choice.
-
-```powershell
-cd C:\src
-git clone https://github.com/asoy01/LiveCaption.git
-cd LiveCaption
-```
-
-You can also download a ZIP from the GitHub page and unpack it, but then you
-cannot update with `git pull`.
-
-### 4.5 Build the Python environment
-
-Run this inside the folder you cloned.
-
-```powershell
-pixi install
-```
-
-The packages go into a `.pixi` folder there. **pixi does not change your system
-Python.** The first run takes a few minutes.
-
-### 4.6 Write the API key into `.env`
-
-**The file goes in the top folder of the repository**, in the same folder as
-`pixi.toml` and `StartLiveCaption.bat`. Create a file called `.env` there.
-
-```
-LiveCaption\
-  ├ .env.example          the sample, included in the repository
-  ├ .env                  the file you create
-  ├ pixi.toml
-  ├ StartLiveCaption.bat
-  ├ src\
-  └ ...
-```
-
-The quickest way is to copy the sample. Run these two commands inside the folder
-you cloned in 4.4.
-
-```powershell
-copy .env.example .env
-notepad .env
-```
-
-Write your key in the file and save it.
-
-```
-OPENAI_API_KEY=sk-...
-```
-
-Create the key at [platform.openai.com](https://platform.openai.com).
-
-**The name is `.env`, not `.env.txt`.** Notepad can add `.txt` when you use
-"Save as" to make a new file. The `copy` command above avoids that.
-
-`.env` is not committed to Git. It is listed in `.gitignore`, so you do not
-publish your key by accident.
-
-**The value in `.env` is used instead of the environment variable of the same
-name.** If you set the key in both places, LiveCaption reads `.env`.
-
-### 4.7 Check that the audio path works
-
-This test needs no meeting and no API key. It plays a sine wave into
-`CABLE Input` and reads it back from `CABLE Output`.
-
-```powershell
-pixi run python scripts/cable_loopback.py
-```
-
-If the test reads the signal back, VB-CABLE is working.
-
-```
---- 本体が既定で選ぶもの: 2 'CABLE Output (VB-Audio Virtual ' [MME] ---
-  区間 39、音あり 39（100%）  最大 peak 0.299  取りこぼし 0
-  => 通っている
-```
-
-### 4.8 Put LiveCaption in the Start menu (optional)
-
-Double-click **`InstallToStartMenu.bat`**. It adds a `LiveCaption` entry to the
-current user's Start menu, so you do not have to find this folder before a
-meeting.
-
-**That entry opens no window.** It goes to the task tray. Right-click the icon
-to open the control page, read the log, or quit (see 6.6). To watch it start,
-run `StartLiveCaption.bat` by hand. That one keeps a console window.
-
-```
-Windows key  ->  type "livecaption"  ->  Enter
-```
-
-To keep the entry visible, right-click LiveCaption in the Start menu and choose
-**Pin to Start** or **Pin to taskbar**.
-
-No administrator rights are needed. It creates one shortcut, at
-`%APPDATA%\Microsoft\Windows\Start Menu\Programs\LiveCaption.lnk`.
-
-**Run `InstallToStartMenu.bat` again if you move or rename this folder.** The
-shortcut holds an absolute path, so it stops working when the folder moves.
-
-The icon comes from `etc/LiveCaption.ico`. To change the icon, edit
-`scripts/make_icon.py`, run it, and register the shortcut again. To remove the
-entry, run `InstallToStartMenu.bat` from a terminal with `-Remove`.
-
-```powershell
-InstallToStartMenu.bat -Remove
-```
-
-### 4.9 If you operate the caption PC remotely
-
-You can put the caption PC in another room. **Do not use RDP (Remote Desktop).**
-
-RDP creates a separate session, locks the console session, and redirects the
-audio to "remote audio". **RDP cuts the path to `CABLE Input` that your meeting
-software was using, and the captions stop.**
-
-Use a tool that drives the console session itself, such as a VNC-style remote
-desktop. A VNC-style tool does not change the audio device setup.
-
-### 4.10 Reaching the control page from another machine (optional)
-
-Sending the whole screen over a remote desktop is often slow. The control page
-is a web page, so **opening it directly from another machine is faster and more
-reliable.**
-
-If you use Tailscale, start it like this and the control page also listens on
-your tailnet address.
-
-```
-pixi run caption --web --control-bind
-```
-
-With no value it finds this PC's Tailscale address by itself. At start-up you
-will see:
-
-```
-操作画面:   http://localhost:8081  (yours only. Never share it)
-            http://100.x.x.x:8081  (from inside the tailnet. Restrict it with an ACL)
-```
-
-**127.0.0.1 always stays.** You can still work at the machine itself when
-Tailscale is down. Right after a reboot, if Tailscale is not up yet, it keeps
-retrying in the background until the address appears.
-
-**The control page has no authentication.** Only the address the request comes
-from protects it. So:
-
-- **Never expose it outside the tailnet.** LiveCaption refuses addresses
-  outside the Tailscale ranges (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`)
-- **Restrict it with a Tailscale ACL** so only your own devices can reach it.
-  Without that limit, anyone you invited to your tailnet can open
-  the control page. Anyone who opens it can quit the app, start delivering, and
-  **read the meeting record**
-
-The connection is plain HTTP, so **the copy buttons do not work** (a browser
-restriction). The URL is selected for you; press Ctrl+C. The copy buttons still
-work when you open the page at `localhost` on the machine itself.
-
----
-
-## 5. Run a meeting
+## 4. Run a meeting
 
 ### Step 1. Start the app
 
@@ -733,7 +517,7 @@ https://livecaption.<tailnet>.ts.net:8443    control page   <- never share this 
 Each meeting has its own viewer URL. It is shown on the **This meeting** tab.
 
 **With Windows native**, double-click **`StartLiveCaption.bat`**. If you did
-step 4.8, you can use **LiveCaption** in the Start menu instead. The control
+step A.8, you can use **LiveCaption** in the Start menu instead. The control
 page opens in your browser.
 
 ```
@@ -789,7 +573,7 @@ meeting record are never translated. The viewer page is in English already.
 **Under Docker, LiveCaption joins by itself.** Put the Zoom invitation URL into
 the meeting entry on the Manage meetings tab, and it joins when you press
 "Start this meeting now" or when the scheduled time arrives. The audio output, the muted microphone and
-the display name are already set inside the container. Section 6, "Scheduled
+the display name are already set inside the container. Section 5, "Scheduled
 meetings", has the details.
 
 **The level meter in step 4 tells you whether LiveCaption joined.** When it
@@ -1024,7 +808,7 @@ To quit the app itself, open the **Setup** tab.
 
 **Under Docker the button restarts it.** The container stops and starts again
 within seconds. LiveCaption is used only from the control page, so the button
-does not stop it for good (6.6).
+does not stop it for good (5.6).
 
 **With Windows native the button quits.** The browser tab and the terminal
 window both close. If you started it from the task tray, right-clicking the
@@ -1032,7 +816,7 @@ icon and choosing quit does the same.
 
 ---
 
-## 6. Scheduled meetings
+## 5. Scheduled meetings
 
 So far a person sits at the control page for every meeting. **If you enter a
 schedule, LiveCaption runs at the set time on its own.** This assumes the
@@ -1047,10 +831,10 @@ It does four things by itself:
 4. Leaves and stops when the meeting is over
 
 **The Zoom caption token is the one thing LiveCaption cannot get by itself**,
-because only the host can create it, and only during the meeting. Section 6.5
+because only the host can create it, and only during the meeting. Section 5.5
 covers how to receive it.
 
-### 6.0 Starting without a schedule
+### 5.0 Starting without a schedule
 
 **You can run the same four steps right now.** Use them for a meeting you never
 put in the schedule, or for one that starts early.
@@ -1075,7 +859,7 @@ This is not the **Start** button at the top. That one starts reading audio and
 recognising speech, nothing else: **it never opens the tunnel and never joins
 Zoom.**
 
-### 6.1 Entering a schedule
+### 5.1 Entering a schedule
 
 Pick the **Manage meetings** tab on the control page. Each meeting row holds the
 fields below.
@@ -1100,7 +884,7 @@ your organisation.
 
 Weekly is the only repeat. There is no support for more complex schedules.
 
-### 6.2 Watching what it does
+### 5.2 Watching what it does
 
 **Right now** is at the top of the **This meeting** tab.
 
@@ -1120,7 +904,7 @@ scrolls away is never seen. Read it, then press **Got it**.
 
 **Skip the next one** skips a single occurrence. The schedule itself stays.
 
-### 6.3 Posting to the Zoom chat
+### 5.3 Posting to the Zoom chat
 
 **Once captions start, LiveCaption can post the caption URL and a QR code to the
 meeting chat.** Tick the box on the Manage meetings tab. **It is off by default.**
@@ -1191,7 +975,7 @@ the caption PC's.
 
 A failure here does not stop the captions. The result is written to the log.
 
-### 6.4 Zoom client settings
+### 5.4 Zoom client settings
 
 **In a meeting where the host uses AI Companion, a dialog appears when
 LiveCaption joins** ("AI Companion is on"). **You cannot turn it off in the Zoom
@@ -1228,7 +1012,7 @@ not contain a meeting number. Use an invitation URL with a number (`/j/...`).
 leave a meeting from outside the client. **LiveCaption quits only a meeting it
 joined itself.** It never quits a meeting you joined.
 
-### 6.5 The host URL
+### 5.5 The host URL
 
 Even when LiveCaption is not the host, you can still put captions into Zoom
 if the host helps.
@@ -1255,7 +1039,7 @@ It is accepted only when all of these are true:
 
 **If the URL leaks, delete that meeting and make a new one.**
 
-### 6.6 Running resident, and starting at logon
+### 5.6 Running resident, and starting at logon
 
 **Under Docker it is already resident.** The container runs with
 `restart: unless-stopped`, so it starts again by itself after a crash and after
@@ -1307,7 +1091,7 @@ you are logged out, so after a reboot nothing starts until somebody logs in.
 
 ---
 
-## 7. The glossary
+## 6. The glossary
 
 The tables in `etc/glossary/` decide how well technical terms are translated.
 **These tables are the part of LiveCaption you maintain.**
@@ -1415,7 +1199,7 @@ not proof that it works.
 
 ---
 
-## 8. The meeting record
+## 7. The meeting record
 
 **LiveCaption saves a record of every meeting by default.** You do not have to
 turn it on.
@@ -1514,7 +1298,7 @@ need them when you tune the settings.
 
 ---
 
-## 9. Commands
+## 8. Commands
 
 ### Docker
 
@@ -1573,7 +1357,7 @@ Options:
 | `--device <name>` | Part of the input device name. Default: `CABLE Output`. The Docker version is started with `pulse` |
 | `--web [port]` | Show captions in a browser. The number is the viewer port, 8080 by default |
 | `--control-port <port>` | The control page port, 8081 by default |
-| `--control-bind [address]` | **Also serve the control page on your tailnet address.** With no value it finds the address by itself. 127.0.0.1 always stays. **Addresses outside the Tailscale ranges are refused** (see 4.10) |
+| `--control-bind [address]` | **Also serve the control page on your tailnet address.** With no value it finds the address by itself. 127.0.0.1 always stays. **Addresses outside the Tailscale ranges are refused** (see A.10) |
 | `--tray` | **Go to the task tray.** The log is also written to `local/log/` |
 | `--web-bind <address>` | The address the **viewer page** listens on, 127.0.0.1 by default. Use 0.0.0.0 to show the viewer page directly to devices on the same LAN. The control page is not affected |
 | `--tunnel` | Open the tunnel at start-up. It is off by default |
@@ -1605,7 +1389,7 @@ pixi run caption --web 8090 --control-port 8091
 
 ---
 
-## 10. Settings
+## 9. Settings
 
 The settings are in `src/live_caption/config.py`. The defaults come from
 measurement, so change them only when you have a reason.
@@ -1669,7 +1453,7 @@ ignores a bad value silently**, so read the start-up output.
 
 ---
 
-## 11. When something is wrong
+## 10. When something is wrong
 
 | Symptom | Where to look |
 |---|---|
@@ -1686,10 +1470,10 @@ ignores a bad value silently**, so read the start-up output.
 | Captions stopped part way through | The `seq` number went backwards. If you restarted LiveCaption, check `local/seq_state.json` |
 | Captions go by too fast to read | Ask the readers to make the caption area taller. Lower `config.FORCE_CUT_CHARS` |
 | The recogniser reconnects again and again | The network. Turn off incoming video in the meeting software on the caption PC. Try another line |
-| Captions stopped after you connected remotely | **Did you connect with RDP?** It cuts the audio path (see 4.9) |
+| Captions stopped after you connected remotely | **Did you connect with RDP?** It cuts the audio path (see A.9) |
 | Nothing starts at the scheduled time | **Is "Start this meeting automatically" ticked?** It is off by default. Check that the meeting is listed under Right now |
-| It joined Zoom but no sound arrives | **Is the "Join with Computer Audio" prompt still shown?** (see 6.4). It may also be stuck in the waiting room, or the passcode may be wrong |
-| An AI Companion dialog appears when it joins | **Leave it alone** (see 6.4). The captions appear even though nobody presses it. You cannot turn it off in the Zoom settings |
+| It joined Zoom but no sound arrives | **Is the "Join with Computer Audio" prompt still shown?** (see 5.4). It may also be stuck in the waiting room, or the passcode may be wrong |
+| An AI Companion dialog appears when it joins | **Leave it alone** (see 5.4). The captions appear even though nobody presses it. You cannot turn it off in the Zoom settings |
 | It does not leave when the meeting ends | Check the silence-stop setting. The hard cap always stops it |
 | It keeps running after the meeting ended early | If somebody left a microphone open, the sound continues and LiveCaption never sees silence. Press Stop now |
 | It does not start at logon | Are you logged in? **It cannot run while you are logged out.** Check the `LiveCaption` task in Task Scheduler |
@@ -1708,7 +1492,7 @@ ignores a bad value silently**, so read the start-up output.
 | It cannot get into Zoom | Has the sign-in expired? **Start VNC and look at the Zoom window** (2.6). It may be in a waiting room |
 | The glossary stays empty | This repository contains no tables (2.7). Upload yours from the control page |
 | You cannot find the meeting records | They are in the volume. Downloading from the control page is the quick way |
-| It starts again after you pressed quit | That is `restart: unless-stopped`. To stop it for real, use `docker compose stop` (6.6) |
+| It starts again after you pressed quit | That is `restart: unless-stopped`. To stop it for real, use `docker compose stop` (5.6) |
 
 **Check the receiving side first.** A successful send is not proof that anything
 is displayed. Every send can return 200 while nothing appears on the other
@@ -1719,7 +1503,7 @@ out. If you miss one, look again instead of sending it a second time.
 
 ---
 
-## 12. How it works
+## 11. How it works
 
 You do not need this section to use LiveCaption.
 
@@ -1809,6 +1593,230 @@ For a sentence that ends in silence, the translation is sent during the wait
 **The wait cannot be shortened.** Measuring the gaps between the recogniser's
 outputs shows gaps of nearly 2.5 seconds while a person is still talking.
 Lowering the threshold only cuts more sentences in the middle.
+
+---
+
+## Appendix A. Install (Windows native)
+
+**Windows native is frozen.** It still works and keeps all its features, but no
+new features go into it. **For a new installation, use the Docker setup in
+section 2 or 3.** This appendix is for people who already run Windows native.
+
+**Windows native needs a Windows PC of its own for the captions.** This manual
+calls that PC the caption PC. **The caption PC joins the meeting as a silent
+participant, so you need it in addition to the PC you speak from.** The two
+Docker setups need only one PC.
+
+Do these steps once on the caption PC.
+
+### A.1 Install VB-CABLE
+
+Download it from [vb-audio.com/Cable/](https://vb-audio.com/Cable/).
+**Run the installer as administrator, then restart the PC.**
+
+### A.2 Set both CABLE devices to 48000 Hz
+
+After the restart, open the Windows sound settings and check these two devices.
+
+| Device | Format |
+|---|---|
+| `CABLE Input` (playback) | **48000 Hz**, 16 bit |
+| `CABLE Output` (recording) | **48000 Hz**, 16 bit |
+
+**Set both to 48000 Hz.** If the two rates differ, Windows resamples the audio
+and the sound is distorted. LiveCaption opens the device at 48000 Hz and converts
+the audio to 24000 Hz itself.
+
+### A.3 Install pixi
+
+pixi builds the Python environment. **You do not have to install Python
+separately.** pixi installs the version this project needs.
+
+Open PowerShell and run one of these.
+
+```powershell
+winget install prefix-dev.pixi
+```
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm -useb https://pixi.sh/install.ps1 | iex"
+```
+
+**Open a new PowerShell window afterwards.** An older window does not see the
+new PATH. Then check that pixi is installed.
+
+```powershell
+pixi --version
+```
+
+Git is installed the same way. Skip this if you already have it.
+
+```powershell
+winget install Git.Git
+```
+
+### A.4 Fetch the repository
+
+Put it anywhere you like. A path with no spaces and no non-ASCII characters is
+the safe choice.
+
+```powershell
+cd C:\src
+git clone https://github.com/asoy01/LiveCaption.git
+cd LiveCaption
+```
+
+You can also download a ZIP from the GitHub page and unpack it, but then you
+cannot update with `git pull`.
+
+### A.5 Build the Python environment
+
+Run this inside the folder you cloned.
+
+```powershell
+pixi install
+```
+
+The packages go into a `.pixi` folder there. **pixi does not change your system
+Python.** The first run takes a few minutes.
+
+### A.6 Write the API key into `.env`
+
+**The file goes in the top folder of the repository**, in the same folder as
+`pixi.toml` and `StartLiveCaption.bat`. Create a file called `.env` there.
+
+```
+LiveCaption\
+  ├ .env.example          the sample, included in the repository
+  ├ .env                  the file you create
+  ├ pixi.toml
+  ├ StartLiveCaption.bat
+  ├ src\
+  └ ...
+```
+
+The quickest way is to copy the sample. Run these two commands inside the folder
+you cloned in A.4.
+
+```powershell
+copy .env.example .env
+notepad .env
+```
+
+Write your key in the file and save it.
+
+```
+OPENAI_API_KEY=sk-...
+```
+
+Create the key at [platform.openai.com](https://platform.openai.com).
+
+**The name is `.env`, not `.env.txt`.** Notepad can add `.txt` when you use
+"Save as" to make a new file. The `copy` command above avoids that.
+
+`.env` is not committed to Git. It is listed in `.gitignore`, so you do not
+publish your key by accident.
+
+**The value in `.env` is used instead of the environment variable of the same
+name.** If you set the key in both places, LiveCaption reads `.env`.
+
+### A.7 Check that the audio path works
+
+This test needs no meeting and no API key. It plays a sine wave into
+`CABLE Input` and reads it back from `CABLE Output`.
+
+```powershell
+pixi run python scripts/cable_loopback.py
+```
+
+If the test reads the signal back, VB-CABLE is working.
+
+```
+--- 本体が既定で選ぶもの: 2 'CABLE Output (VB-Audio Virtual ' [MME] ---
+  区間 39、音あり 39（100%）  最大 peak 0.299  取りこぼし 0
+  => 通っている
+```
+
+### A.8 Put LiveCaption in the Start menu (optional)
+
+Double-click **`InstallToStartMenu.bat`**. It adds a `LiveCaption` entry to the
+current user's Start menu, so you do not have to find this folder before a
+meeting.
+
+**That entry opens no window.** It goes to the task tray. Right-click the icon
+to open the control page, read the log, or quit (see 5.6). To watch it start,
+run `StartLiveCaption.bat` by hand. That one keeps a console window.
+
+```
+Windows key  ->  type "livecaption"  ->  Enter
+```
+
+To keep the entry visible, right-click LiveCaption in the Start menu and choose
+**Pin to Start** or **Pin to taskbar**.
+
+No administrator rights are needed. It creates one shortcut, at
+`%APPDATA%\Microsoft\Windows\Start Menu\Programs\LiveCaption.lnk`.
+
+**Run `InstallToStartMenu.bat` again if you move or rename this folder.** The
+shortcut holds an absolute path, so it stops working when the folder moves.
+
+The icon comes from `etc/LiveCaption.ico`. To change the icon, edit
+`scripts/make_icon.py`, run it, and register the shortcut again. To remove the
+entry, run `InstallToStartMenu.bat` from a terminal with `-Remove`.
+
+```powershell
+InstallToStartMenu.bat -Remove
+```
+
+### A.9 If you operate the caption PC remotely
+
+You can put the caption PC in another room. **Do not use RDP (Remote Desktop).**
+
+RDP creates a separate session, locks the console session, and redirects the
+audio to "remote audio". **RDP cuts the path to `CABLE Input` that your meeting
+software was using, and the captions stop.**
+
+Use a tool that drives the console session itself, such as a VNC-style remote
+desktop. A VNC-style tool does not change the audio device setup.
+
+### A.10 Reaching the control page from another machine (optional)
+
+Sending the whole screen over a remote desktop is often slow. The control page
+is a web page, so **opening it directly from another machine is faster and more
+reliable.**
+
+If you use Tailscale, start it like this and the control page also listens on
+your tailnet address.
+
+```
+pixi run caption --web --control-bind
+```
+
+With no value it finds this PC's Tailscale address by itself. At start-up you
+will see:
+
+```
+操作画面:   http://localhost:8081  (yours only. Never share it)
+            http://100.x.x.x:8081  (from inside the tailnet. Restrict it with an ACL)
+```
+
+**127.0.0.1 always stays.** You can still work at the machine itself when
+Tailscale is down. Right after a reboot, if Tailscale is not up yet, it keeps
+retrying in the background until the address appears.
+
+**The control page has no authentication.** Only the address the request comes
+from protects it. So:
+
+- **Never expose it outside the tailnet.** LiveCaption refuses addresses
+  outside the Tailscale ranges (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`)
+- **Restrict it with a Tailscale ACL** so only your own devices can reach it.
+  Without that limit, anyone you invited to your tailnet can open
+  the control page. Anyone who opens it can quit the app, start delivering, and
+  **read the meeting record**
+
+The connection is plain HTTP, so **the copy buttons do not work** (a browser
+restriction). The URL is selected for you; press Ctrl+C. The copy buttons still
+work when you open the page at `localhost` on the machine itself.
 
 ---
 

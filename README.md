@@ -63,7 +63,7 @@ copy .env.example .env        # then put your OPENAI_API_KEY in it
 pixi run python scripts/cable_loopback.py   # check the VB-CABLE path
 ```
 
-Then double-click `StartLiveCaption.bat`. See chapter 3 of the manual.
+Then double-click `StartLiveCaption.bat`. See Appendix A of the manual.
 
 ## Three ways to show the captions
 
