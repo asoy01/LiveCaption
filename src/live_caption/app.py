@@ -30,6 +30,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from pathlib import Path
 
@@ -41,6 +42,7 @@ from . import schedule as schedule_mod
 from . import segmenter as segmenter_mod
 from . import transcript as transcript_mod
 from . import translator as translator_mod
+from . import vnc as vnc_mod
 
 # 同時に走らせる翻訳の数。多くしても順序は守るが、遅れが見えにくくなる。
 MAX_INFLIGHT = 4
@@ -436,6 +438,9 @@ class App:
         self.dir_control = DirectionControl(self)
         # 予定された会議を無人で回す見張り（schedule.py）。
         self.scheduler = schedule_mod.Scheduler(self)
+        # 中の画面を覗く口（vnc.py）。**コンテナで動かすときだけ使える。**
+        # Windows では DISPLAY が無いので、操作画面には「使えない」と出る。
+        self.vnc = vnc_mod.Vnc()
         # run() で受け取る。操作画面から入力を差し替えるために持っておく。
         self.capture = None
         # 音声デバイスを開けなかったときの理由。開けたら消す。
@@ -485,6 +490,17 @@ class App:
             web.records = RecordControl(self)
             # 予定の状態と、止める・飛ばす・失敗を消す、の操作。
             web.scheduler = self.scheduler
+            # 中の画面を覗く口。**会議中でも開け閉めできる**ようにしてある。
+            web.vnc = self.vnc
+            # **既定では上げない。** 認証が無いので、要るときだけ画面から開ける。
+            if os.environ.get(config.VNC_ENV, "").strip().lower() in (
+                    "1", "true", "yes", "on"):
+                st = self.vnc.start()
+                if st["on"]:
+                    print(f"画面の口:   上げた（ポート {st['web_port']}）。"
+                          "**認証は無い。**")
+                else:
+                    print(f"画面の口:   上げられない（{st['error']}）")
         self.sentences: asyncio.Queue[segmenter_mod.Cut] = asyncio.Queue()
         self.inflight: asyncio.Queue = asyncio.Queue(maxsize=MAX_INFLIGHT)
         self.stats = {"sentences": 0, "lines": 0}
@@ -991,6 +1007,8 @@ class App:
             pass
         finally:
             self.asr.stop()
+            # 覗き口を開けたままにしない。認証が無いので、閉じて終わる。
+            self.vnc.stop()
             for t in tasks:
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)

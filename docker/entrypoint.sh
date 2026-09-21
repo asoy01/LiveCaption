@@ -158,13 +158,10 @@ CONF
   echo "Zoom:       設定を書いた（speaker_volume=255）"
 fi
 
-if [ "${LIVECAPTION_VNC:-0}" = "1" ]; then
-  # **サインインは人がやる作業なので、この口が要る。**
-  x11vnc -display "$DISPLAY" -forever -shared -nopw -quiet -rfbport 5900 \
-         >/var/log/x11vnc.log 2>&1 &
-  websockify --web=/usr/share/novnc 6080 localhost:5900 \
-         >/var/log/novnc.log 2>&1 &
-  echo "画面:       http://<ホスト>:6080/vnc.html で中を触れる（認証は無い）"
-fi
+# **覗く口はここでは起こさない。本体が持つ。**
+# 操作画面の「中の画面」から、会議中でも開け閉めできるようにするためである。
+# ここで起こすと、入口のシェルが `exec` で本体になったあと親が回収しないので、
+# 閉じるたびにゾンビが1つ残る。`LIVECAPTION_VNC=1` は本体が読み、
+# 「起動した時点から開けておく」の意味になる。
 
 exec pixi run --frozen python run.py "$@"

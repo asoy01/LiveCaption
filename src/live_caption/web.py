@@ -970,6 +970,16 @@ CONTROL_BODY = """
     <div class="row2 hint">音量メーターは「この会議」の側に出る。</div>
   </div>
 
+  <div class="grp" id="vncGrp" style="display:none">
+    <h2>中の画面</h2>
+    <div class="row2">
+      <button id="vncOn">覗く口を開ける</button>
+      <button id="vncOff">閉じる</button>
+      <span id="vncState"></span>
+    </div>
+    <div class="row2 hint" id="vncHint"></div>
+  </div>
+
   <div class="grp">
     <h2>用語集</h2>
     <details class="fold" id="glossFold">
@@ -1037,6 +1047,8 @@ __FEED_JS__
   const glossFilter = $("glossFilter"), glossFilterRow = $("glossFilterRow");
   const glossAll = $("glossAll"), glossNone = $("glossNone");
   const glossFile = $("glossFile"), glossUp = $("glossUp");
+  const vncGrp = $("vncGrp"), vncOn = $("vncOn"), vncOff = $("vncOff");
+  const vncState = $("vncState"), vncHint = $("vncHint");
   let glossLoaded = false;
   const dirSel = $("dirSel"), dirState = $("dirState");
   let dirLoaded = false;
@@ -1173,6 +1185,9 @@ __FEED_JS__
   }
 
   function showStatus(s) {
+    // --- 中の画面を覗く口。会議中でも開け閉めできる ---
+    showVnc(s.vnc);
+
     // --- 字幕の生成。**これが親の関門である。** ---
     gpill.textContent = s.generating ? "生成: 中" : "生成: 停止中";
     gpill.className = "pill " + (s.generating ? "on" : "off");
@@ -1599,6 +1614,47 @@ __FEED_JS__
     }
     glossUp.disabled = false;
   });
+
+  // --- 中の画面を覗く口 ---------------------------------------------------
+  // **会議中でも開け閉めできる。** 会議ソフトへのサインインと、自動参加が
+  // 詰まったときの様子見に使う。認証が無いので、既定では開けていない。
+  function showVnc(v) {
+    if (!v) { return; }
+    // 使えない環境（Windows には画面の口が無い）では、欄ごと出さない。
+    vncGrp.style.display = (v.available || v.on) ? "" : "none";
+    vncOn.disabled = v.on || !v.available;
+    vncOff.disabled = !v.on;
+    if (v.on) {
+      // **繋ぎ先は、いま開いている操作画面と同じ相手である。**
+      // サーバ側で名前を組み立てると、tailnet 名・IP・localhost のどれで
+      // 開いているかで食い違う。
+      const u = "http://" + location.hostname + ":" + v.web_port + "/vnc.html";
+      vncState.textContent = "開いている";
+      vncHint.innerHTML = "";
+      const a = document.createElement("a");
+      a.href = u; a.target = "_blank"; a.rel = "noopener"; a.textContent = u;
+      vncHint.append(a, document.createTextNode(
+        "　VNCクライアントからは " + location.hostname + ":" + v.rfb_port
+        + "。**認証は無い。** 用が済んだら閉じること。"));
+    } else {
+      vncState.textContent = v.error ? "" : "閉じている";
+      vncHint.textContent = v.error
+        || "会議ソフトへのサインインと、自動参加が詰まったときに開ける。"
+           + "認証が無いので、常用しないこと。";
+    }
+  }
+
+  async function setVnc(on) {
+    vncOn.disabled = vncOff.disabled = true;
+    try {
+      showVnc(await post("/api/vnc", { on }));
+      say(on ? "覗く口を開けた。用が済んだら閉じること。" : "覗く口を閉じた。", true);
+    } catch (e) {
+      say(String(e.message), false);
+    }
+  }
+  vncOn.addEventListener("click", () => setVnc(true));
+  vncOff.addEventListener("click", () => setVnc(false));
 
   // --- 操作画面の言語 -----------------------------------------------------
   // **サーバ側で差し替える。** 選んだらサーバに覚えさせて、読み込み直す。
@@ -2069,6 +2125,8 @@ class WebCaptions:
         self.direction = None
         # 予定された会議を回す見張り（schedule.Scheduler）。
         self.scheduler = None
+        # 中の画面を覗く口（vnc.Vnc）。**会議中でも開け閉めできる。**
+        self.vnc = None
         self.on_shutdown = None
         # 配信の経路（Cloudflare / Tailscale）。`tunnel.Delivery` が両方を持つ。
         self.tunnel: tunnel_mod.Delivery | None = None
@@ -2280,6 +2338,10 @@ class WebCaptions:
             "level": 0.0, "dropped": 0, "error": ""}
         st["viewer_url"] = self.viewer_url()
         st["public_url"] = self.public_url()
+        # 中の画面を覗く口。**Windows では「使えない」で返る**（DISPLAY が無い）。
+        st["vnc"] = self.vnc.status() if self.vnc else {
+            "on": False, "available": False, "error": "",
+            "web_port": config.VNC_WEB_PORT, "rfb_port": config.VNC_RFB_PORT}
         if self.transcript is not None:
             st["transcript"] = {
                 "on": True,
@@ -2999,6 +3061,7 @@ def _control_handler(web: WebCaptions):
             if path not in ("/api/token", "/api/zoom", "/api/tunnel",
                             "/api/engine", "/api/device", "/api/glossary",
                             "/api/glossary/upload", "/api/glossary/delete",
+                            "/api/vnc",
                             "/api/tuning", "/api/tuning/save", "/api/direction",
                             "/api/lang", "/api/meetings", "/api/schedule",
                             "/api/chat"):
@@ -3056,6 +3119,19 @@ def _control_handler(web: WebCaptions):
                 except ValueError as exc:
                     self._send_json(400, {"error": str(exc)})
                     return
+                self._send_json(200, st)
+                return
+
+            if path == "/api/vnc":
+                # **会議中に開け閉めできることが要点である。** x11vnc は既に
+                # 上がっている X 画面に貼り付くだけなので、会議も字幕も止まらない。
+                # ここを起動時の設定だけにすると、いちばん中を見たい
+                # 「会議中に様子がおかしい」ときに、作り直すしかなくなる。
+                if web.vnc is None:
+                    self._send_json(503, {"error": "画面の口が用意できていない。"})
+                    return
+                st = (web.vnc.start() if bool(body.get("on"))
+                      else web.vnc.stop())
                 self._send_json(200, st)
                 return
 

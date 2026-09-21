@@ -421,6 +421,15 @@ def glossary_dir() -> Path:
 GLOSSARY_STATE_PATH = PROJECT_ROOT / "local" / "glossary_state.json"
 ENV_PATH = PROJECT_ROOT / ".env"
 
+# --- 中の画面を覗く口（コンテナで動かすときだけ） ------------------------------
+# **常用しない。** 認証が無く、tailnet の中からは誰でも届く。
+# 会議ソフトへのサインインと、自動参加が詰まったときの様子見に使う。
+VNC_RFB_PORT = 5900          # VNC クライアントから繋ぐ先
+VNC_WEB_PORT = 6080          # ブラウザから繋ぐ先（noVNC）
+NOVNC_ROOT = "/usr/share/novnc"
+# 1 なら起動した時点から上げる。既定は上げない（操作画面から開ける）。
+VNC_ENV = "LIVECAPTION_VNC"
+
 
 @dataclass
 class Settings:
