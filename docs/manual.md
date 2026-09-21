@@ -13,7 +13,7 @@ You choose the direction.
   hard to follow spoken English
 
 LiveCaption can send captions to Zoom, but it is not limited to Zoom. It reads
-whatever the meeting software plays, so it works with any of them.
+the audio the meeting software plays, so it works with any meeting software.
 
 **LiveCaption joins the meeting as a silent participant.** It never speaks. It
 only turns what it hears into captions. The reason for this design is in
@@ -30,14 +30,14 @@ With Docker, the meeting client and the audio devices are inside the container.
 **Docker is the only thing the host needs.** See section 2, "Install (Docker)".
 
 The Windows way is in section 3, "Install (Windows caption PC)". **It is frozen.**
-Nothing was removed, but no new features go into it.
+All existing features remain, but no new features go into it.
 
 **Running a meeting is the same either way.** The control page, the schedule,
 the glossary and the meeting record do not differ. From section 4 on, the text
-says so wherever the two ways differ.
+points out every place where the two ways differ.
 
 **You can schedule meetings and let it run with nobody watching.** At the set
-time it joins Zoom, starts delivering, and shuts the meeting down when it ends.
+time it joins Zoom, starts delivering, and stops when the meeting is over.
 See section 5, "Scheduled meetings".
 
 ---
@@ -50,16 +50,16 @@ See section 5, "Scheduled meetings".
 |---|---|
 | An OpenAI API key | Speech recognition and translation both call the OpenAI API |
 | An account in your meeting software, such as Zoom | A free account is enough |
-| Host or co-host rights | Only if you want to use the Zoom caption API. The other two ways do not need host rights |
+| Host or co-host rights | Only if you want to use the Zoom caption API. The other two outputs do not need host rights |
 
 **To run it in Docker:**
 
 | Item | Notes |
 |---|---|
-| A Linux machine | An always-on one suits it best. It needs no sound card and no screen |
+| A Linux machine | An always-on machine is best. It needs no sound card and no screen |
 | Docker and Docker Compose | Compose v2 or later |
 | Git | Used to fetch the repository |
-| A Tailscale account | Used to hand the viewer URL to people outside. The free tier is enough |
+| A Tailscale account | Used to hand the viewer URL to people outside your tailnet. The free tier is enough |
 
 **To run it on a Windows caption PC:**
 
@@ -82,7 +82,7 @@ simpler to leave it running.
 ## 2. Install (Docker)
 
 **Do this once on the Linux machine.** From here on, that machine is called the
-host.
+host. The host of a Zoom meeting is always called the Zoom host.
 
 Docker is the only thing you install on the host. **The meeting client, the
 audio devices, the screen and Tailscale are all inside the container.** The
@@ -116,7 +116,7 @@ OPENAI_API_KEY=sk-...
 Create the key at [platform.openai.com](https://platform.openai.com).
 
 `.env` is not in Git (`.gitignore` lists it). **It is also kept out of the
-Docker build context** (`.dockerignore`), so the key cannot end up baked into an
+Docker build context** (`.dockerignore`), so the key cannot be stored in an
 image layer.
 
 `.env.example` describes the other settings as well. **You do not need any of
@@ -129,24 +129,24 @@ container becomes a node on your tailnet, and Tailscale Funnel puts the viewer
 page on the public internet while you deliver.
 
 The control page stays inside the tailnet. **The control page has no
-authentication.** All that protects it is where the request comes from, so it
-never leaves the tailnet.
+authentication.** The only thing that protects it is where the request comes
+from, so the control page never leaves the tailnet.
 
 There are two ways to join.
 
-**(a) Log in by hand.** Add nothing to `.env`. On start-up the log prints a URL;
+**(a) Sign in by hand.** Add nothing to `.env`. On start-up the log prints a URL;
 open it in a browser and approve. **Nothing secret goes into `.env` this way.**
 The state is kept in a volume, so you only do it once.
 
-**(b) Use an auth key.** Choose this if you want to be able to bring the
-container back with nobody watching. Create the key in the Tailscale admin
-console (Settings → Keys → Generate auth key).
+**(b) Use an auth key.** Choose this if you want the container to come back with
+nobody watching. Create the key in the Tailscale admin console
+(Settings → Keys → Generate auth key).
 
 | Field | Value | Why |
 |---|---|---|
 | Reusable | **on** | You need it again whenever you recreate the volume |
 | Ephemeral | **off** | An ephemeral node changes its name every time, and **the viewer URL you handed out in advance stops working** |
-| Tags | `tag:livecaption` | A tagged device is never subject to key expiry |
+| Tags | `tag:livecaption` | Key expiry does not apply to a tagged device |
 
 **Add the tag to your ACL first.** Funnel also needs a node attribute.
 
@@ -160,7 +160,7 @@ console (Settings → Keys → Generate auth key).
 
 **If you do not tag the node, turn on Disable key expiry in the admin console.**
 Otherwise the node leaves the tailnet after the default 180 days, and **the
-delivery URL dies without warning.**
+delivery URL stops working without warning.**
 
 Write the key into `.env`.
 
@@ -185,8 +185,8 @@ sudo tailscale lock sign nodekey:xxxxxxxx
 ```
 
 **Use your ACL to limit which devices reach the control page.** If you have
-invited other people to your tailnet, they can otherwise open it — and whoever
-opens it can quit the app, start delivering, and **read the meeting
+invited other people to your tailnet, they can otherwise open the control page.
+Anyone who opens it can quit the app, start delivering, and **read the meeting
 transcript**.
 
 ### 2.4 If the host runs ConnMan
@@ -199,12 +199,12 @@ systemctl is-active connman
 ```
 
 ConnMan takes charge of every interface it finds, but **its default blacklist
-does not include `docker`, `veth`, `br-` or `tailscale`.** So it grabs the
+does not include `docker`, `veth`, `br-` or `tailscale`.** So it takes over the
 virtual interfaces Docker creates, fails DHCP on them, assigns a link-local
 address, and **points the host's default route at them.** The host's outbound
 traffic disappears into the container.
 
-**The symptom is hard to read.** DHCP has to time out first, so it breaks
+**The symptom is hard to recognise.** DHCP has to time out first, so it breaks
 **tens of seconds after** the container starts. From Zoom it looks like "it
 joins, then loses audio and disconnects 30 to 40 seconds later".
 
@@ -219,8 +219,8 @@ sudo systemctl restart connman
 sudo systemctl restart tailscaled
 ```
 
-**Include `tailscale` as well.** If you exclude only Docker, ConnMan grabs
-`tailscale0` next and takes it down. **`tailscale status` still says "Online:
+**Include `tailscale` as well.** If you exclude only Docker, ConnMan takes over
+`tailscale0` next and brings it down. **`tailscale status` still says "Online:
 True" then**, because the connection to the control server runs over the wired
 interface. Only the data path is broken, so the status does not show it. Look
 at this instead:
@@ -257,7 +257,7 @@ Zoom:       設定を書いた（speaker_volume=255） Zoom is configured
 ```
 
 **That `https://...:8443` is the control page you use every day.** Open it from
-any machine on your tailnet. Tailscale obtains the certificate and renews it.
+any machine on your tailnet. Tailscale gets the certificate and renews it.
 
 **Open it by the full name.** The certificate is issued for
 `<machine>.<tailnet>.ts.net`, so a short name or an IP address does not match.
@@ -272,7 +272,7 @@ a scheduled meeting.
 
 ### 2.6 Sign in to Zoom
 
-**The Zoom client inside the container starts out signed out.** Sign in once by
+**The Zoom client inside the container starts signed out.** Sign in once by
 hand so that it can join meetings on its own. **Use VNC.**
 
 On the control page, open the **Setup** tab → "VNC" → **Start**. Open the URL it
@@ -285,16 +285,16 @@ https://livecaption.<tailnet>.ts.net:6443/vnc.html
 Sign in to Zoom, then press **Stop**. **The sign-in is kept in a volume, so you
 do not have to do it again.**
 
-**VNC has no password.** The tailnet boundary is all that protects it. **Start
-it when you need it and stop it afterwards.** You can start and stop it during a
-meeting.
+**VNC has no password.** The only thing that protects it is the tailnet
+boundary. **Start it when you need it and stop it afterwards.** You can start
+and stop it during a meeting.
 
 **You can open a terminal in there too.** Right-click on the empty desktop →
 `Terminal emulator`.
 
 ### 2.7 Add your glossary tables
 
-**This repository ships no tables.** `etc/glossary/` is empty. Terms differ by
+**This repository contains no tables.** `etc/glossary/` is empty. Terms differ by
 field, so bring your own. The format and how to build them are in section 6,
 "The glossary".
 
@@ -306,7 +306,7 @@ lose them.** You download and delete them in the same place.
 
 ### 2.8 Try it without a meeting
 
-You can exercise the whole path with a recording.
+You can test the whole path with a recording.
 
 ```sh
 docker compose run --rm -v "$PWD/recordings:/samples:ro" engine \
@@ -320,7 +320,7 @@ translation only. Use a 24000 Hz mono WAV file.
 
 ## 3. Install (Windows caption PC)
 
-**This way is frozen.** It still works and nothing was removed, but no new
+**This way is frozen.** It still works and keeps all its features, but no new
 features go into it. For a new installation, use section 2, "Install (Docker)".
 
 Do this once on the caption PC.
@@ -425,7 +425,7 @@ Write your key in the file and save it.
 OPENAI_API_KEY=sk-...
 ```
 
-You create the key at [platform.openai.com](https://platform.openai.com).
+Create the key at [platform.openai.com](https://platform.openai.com).
 
 **The name is `.env`, not `.env.txt`.** Notepad can add `.txt` when you use
 "Save as" to make a new file. The `copy` command above avoids that.
@@ -461,7 +461,7 @@ meeting.
 
 **That entry opens no window.** It goes to the task tray; right-click the icon
 for the control page, the log, and quit (see 5.6). To watch it start up, run
-`StartLiveCaption.bat` by hand — that one keeps a console.
+`StartLiveCaption.bat` by hand. That one keeps a console window.
 
 ```
 Windows key  ->  type "livecaption"  ->  Enter
@@ -520,15 +520,15 @@ will see:
 Tailscale is down. Right after a reboot, if Tailscale is not up yet, it keeps
 retrying in the background until the address appears.
 
-**The control page has no authentication.** The only thing protecting it is
-where a request can come from. So:
+**The control page has no authentication.** The only thing that protects it is
+where the request comes from. So:
 
 - **Never expose it outside the tailnet.** Addresses outside the Tailscale
   ranges (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) are refused by design
 - **Restrict it with a Tailscale ACL** so only your own devices can reach it.
-  If you have invited other people into your tailnet, they can otherwise open
-  the control page — and that means quitting the app, starting delivery, and
-  **reading the meeting transcript**
+  If you have invited other people to your tailnet, they can otherwise open
+  the control page. Anyone who opens it can quit the app, start delivering, and
+  **read the meeting transcript**
 
 The connection is plain HTTP, so **the copy buttons do not work** (a browser
 restriction). The URL is selected for you; press Ctrl+C. From `localhost` at the
@@ -582,8 +582,8 @@ once it is right.
 
 **Manage meetings opens inside the right panel.** The captions stay on the left.
 
-**The panel width does not change when you switch tabs.** If the management page
-is too narrow, drag the divider. Its contents grow to the width you set.
+**The panel width does not change when you switch tabs.** If the Manage meetings
+tab is too narrow, drag the divider. Its contents grow to the width you set.
 
 **A red dot on the This meeting tab means something there has failed.** It is
 there so you notice while another tab is open.
@@ -591,15 +591,23 @@ there so you notice while another tab is open.
 The three entries under "How people see it" are folded. **Even folded, the right
 of each row says `delivering` or `sending`, so you can tell how many are running.**
 
+**The control page can be Japanese or English.** Pick the language in the
+**日本語 / English** box in the header. The page reloads at once, and **the next
+start uses the same language.** The rest of this manual names the buttons in
+Japanese, because that is the default.
+
+Only the control page changes. The captions, the transcription, and the meeting
+record are never translated. The viewer page is in English already.
+
 ### Step 2. Join the meeting
 
 **Under Docker, LiveCaption joins by itself.** Put the Zoom invitation URL into
-the meeting on the management page, and it joins when you press "start now" or
-when the scheduled time arrives. The audio output, the muted microphone and the
-display name are already set inside the container. Section 5, "Scheduled
+the meeting on the Manage meetings tab, and it joins when you press "start now"
+or when the scheduled time arrives. The audio output, the muted microphone and
+the display name are already set inside the container. Section 5, "Scheduled
 meetings", has the details.
 
-**Step 4 tells you whether it got in.** When it fails to join, start VNC from
+**The level meter in step 4 tells you whether it joined.** When it fails to join, start VNC from
 the control page and look at the Zoom window: a waiting room, a passcode
 prompt, or an expired sign-in is then visible.
 
@@ -612,14 +620,6 @@ PC.
   participant list, so make it clear what this PC is doing
 
 Then join the meeting.
-
-**The control page can be Japanese or English.** Pick the language in the
-**日本語 / English** box in the header. The page reloads at once, and **the next
-start uses the same language.** The rest of this manual names the buttons in
-Japanese, because that is the default.
-
-Only the control page changes. The captions, the transcription, and the meeting
-record are never translated. The viewer page is in English already.
 
 ### Step 3. Check the input device
 
@@ -669,24 +669,24 @@ Then press **開始** (start) at the top, under **いまの状態** (right now).
 
 **Stop stops all three.** It closes caption generation, the delivery to
 participants (the viewer URL), and the sending to the Zoom captions. **The worst
-case is thinking you stopped and having captions keep flowing.** Stopping
-delivery kills the viewer URL, so this is not a button to press at every break.
-What was stopped is written on the spot.
+case is that you think you stopped and the captions keep flowing.** Stopping
+delivery makes the viewer URL stop working, so this is not a button to press at
+every break. What was stopped is shown at once.
 
-**Watch the level meter just below it.** If nobody has spoken yet, the meter does not move.
+**Watch the level meter below the button.** If nobody has spoken yet, the meter does not move.
 Ask someone to speak. If the meter stays flat while a person is speaking, the
 input device is wrong. Pick another one. You can change the device while
 captions are being generated.
 
 ### Step 5. Show the captions
 
-There are three ways. **You can use all three at the same time.**
+There are three outputs. **You can use all three at the same time.**
 
 | Output | Host rights | How people see it | Leaves your network |
 |---|---|---|---|
 | Zoom caption API | **Required** | Each person turns manual captions on | Through Zoom |
 | Screen share | Not required | You share the viewer page full screen | **No** |
-| Hand out a URL | Not required | People open a URL on their own device | Through Cloudflare |
+| Hand out a URL | Not required | People open a URL on their own device | Through Cloudflare or Tailscale |
 
 #### A. Zoom caption API (needs host or co-host rights)
 
@@ -735,9 +735,9 @@ machine that makes the captions.
 as the machine you opened the control page on is on the tailnet. To show it on
 a machine that is not, use C, "Hand out a URL".
 
-**Screen sharing compresses the picture.** Small text breaks up. After you start
-sharing, check on a second device that the text is readable. If it is not, show
-fewer lines (`config.WEB_LINES`).
+**Screen sharing compresses the picture.** Small text becomes hard to read.
+After you start sharing, check on a second device that the text is readable. If
+it is not, show fewer lines (`config.WEB_LINES`).
 
 #### C. Hand out a URL
 
@@ -752,7 +752,7 @@ C-1 below does not apply. Read C-2. The preparation is already done in 2.3.
 
 | | Cloudflare | Tailscale |
 |---|---|---|
-| Preparation | none | one setting on the tailnet |
+| Preparation | install `cloudflared` on the caption PC | one setting on the tailnet |
 | URL | **changes every time you deliver** | **never changes** |
 | Can you hand it out in advance? | no | **yes** |
 
@@ -760,6 +760,18 @@ Use Cloudflare for a meeting decided on the spot. Use Tailscale when you want
 the URL in the invitation.
 
 ##### C-1. Hand out on the spot (Cloudflare)
+
+**Install `cloudflared` on the caption PC first.** Without it, Start delivering
+fails and the screen tells you how to install it. Use either of these.
+
+```powershell
+winget install --id Cloudflare.cloudflared
+```
+
+Or download
+[cloudflared-windows-amd64.exe](https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe)
+and put it in `local/bin/cloudflared.exe` inside the repository. Somewhere on
+PATH works too. For any other location, pass `--cloudflared <path>`.
 
 1. Set **Route** to **Cloudflare**
 2. Press **Start delivering** (配信を開始). The status shows `配信: 起動中…` and then `配信: 中`
@@ -772,7 +784,7 @@ the URL in the invitation.
 
 ##### C-2. Hand out in advance (Tailscale)
 
-The host name never changes, so **the URL is fixed the day before.** You can
+The host name never changes, so **you know the URL the day before.** You can
 put it in the invitation next to the meeting link.
 
 Prepare once. **Under Docker this was done in 2.3.**
@@ -799,12 +811,13 @@ Then, for each meeting:
 **Only the selected meeting is delivered.** The other meetings' URLs do not
 open that day. People from last week's meeting cannot watch today's captions.
 
-**A fixed URL is also a weakness.** The only thing protecting it is the random
+**A fixed URL is also a weakness.** The only thing that protects it is the random
 text at the end of the URL. If it leaks, delete that meeting and make a new one.
 
-**Neither route delivers anything by default.** Captions travel through
-Cloudflare or Tailscale. **Do not hand out a URL for meetings whose content
-must not leave your organisation.** Use screen share instead.
+**Neither route sends anything until you start delivering.** Once you do, the
+captions travel out through Cloudflare or Tailscale. **Do not hand out a URL for
+meetings whose content must not leave your organisation.** Use screen share
+instead.
 
 ### Step 6. Tell the audience
 
@@ -823,8 +836,8 @@ meeting.
 To quit the app itself, open the **Setup** tab.
 
 **Under Docker the button restarts it.** The container goes down and comes back
-within seconds. Because you use it from the control page and nothing else, it
-is not built to stay down (5.6).
+within seconds. You use it only from the control page, so it is not built to
+stay down (5.6).
 
 **On a Windows caption PC the button quits.** The browser tab and the terminal
 window both close. If you started it from the task tray, right-clicking the
@@ -846,8 +859,9 @@ It does four things by itself:
 3. Starts making captions
 4. Leaves and stops when the meeting is over
 
-**Only the Zoom caption token cannot be obtained automatically**, because only
-the host can create it, during the meeting. Section 5.5 covers how to receive it.
+**The Zoom caption token is the one thing it cannot get by itself**, because
+only the host can create it, during the meeting. Section 5.5 covers how to
+receive it.
 
 ### 5.0 Starting without a schedule
 
@@ -871,15 +885,17 @@ tunnel has to open. The progress is shown under **Right now**. To end it, press
 **Stop now**.
 
 This is not the **Start** button at the top. That one starts reading audio and
-transcribing, nothing else: **it never opens the tunnel and never touches
+transcribing, nothing else: **it never opens the tunnel and never joins
 Zoom.**
 
 ### 5.1 Entering a schedule
 
-Pick the **Manage meetings** tab on the control page. Each meeting row has the
-fields laid out in it.
+Pick the **Manage meetings** tab on the control page. Each meeting row holds the
+fields below.
 
-Opening `http://localhost:8081/meetings` directly shows the same thing.
+Adding `/meetings` to the control page URL shows the same thing
+(`http://localhost:8081/meetings` on a Windows caption PC,
+`https://livecaption.<tailnet>.ts.net:8443/meetings` under Docker).
 
 | Field | Meaning |
 |---|---|
@@ -892,7 +908,8 @@ Opening `http://localhost:8081/meetings` directly shows the same thing.
 | Start this meeting automatically | **Only meetings with this ticked run on their own** |
 
 **Automatic is off by default.** Running it automatically sends captions out
-with nobody watching. Do not tick it for meetings whose content must not leave.
+with nobody watching. Do not tick it for meetings whose content must not leave
+your organisation.
 
 Weekly is the only repeat. There is no support for more complex schedules.
 
@@ -914,7 +931,7 @@ While it runs, it shows how long until the silence stop and until the hard cap.
 **A failure stays until you dismiss it.** With nobody watching, a failure that
 scrolls away is a failure nobody sees. Read it, then press **Got it**.
 
-**Skip the next one** sits out a single occurrence. The schedule itself stays.
+**Skip the next one** skips a single occurrence. The schedule itself stays.
 
 ### 5.3 Posting to the Zoom chat
 
@@ -925,7 +942,7 @@ The message is always in English.
 
 ```
 Live captions for this meeting (Japanese to English):
-https://ms-s1-max.tail4b88d2.ts.net/v/xxxxxxxx
+https://livecaption.<tailnet>.ts.net/v/xxxxxxxx
 Open the link in any browser. No app or sign-in needed.
 ```
 
@@ -944,20 +961,21 @@ joined.** Posting before the start time leaves nothing for the people who join
 on time. The second post is for the people who come in a little late.
 
 **Anyone who joins more than three minutes late still misses it.** That is a
-Zoom limit and there is nothing this side can do about it. For a meeting where
+Zoom limit, and LiveCaption cannot work around it. For a meeting where
 people join late, put the caption URL in the Zoom invitation as well, or press
 **Zoomのチャットに投げる** (post to the Zoom chat) by hand during the meeting.
 
-**If Zoom is slow to join and the first post slips, the second is held back by
-at least a minute**, so the same text never appears twice within seconds.
+**If Zoom is slow to join and the first post lands after the start time, the
+second post is held back by at least a minute**, so the same text never appears
+twice within seconds.
 
 To change the times, edit `SCHEDULE_CHAT_AT_MIN` in
 `src/live_caption/config.py`. There is no `.env` setting for them.
 
 **It also waits for Zoom to finish joining.** After the `zoommtg:` link is
 opened, Zoom takes anywhere from tens of seconds to a few minutes to show the
-meeting window. LiveCaption looks every 10 seconds and gives up after 10
-minutes, writing that to the log.
+meeting window. LiveCaption checks every 10 seconds and gives up after 10
+minutes, writing the result to the log.
 
 To post by hand, press **Zoomのチャットに投げる** (post to the Zoom chat) inside
 **ブラウザで見てもらう** (in a browser) under **How people see it**. It posts to
@@ -966,7 +984,7 @@ the meeting you are in right now.
 #### How it works, and where it is weak
 
 **Zoom has no API for posting into the chat of a live meeting.** LiveCaption
-drives the Zoom windows instead. That brings these weaknesses.
+drives the Zoom windows instead. This method has these weaknesses.
 
 - **It will stop working silently if Zoom changes.** It finds the windows by
   their class names
@@ -1009,9 +1027,9 @@ If no sound arrives for five minutes after joining, the control page says:
 **Personal links (`https://zoom.us/my/...`) are not supported**, because they do
 not contain a meeting number. Use an invitation URL with a number (`/j/...`).
 
-**The only way to leave Zoom is to quit the client**, because nothing lets you
-leave a meeting from outside. **It never quits a meeting you joined yourself**
-— it only quits when it was the one that joined.
+**The only way to leave Zoom is to quit the client**, because there is no way to
+leave a meeting from outside the client. **It never quits a meeting you joined
+yourself.** It quits only a meeting it joined itself.
 
 ### 5.5 The host URL
 
@@ -1046,7 +1064,7 @@ It is accepted only when all of these hold:
 `restart: unless-stopped`, so it comes back by itself after a crash and after a
 host reboot.
 
-**This is why the control page offers a restart rather than a quit.** To stop
+**This is why the control page offers a restart, not a quit.** To stop
 it for real, run this on the host:
 
 ```sh
@@ -1055,7 +1073,7 @@ docker compose stop
 
 A container stopped this way does not come back when the host reboots. Use
 `docker compose start` to bring it back. **Stopping it also takes the control
-page away, so you cannot undo it remotely.** Do not press it when you are
+page away, so you cannot undo it remotely.** Do not run it when you are
 working from somewhere else.
 
 The rest of this section is about the Windows caption PC.
@@ -1076,7 +1094,8 @@ There is no window, so the log goes to `local/log/` (the last 20 runs).
 
 **Keep `StartLiveCaptionTray.vbs` pure ASCII if you edit it.** Windows does not
 read that file as UTF-8. Non-ASCII comments make it **do nothing at all when you
-double-click it, with no error message.** The file says so at the top too.
+double-click it, with no error message.** There is a note about this at the top
+of the file too.
 
 To start it at Windows logon, run this. No administrator rights are needed.
 
@@ -1112,7 +1131,7 @@ Personal names and organisation names make the tables work better, and you do
 not want to share those. Your tables stay on your own machine.
 
 **Under Docker you upload the tables from the control page** (Setup tab →
-"Glossary"), rather than putting files in `etc/glossary/`. They are kept in a
+"Glossary"), not by putting files in `etc/glossary/`. They are kept in a
 volume, so recreating the container does not lose them. You download and delete
 them in the same place.
 
@@ -1221,7 +1240,7 @@ There are two buttons under **Meeting record** on the **This meeting** tab.
 | **Readable (.md)** | The form people read. Recognised text and caption, paired |
 | **Original (.jsonl)** | One sentence per line, with the measured delays. Use this one to grow the glossary |
 
-The file lands in the download folder of **the machine you opened the control
+The file is saved in the download folder of **the machine you opened the control
 page on**.
 
 **Only the latest record can be downloaded.** The line under the buttons says
@@ -1237,13 +1256,13 @@ still going.
 
 **Pressing Stop closes the record** (about three seconds later). The `.md` is
 written and a new record starts, so a download after Stop gives you the
-finished meeting. A short pause - stop and start again within three seconds -
-does not split the record.
+finished meeting. A short pause does not split the record, as long as you start
+again within three seconds.
 
 ### Changing the folder
 
-You do not need to, but you can keep the records outside the repository - for
-example when the repository sits in a synced folder. Write the folder in
+You do not need to, but you can keep the records outside the repository, for
+example when the repository is in a synced folder. Write the folder in
 `.env`.
 
 ```
@@ -1252,7 +1271,7 @@ LIVECAPTION_SAVE_DIR=%LOCALAPPDATA%\LiveCaption\transcripts
 
 **A folder that does not exist is created. A folder that cannot be written to
 is refused, and the record goes to the default folder instead.** To change it
-per launch, use `--save-dir`. That wins over `.env`.
+per launch, use `--save-dir`. That option takes priority over `.env`.
 
 **Under Docker, leave it at the default.** The records go into the `state`
 volume and survive recreating the container. **To put them in a folder on the
@@ -1300,8 +1319,7 @@ There is no command to type for a meeting. **These are for setting up and
 maintenance.** Run them inside the repository folder.
 
 ```sh
-docker compose up -d --build     # build and start (the first time)
-docker compose up -d --build     # after changing the code: rebuild and replace
+docker compose up -d --build     # build and start: the first time, and after changing the code
 docker compose logs -f           # start-up messages, and the running log
 docker compose ps                # is it running
 docker compose restart           # restart without rebuilding
@@ -1351,13 +1369,13 @@ Options:
 | `--device <name>` | Part of the input device name. Default: `CABLE Output`. The Docker version is started with `pulse` |
 | `--web [port]` | Show captions in a browser. The number is the viewer port, 8080 by default |
 | `--control-port <port>` | The control page port, 8081 by default |
-| `--control-bind [address]` | **Also serve the control page on your tailnet address.** With no value it finds it by itself. 127.0.0.1 always stays. **Addresses outside the Tailscale ranges are refused** (see 3.10) |
+| `--control-bind [address]` | **Also serve the control page on your tailnet address.** With no value it finds the address by itself. 127.0.0.1 always stays. **Addresses outside the Tailscale ranges are refused** (see 3.10) |
 | `--tray` | **Go to the task tray.** The log is also written to `local/log/` |
 | `--web-bind <address>` | The address the **viewer page** listens on, 127.0.0.1 by default. Use 0.0.0.0 to show the viewer page directly to devices on the same LAN. The control page is not affected |
 | `--tunnel` | Open the tunnel at start-up. It is off by default |
 | `--no-browser` | Do not open the browser automatically |
 | `--no-save` | Keep no record of the meeting |
-| `--save-dir <folder>` | Where to write the record. **Wins over `LIVECAPTION_SAVE_DIR` in `.env`.** Default: `local/transcripts/` |
+| `--save-dir <folder>` | Where to write the record. **Takes priority over `LIVECAPTION_SAVE_DIR` in `.env`.** Default: `local/transcripts/` |
 | `--dry-run` | Send nothing to Zoom; print to the screen only |
 | `--from-file <wav>` | Play a WAV in real time instead of using a device. 24 kHz mono |
 | `--loop` | Repeat the `--from-file` file |
@@ -1430,7 +1448,7 @@ ignores a bad value silently**, so read the start-up output.
 | Setting | Default | Meaning |
 |---|---|---|
 | `ASR_MODEL` | `gpt-live-transcribe` | The speech recognition model |
-| `ASR_DELAY` | `low` | How long the recogniser waits before it returns text. Waiting longer can improve accuracy, but both `minimal` and `high` got technical terms wrong in our tests |
+| `ASR_DELAY` | `low` | How long the recogniser waits before it returns text. We compared `minimal`, `low` and `high`; both `minimal` and `high` got technical terms wrong |
 | `ASR_LANGUAGES` | `("ja", "en")` | **Do not fix this to one language.** A meeting can switch language part way through |
 | `ASR_KEYWORD_LIMIT` | 200 | How many glossary words reach the recogniser. **Keep it above the size of your tables.** A warning appears at start-up when words are cut |
 | `TRANSLATE_MODEL` | `gpt-4.1-mini` | The translation model |
@@ -1483,7 +1501,7 @@ ignores a bad value silently**, so read the start-up output.
 | Delivery will not start | Does your ACL have `funnel` under `nodeAttrs`? A tagged device leaves `autogroup:member` and loses Funnel without that line (2.3) |
 | The host loses its network when the container runs | **ConnMan** (2.4). It breaks tens of seconds later, so checking right after start-up tells you nothing |
 | It cannot get into Zoom | Has the sign-in expired? **Start VNC and look at the Zoom window** (2.6). It may be in a waiting room |
-| The glossary stays empty | This repository ships no tables (2.7). Upload yours from the control page |
+| The glossary stays empty | This repository contains no tables (2.7). Upload yours from the control page |
 | The meeting records are nowhere to be found | They are in the volume. Downloading from the control page is the quick way |
 | It comes back after you pressed quit | That is `restart: unless-stopped`. To stop it for real, use `docker compose stop` (5.6) |
 
@@ -1541,8 +1559,8 @@ mixed audio, and that mix contains everybody.
 
 **The audio goes through a virtual device**, so LiveCaption opens it as an
 ordinary recording device. It never uses a loopback API, so volume and mute
-settings do not affect what it reads. A PulseAudio null sink plays that part
-under Docker; VB-CABLE plays it on Windows. **The Docker version does not touch
+settings do not affect what it reads. Under Docker that device is a PulseAudio
+null sink; on Windows it is VB-CABLE. **The Docker version does not touch
 the host's audio hardware at all.** Playing music on the host changes nothing,
 and the host needs no sound card.
 
@@ -1578,6 +1596,7 @@ The delay depends on how the sentence ends (measured).
 |---|---|---|---|---|---|
 | Ends with an end mark (about 74%) | 0.2–1 s | 0 s | 0.9 s | 0.3 s | **about 1.5–2 s** |
 | Ends in silence (about 9%) | same | 2.5 s | 0.9 s | 0.3 s | **about 4 s** |
+| Cut because it grew too long (the remaining 17%) | same | 0 s | 0.9 s | 0.3 s | **about 1.5–2 s** |
 
 For a sentence that ends in silence, the translation is sent during the wait
 (`SPECULATE_AFTER_SEC`). When it matches, the 0.9 s of translation disappears.
