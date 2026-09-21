@@ -27,12 +27,22 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from datetime import datetime, timedelta
 
 from . import config
 from . import meetings
-from . import zoom_join
+
+# **会議ソフトの操作は、機体によって中身が違う。**
+# Windows は窓のクラス名とレジストリ、Linux（コンテナ）は Xvfb の上の窓と
+# `xdotool` である。共通にできるのは URL の組み立てだけだったので、
+# 実装ごと分けてある。**`zoom_join.py`（Windows 版）は凍結してある。**
+# 口は同じ（`running` / `in_meeting` / `join` / `leave` / `JoinError`）。
+if os.name == "nt":
+    from . import zoom_join
+else:
+    from . import zoom_join_linux as zoom_join
 
 # 状態。操作画面にもこの名前で出す。
 IDLE = "idle"

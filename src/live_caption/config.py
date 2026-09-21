@@ -308,6 +308,8 @@ SCHEDULE_CHAT_WAIT_SEC = 600.0
 SCHEDULE_CHAT_RETRY_SEC = 10.0
 # Zoomに出す表示名。**発言しない参加者だと分かる名前にする。**
 ZOOM_DISPLAY_NAME = "Live Captions"
+# Linux で Zoom を起こすときの命令。Windows では使わない（レジストリから探す）。
+ZOOM_CMD = "zoom"
 
 # --- ホストがトークンを貼る受け口 --------------------------------------------
 # **これはトンネル越しに出る、唯一の書き込み口である。** 閲覧サーバは他に

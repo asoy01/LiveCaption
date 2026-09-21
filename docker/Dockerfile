@@ -104,6 +104,11 @@ RUN mkdir -p /app/local/transcripts
 
 ENV TZ=Asia/Tokyo
 
+# **表示言語を固定する。** Zoom の窓の名前で会議中かどうかを見ている
+# （`zoom_join_linux.py`）。locale が変わると名前が変わり、判定が外れる。
+# Qt も「UTF-8 でない」と文句を言う。
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+
 # **ログを溜めない。** 窓の無い運用では `docker compose logs` だけが手がかりで、
 # Python は端末でないと出力を溜め込む。起動の途中で固まったときに何も見えない。
 ENV PYTHONUNBUFFERED=1
