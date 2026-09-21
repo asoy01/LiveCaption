@@ -293,17 +293,17 @@ EN: dict[str, str] = {
     "全部選ぶ": "Select all",
     "全部外す": "Clear all",
     "アップロード": "Upload",
-    "落とす": "Download",
-    "消す": "Delete",
+    "ダウンロード": "Download",
+    "削除": "Delete",
     "同じ名前があれば置き換える。": "A table with the same name is replaced. ",
     "ファイル名が表の名前になる。": "The file name becomes the table name. ",
     "いま使っている表を置き換えると、その場で読み直す。":
         "Replacing a table you are using reloads it right away.",
     "ファイルを選ぶこと。": "Choose a file first.",
     " を置いた。": " is in place.",
-    " を消した。": " is deleted.",
-    " を消す。戻せない。": " will be deleted. This cannot be undone.",
-    "取っておくなら、先に落としてから消すこと。":
+    " を削除した。": " is deleted.",
+    " を削除する。戻せない。": " will be deleted. This cannot be undone.",
+    "取っておくなら、先にダウンロードすること。":
         "Download it first if you want to keep it.",
 
     # --- 中の画面を覗く口 ---

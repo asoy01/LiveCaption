@@ -1489,24 +1489,32 @@ __FEED_JS__
         // **持ち出す口と、消す口を1行に置く。** 字幕PCに入らないと表を
         // 触れない、という状態を作らない。
         const dl = document.createElement("a");
-        dl.className = "c"; dl.textContent = "落とす";
+        dl.className = "c"; dl.textContent = "ダウンロード";
         dl.href = "/api/glossary/file?name=" + encodeURIComponent(s.name);
         dl.setAttribute("download", s.name + ".tsv");
         dl.addEventListener("click", e => e.stopPropagation());
+        // **`<button>` にはできない。** この行は `<label>` なので、中の
+        // ボタンを押すとチェックボックスまで動く。`<span>` に役割だけ持たせて、
+        // キーボードからも届くようにする。**消す操作が届かないのは困る。**
         const rm = document.createElement("span");
-        rm.className = "c"; rm.textContent = "消す";
+        rm.className = "c"; rm.textContent = "削除";
         rm.style.cursor = "pointer";
+        rm.setAttribute("role", "button");
+        rm.setAttribute("tabindex", "0");
+        rm.addEventListener("keydown", e => {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); rm.click(); }
+        });
         rm.addEventListener("click", async e => {
           e.preventDefault(); e.stopPropagation();
           // **消すのは戻せない。** 落としてからでないと取り返せないので確かめる。
           // **JS の文字列に `「」` を書かないこと。** 訳表で `"` に化けて
           // リテラルがそこで閉じ、**画面のスクリプト全体が死ぬ。**
           // 日本語では何ともないので、英語にした人にだけ起きる。
-          if (!confirm("用語集 " + s.name + " を消す。戻せない。\n"
-                       + "取っておくなら、先に落としてから消すこと。")) { return; }
+          if (!confirm("用語集 " + s.name + " を削除する。戻せない。\n"
+                       + "取っておくなら、先にダウンロードすること。")) { return; }
           try {
             showGlossary(await post("/api/glossary/delete", { name: s.name }));
-            say("用語集 " + s.name + " を消した。", true);
+            say("用語集 " + s.name + " を削除した。", true);
           } catch (err) { say(String(err.message), false); }
         });
         lab.append(cb, n, c, dl, rm);
