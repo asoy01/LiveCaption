@@ -9,10 +9,10 @@ Stages 1 and 2 need no meeting. From stage 3 on, you need a meeting.
 For everyday use, read [manual.md](manual.md) instead. This document is for
 bringing up a new caption PC and for the day of an important meeting.
 
-**This document covers the Windows caption PC.** For the Docker version, the
-install steps are in section 2 of the manual, and 2.8 there shows how to
-exercise the whole path with a recording. Stages 3 and 4 below apply to both:
-the meeting-side checks do not depend on how you run it.
+**This document covers Windows native.** For the Docker versions, the install
+steps are in sections 2 and 3 of the manual, and 2.8 there shows how to
+exercise the whole path with a recording. Stages 3 and 4 below apply to all
+three: the meeting-side checks do not depend on how you run it.
 
 ---
 

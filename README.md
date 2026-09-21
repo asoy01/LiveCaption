@@ -13,9 +13,13 @@ it works with any of them.
 
 ## Quick start (Docker)
 
-You need a Linux machine with Docker, an OpenAI API key, and a Tailscale
-account. **Nothing else runs on the host:** the meeting client, the audio
-devices, the screen and Tailscale are all inside the container.
+You need a machine with Docker, an OpenAI API key, and a Tailscale account.
+**Windows with Docker Desktop and Linux with Docker Engine both work.**
+The host runs Docker and nothing else: the meeting software, the audio devices,
+the screen and Tailscale are all inside the container.
+
+**One laptop is enough.** You join the meeting as usual, while the Zoom inside
+the container joins the same meeting as a silent participant.
 
 ```sh
 git clone https://github.com/asoy01/LiveCaption.git
@@ -41,9 +45,10 @@ Share the viewer page instead.
 
 The container comes back by itself after a crash or a host reboot.
 
-Full instructions are in [docs/manual.md](docs/manual.md), chapter 2.
+Full instructions are in [docs/manual.md](docs/manual.md): chapter 2 for
+Windows, chapter 3 for what differs on Linux.
 
-## Quick start (Windows caption PC)
+## Quick start (Windows native)
 
 **This way is frozen.** It still works and nothing was removed, but new
 features go into the Docker version only. It needs a Windows PC used only for
@@ -73,7 +78,7 @@ You can use all three at the same time.
 ## How it works
 
 LiveCaption joins the meeting as a silent participant, with its microphone
-muted. In Docker, the meeting client lives in the container:
+muted. In Docker, the meeting software runs inside the container:
 
 ```
 [host PC]        runs the meeting as usual
@@ -96,7 +101,7 @@ that mix contains everybody.
 
 **The audio never touches the host.** A null sink inside the container carries
 it, so the host needs no sound card, and playing music on the host changes
-nothing. On the Windows caption PC, VB-CABLE plays that part instead.
+nothing. With Windows native, VB-CABLE plays that part instead.
 
 Delay from speech to caption is about 1.5–2 seconds for a sentence that ends
 with an end mark, and about 4 seconds for one that trails off into silence.
@@ -113,7 +118,7 @@ Technical terms are handled in two steps, not one.
    the work.** Even when the recogniser produces something that only sounds
    similar, the translation step can recover the correct term.
 
-The glossary files live in `etc/glossary/`, one file per subject, and **you pick
+The glossary files sit in `etc/glossary/`, one file per subject, and **you pick
 which ones to use for each meeting**. Start from
 [docs/glossary-example.tsv](docs/glossary-example.tsv) and replace the words with
 the ones your own meetings use. Growing these tables is the main ongoing task.
@@ -138,7 +143,7 @@ a volume and survive recreating the container.
 compose.yml              what you run for the Docker version
 docker/Dockerfile        how the container is built
 docker/entrypoint.sh     audio, screen, Tailscale and Zoom set-up inside it
-StartLiveCaption.bat     what you double-click on a Windows caption PC
+StartLiveCaption.bat     what you double-click with Windows native
 InstallToStartMenu.bat   puts LiveCaption in the Start menu (run once)
 run.py                   start-up and command line options
 src/live_caption/        the application
@@ -157,9 +162,10 @@ in the `state` volume. To keep the records somewhere else on Windows, set
 
 ## Requirements
 
-- **Docker version:** a Linux machine with Docker and Compose v2. No sound
-  card, no screen, no GPU
-- **Windows version:** Windows and VB-CABLE. No GPU
+- **Docker version:** Windows with Docker Desktop, or Linux with Docker Engine.
+  Compose v2. No sound card, no screen, no GPU. **Intel or AMD only**, because
+  the image is amd64
+- **Windows native version:** Windows and VB-CABLE. No GPU
 - Python 3.12, built with pixi. The version is pinned because the audio
   libraries have wheels for it. The container builds the same environment from
   the same `pixi.lock`
