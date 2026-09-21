@@ -1,7 +1,8 @@
-# LiveCaption のエンジン。段階1。
+# LiveCaption の箱。**これ1つで完結する。**
 #
-# ここには会議ソフトが入っていない。音は WAV で代用する（`--from-file`）。
-# Zoom・Xvfb・PulseAudio が足されるのは段階3である。
+# 入っているもの: 字幕のエンジン（pixi 環境）・Zoom の Linux 版・PulseAudio の
+# 仮想の音声装置・画面を持たない X（Xvfb ＋ openbox）・Tailscale・VNC。
+# **ホストに要るのは Docker だけである。** 音声装置も画面も使わない。
 #
 # 中身は Windows で動いているものと同じ pixi 環境である（`pixi.lock` の
 # linux-64 の側）。**別の作り方で依存を入れ直さない。** 実会議で測って決めた

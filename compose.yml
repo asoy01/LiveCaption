@@ -1,15 +1,18 @@
 # LiveCaption を Docker で回す。
 #
-# **段階1。エンジンだけである。** 会議ソフトはまだ入っていない。
-# 音は WAV で代用する。段階2で Tailscale のサイドカー、段階3で Zoom と
-# PulseAudio が足される。
+# **この1つの箱に全部入っている。** 字幕のエンジン・Zoom・PulseAudio・
+# Tailscale・VNC である。ホストに要るのは Docker だけで、音声装置も
+# 画面も使わない。
 #
-#   docker compose build
-#   docker compose run --rm engine --from-file /samples/excerpt75.wav --dry-run
+#   cp .env.example .env    # OPENAI_API_KEY を入れる
+#   docker compose up -d --build
+#   docker compose logs -f  # 操作画面のURLが出る
 #
-# **osmium で動かす前に ConnMan の除外一覧を直しておくこと。**
+# 手順は docs/manual.ja.md の「2. インストール（Docker）」にある。
+#
+# **ConnMan を使っているホストでは、除外一覧を先に直しておくこと。**
 # 直っていないと、コンテナ起動から数十秒遅れてホストの外向き通信が死ぬ。
-# 詳細は HANDOFF.md の「ConnMan が Docker の veth を掴む」。
+# マニュアルの「2.6 ConnMan の除外設定」を見ること。
 
 name: livecaption
 
@@ -46,8 +49,10 @@ services:
       # 勝手に戻ってくるのに「終了」と書いてあると、押した人は壊れたと思う。
       LIVECAPTION_RESTARTS: "1"
       # TS_AUTHKEY は .env から入る（署名済みの鍵）。
-      # 中の画面を人が触りたいとき（Zoomへのサインインなど）に 1 にする。
-      # **認証が無いので、常用しないこと。**
+      # 起動と同時に VNC を上げたいときに 1 にする。Zoom へのサインインなど、
+      # コンテナの中の画面を人が操作する必要があるときに使う。
+      # **認証が無いので、常用しないこと。** 操作画面の「設定」から、
+      # 必要なときだけ起動するほうがよい。
       LIVECAPTION_VNC: "${LIVECAPTION_VNC:-0}"
     # **userspace-networking では足りない。** 操作画面を tailnet に出すには、
     # 100.x のアドレスが実際のインターフェースに載っている必要がある。
@@ -68,20 +73,25 @@ services:
       - tailscale:/var/lib/tailscale
       # **Zoom の設定とサインイン。** 消すとサインインのやり直しになる。
       - zoomhome:/home/livecaption
-      # 試験用の音。`--from-file` で使う。
-      - ./local/SampleRecordings/_wav24k:/samples:ro
+      #
+      # **録音した音で試すときは、ここにボリュームを足さない。** 一度きりの
+      # 話なので、その場で渡すほうがよい。fresh clone に無い場所をここに書くと、
+      # Docker が root 持ちの空フォルダを勝手に作る。
+      #
+      #   docker compose run --rm -v "$PWD/録音:/samples:ro" engine \
+      #     --from-file /samples/test.wav --dry-run
     ports:
-      # **閲覧画面だけを出す。** 操作画面(8081)はコンテナの中の 127.0.0.1 に
-      # 留まるので、ここからは届かない。操作画面には認証が無いためで、
-      # tailnet から開けるようにするのは段階2（Tailscale のサイドカー）である。
+      # **閲覧画面だけを出す。** 画面共有で見せるときに、ホストのブラウザから
+      # 開くためにある。**操作画面(8081)は出さない。** 認証が無いので、
+      # tailnet の中だけに置く（コンテナ自身が tailnet のノードになっている）。
       - "127.0.0.1:8080:8080"
     # **必ず入れること。** これが無いと、次の2つが起きる。
     #
-    #   osmium を再起動すると、字幕システムが上がってこない。常時起動の機体で
+    #   ホストを再起動すると、字幕システムが上がってこない。常時起動の機体で
     #   予定の会議に備える前提が崩れる。
     #
     #   操作画面の「終了」を押すと、コンテナが止まったきりになる。操作画面も
-    #   消えるので、**osmium に ssh しないと戻せない。**「外から WebUI だけで
+    #   消えるので、**ホストに ssh しないと戻せない。**「外から操作画面だけで
     #   使う」という前提が、そこで途切れる。
     #
     # `unless-stopped` なので、`docker compose stop` で止めたものは上がってこない。

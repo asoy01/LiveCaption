@@ -8,14 +8,47 @@ each meeting: **English captions for a meeting held in Japanese**, or **Japanese
 captions for a meeting held in English**. When the other language comes up during
 the meeting, it is passed through instead of being translated.
 
-**It is not limited to Zoom.** It reads the audio from a virtual audio cable, so
-it works with any meeting software that plays sound.
+**It is not limited to Zoom.** It reads whatever the meeting software plays, so
+it works with any of them.
 
-## Quick start
+## Quick start (Docker)
 
-You need a Windows PC used only for captions,
-[VB-CABLE](https://vb-audio.com/Cable/), [pixi](https://pixi.sh), and an OpenAI
-API key.
+You need a Linux machine with Docker, an OpenAI API key, and a Tailscale
+account. **Nothing else runs on the host:** the meeting client, the audio
+devices, the screen and Tailscale are all inside the container.
+
+```sh
+git clone https://github.com/asoy01/LiveCaption.git
+cd LiveCaption
+cp .env.example .env          # then put your OPENAI_API_KEY in it
+docker compose up -d --build
+docker compose logs -f        # the address of the control page appears here
+```
+
+Open the control page in a browser on any machine in your tailnet:
+
+```
+https://livecaption.<your-tailnet>.ts.net:8443
+```
+
+Everything is done from there: schedule a meeting and let it join Zoom by
+itself, start and stop caption generation, register the Zoom token, hand out a
+URL to participants, upload glossary tables, download the meeting record, and
+open a VNC view of the container when the meeting client needs attention.
+
+**Do not screen-share the control page.** It shows the Zoom caption token.
+Share the viewer page instead.
+
+The container comes back by itself after a crash or a host reboot.
+
+Full instructions are in [docs/manual.md](docs/manual.md), chapter 2.
+
+## Quick start (Windows caption PC)
+
+**This way is frozen.** It still works and nothing was removed, but new
+features go into the Docker version only. It needs a Windows PC used only for
+captions, [VB-CABLE](https://vb-audio.com/Cable/), [pixi](https://pixi.sh), and
+an OpenAI API key.
 
 ```powershell
 git clone https://github.com/asoy01/LiveCaption.git
@@ -25,21 +58,7 @@ copy .env.example .env        # then put your OPENAI_API_KEY in it
 pixi run python scripts/cable_loopback.py   # check the VB-CABLE path
 ```
 
-`.env` stays in this folder, the top of the repository, next to `pixi.toml`.
-
-Then double-click `StartLiveCaption.bat`. The control page opens in your
-browser. Everything is done from there: start and stop caption generation,
-choose the input device and the direction, register the Zoom token, hand out a
-URL to participants, read the meeting record, and quit.
-
-**Do not screen-share the control page.** It shows the Zoom caption token.
-Share the viewer page instead.
-
-To start it from the Start menu instead of finding this folder every time,
-double-click `InstallToStartMenu.bat` once. After that, press the Windows key,
-type "livecaption", and press Enter.
-
-Full instructions are in [docs/manual.md](docs/manual.md).
+Then double-click `StartLiveCaption.bat`. See chapter 3 of the manual.
 
 ## Three ways to show the captions
 
@@ -49,31 +68,35 @@ You can use all three at the same time.
 |---|---|---|---|
 | Zoom caption API | Required | Each person turns on "Show Captions" | Through Zoom |
 | Screen share | Not required | You share the viewer page full screen | No |
-| Hand out a URL | Not required | People open a URL on their own device | Through Cloudflare |
+| Hand out a URL | Not required | People open a URL on their own device | Through Tailscale Funnel, or Cloudflare on Windows |
 
 ## How it works
 
-One Windows PC is used only for captions. That PC joins the meeting as a silent
-participant, with its microphone muted.
+LiveCaption joins the meeting as a silent participant, with its microphone
+muted. In Docker, the meeting client lives in the container:
 
 ```
 [host PC]        runs the meeting as usual
      |
-[caption PC]
-  meeting software ----- joins as a silent participant, microphone muted
+[container]
+  Zoom ---------------- joins as a silent participant, microphone muted
    |
-   +-- speaker output --> CABLE Input
-                             |   (VB-CABLE, a virtual audio cable)
-                          CABLE Output --> LiveCaption
-                                             |-- speech recognition (gpt-live-transcribe)
-                                             |-- translation (gpt-4.1-mini)
-                                             +-- output
+   +-- output --> meeting        (a PulseAudio null sink)
+                     |
+                  meeting.monitor --> LiveCaption
+                                        |-- speech recognition (gpt-live-transcribe)
+                                        |-- translation (gpt-4.1-mini)
+                                        +-- output
 ```
 
-**A separate PC is required.** Meeting software does not send your own
+**A separate participant is required.** Meeting software does not send your own
 microphone to your own speaker, so recording the speaker output on the host PC
-loses the host's own voice. The caption PC receives the mixed audio, and that mix
-contains every participant.
+loses the host's own voice. A separate participant receives the mixed audio, and
+that mix contains everybody.
+
+**The audio never touches the host.** A null sink inside the container carries
+it, so the host needs no sound card, and playing music on the host changes
+nothing. On the Windows caption PC, VB-CABLE plays that part instead.
 
 Delay from speech to caption is about 1.5–2 seconds for a sentence that ends
 with an end mark, and about 4 seconds for one that trails off into silence.
@@ -95,8 +118,10 @@ which ones to use for each meeting**. Start from
 [docs/glossary-example.tsv](docs/glossary-example.tsv) and replace the words with
 the ones your own meetings use. Growing these tables is the main ongoing task.
 
-**`etc/glossary/` is not in Git.** Personal names and organisation names make the
-tables work better, and you do not want to share those.
+**`etc/glossary/` is not in Git, so a fresh clone has none.** Personal names and
+organisation names make the tables work better, and you do not want to share
+those. In Docker you upload your tables from the control page; they are kept in
+a volume and survive recreating the container.
 
 ## Documentation
 
@@ -110,7 +135,10 @@ tables work better, and you do not want to share those.
 ## Layout
 
 ```
-StartLiveCaption.bat     what you double-click for a meeting
+compose.yml              what you run for the Docker version
+docker/Dockerfile        how the container is built
+docker/entrypoint.sh     audio, screen, Tailscale and Zoom set-up inside it
+StartLiveCaption.bat     what you double-click on a Windows caption PC
 InstallToStartMenu.bat   puts LiveCaption in the Start menu (run once)
 run.py                   start-up and command line options
 src/live_caption/        the application
@@ -123,14 +151,18 @@ local/                   working files (not in git)
 
 The record of each meeting is written to **`local/transcripts/`** as
 `live-caption_<date>.jsonl` and `.md`. **You download it from the control
-page**, so you do not have to reach the caption PC to read it. To keep the
-records somewhere else, set `LIVECAPTION_SAVE_DIR` in `.env`.
+page**, so you do not have to reach the machine to read it. In Docker it lives
+in the `state` volume. To keep the records somewhere else on Windows, set
+`LIVECAPTION_SAVE_DIR` in `.env`.
 
 ## Requirements
 
-- Windows. No GPU needed
+- **Docker version:** a Linux machine with Docker and Compose v2. No sound
+  card, no screen, no GPU
+- **Windows version:** Windows and VB-CABLE. No GPU
 - Python 3.12, built with pixi. The version is pinned because the audio
-  libraries have wheels for it
+  libraries have wheels for it. The container builds the same environment from
+  the same `pixi.lock`
 - An OpenAI API key. Speech recognition and translation both use it.
   Recognition costs $0.017 per minute, and silence is billed too
 
@@ -138,5 +170,5 @@ records somewhere else, set `LIVECAPTION_SAVE_DIR` in `.env`.
 
 BSD 3-Clause. See [LICENSE](LICENSE).
 
-The libraries this project depends on, VB-CABLE, and the OpenAI API each come
-with their own terms. This licence covers only the code in this repository.
+The libraries this project depends on, Zoom, VB-CABLE, and the OpenAI API each
+come with their own terms. This licence covers only the code in this repository.
