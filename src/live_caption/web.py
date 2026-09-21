@@ -1643,7 +1643,14 @@ __FEED_JS__
       // **繋ぎ先は、いま開いている操作画面と同じ相手である。**
       // サーバ側で名前を組み立てると、tailnet 名・IP・localhost のどれで
       // 開いているかで食い違う。
-      const u = "http://" + location.hostname + ":" + v.web_port + "/vnc.html";
+      //
+      // **scheme も合わせる。** https で開いているなら https の口を出す。
+      // http のページから https の口へ送ると、証明書の名前が合わずに
+      // 繋がらないことがある（証明書は完全名に対して出る）。
+      const https = location.protocol === "https:";
+      const port = https ? v.https_port : v.web_port;
+      const u = location.protocol + "//" + location.hostname + ":" + port
+                + "/vnc.html";
       vncState.textContent = "動作中";
       vncHint.innerHTML = "";
       const a = document.createElement("a");
@@ -2356,7 +2363,9 @@ class WebCaptions:
         # VNC。**Windows では「使えない」で返る**（DISPLAY が無い）。
         st["vnc"] = self.vnc.status() if self.vnc else {
             "on": False, "available": False, "error": "",
-            "web_port": config.VNC_WEB_PORT, "rfb_port": config.VNC_RFB_PORT}
+            "web_port": config.VNC_WEB_PORT,
+            "https_port": config.VNC_HTTPS_PORT,
+            "rfb_port": config.VNC_RFB_PORT}
         if self.transcript is not None:
             st["transcript"] = {
                 "on": True,
@@ -2406,8 +2415,30 @@ class WebCaptions:
         # `Origin` の検査は、どちらもここから作る。開いていないURLを
         # 「開ける」と出すと、繋がらない理由を探すことになる。
         self.control_extra = tuple(bound)
+        self.serve_control_https()
         if self.control_retry:
             threading.Thread(target=self._retry_control_bind, daemon=True).start()
+
+    def serve_control_https(self) -> None:
+        """操作画面を tailnet の中だけに https でも出す（`tailscale serve`）。
+
+        **tailnet に出していないときは何もしない。** `localhost` だけで使って
+        いるなら、ブラウザは既に secure context と見なす。
+
+        失敗しても黙って続ける。**https は便利だが、無くても http で使える。**
+        会議の当日に、証明書の都合で操作画面が出ないのでは本末転倒である。
+        """
+        if not self.control_extra:
+            return
+        why = tunnel_mod.serve_https(config.CONTROL_HTTPS_PORT, self.control_port)
+        if why:
+            print(f"[{time.strftime('%H:%M:%S')}] 操作        "
+                  f"https では出せなかった（{why[:120]}）。http は使える。")
+            return
+        for name in self.control_names():
+            print(f"[{time.strftime('%H:%M:%S')}] 操作        "
+                  f"https でも開ける: https://{name}:{config.CONTROL_HTTPS_PORT}")
+            break
 
     def _retry_control_bind(self) -> None:
         """tailnet のアドレスが取れるまで、背景で待ち受けを足し続ける。
@@ -2437,6 +2468,9 @@ class WebCaptions:
                 for url in self.control_urls_extra():
                     print(f"[{time.strftime('%H:%M:%S')}] 操作        "
                           f"tailnet からも開けるようになった: {url}")
+                # **ここでも張る。** 起動時は Tailscale がまだ上がっておらず、
+                # 名前もアドレスも取れないことがある。
+                self.serve_control_https()
                 return
 
     # --- ホストがトークンを貼る受け口 ---------------------------------------
@@ -2568,6 +2602,12 @@ class WebCaptions:
             out.add(f"http://{host}:{self.control_port}")
         for name in self.control_names():
             out.add(f"http://{name}:{self.control_port}")
+            # **https の出口も入れる**（`tailscale serve`、tailnet の中だけ）。
+            # 入れないと、画面は開くのに `Origin` が合わず、ボタンが全部 403 に
+            # なる。**「全部許す」にしてはいけない。** それでは `Origin` を見る
+            # 意味が消える。ここに足すのは、この機体の名前と、こちらが張る
+            # ポートの組み合わせだけである。
+            out.add(f"https://{name}:{config.CONTROL_HTTPS_PORT}")
         return out
 
     def control_names(self) -> list[str]:

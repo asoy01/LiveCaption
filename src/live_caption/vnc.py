@@ -1,18 +1,29 @@
-"""中の画面を人が見るための口。`x11vnc` と noVNC を起こす。
+"""中の画面を人が見るための口。TigerVNC と noVNC を起こす。
 
 **常用しない。** 認証が無く、tailnet の中からは誰でも届く。使うのは、
 会議ソフトへのサインインと、自動参加が詰まったときの様子見だけである。
 字幕の操作（開始・停止・配信・トークン・記録）は操作画面のほうにある。
 
-**会議中でも開け閉めできる。** `x11vnc` は、既に上がっている X 画面に
+繋ぎ方は3つある。
+
+    https://<完全名>:6443/vnc.html   ブラウザ（`tailscale serve`）
+    http://<機体>:6080/vnc.html      ブラウザ（素）
+    <機体>:5900                       VNCクライアント
+
+**クリップボードを自動で同期したいなら、VNCクライアントで繋ぐこと。**
+ブラウザは `http` では secure context にならず、`navigator.clipboard` が
+生えないので、見ている側のクリップボードを読めない。`https` の口を
+用意してあるのはそのためである。
+
+**会議中でも起動・停止できる。** `x0vncserver` は、既に上がっている X 画面に
 あとから貼り付くだけである。会議ソフトも字幕の生成も止まらない。
 ここを起動時の設定だけにしてしまうと、**いちばん中を見たい「会議中に
 様子がおかしい」ときに、コンテナを作り直すしかなくなり、会議から抜ける。**
 
 **子プロセスは持っておいて回収する。** 入口のシェルから起こすと、シェルが
 最後に `exec` で本体になるため、子の親が本体（Python）になる。本体が
-`wait()` しないので、止めるたびにゾンビが1つ残る。開け閉めするボタンにする
-以上、これは溜まる。
+`wait()` しないので、止めるたびにゾンビが1つ残る。起動・停止を繰り返す
+ボタンにする以上、これは溜まる。
 """
 
 from __future__ import annotations
@@ -28,7 +39,7 @@ from . import config
 
 
 class Vnc:
-    """`x11vnc` ＋ noVNC の開始・停止。
+    """TigerVNC（`x0vncserver`）＋ noVNC の開始・停止。
 
     呼ぶのはHTTPサーバのスレッドである。
     """
@@ -78,6 +89,7 @@ class Vnc:
                 "available": not why,
                 "error": self._error or why,
                 "web_port": config.VNC_WEB_PORT,
+                "https_port": config.VNC_HTTPS_PORT,
                 "rfb_port": config.VNC_RFB_PORT,
             }
 
@@ -149,6 +161,12 @@ class Vnc:
             # **クリップボードの橋渡しは要らない。** TigerVNC が X の選択を
             # 自分で見張る（`autocutsel` を足していた時期があったが、不要）。
             self._error = ""
+            # **https でも出す。** `http` のままだとブラウザが secure context と
+            # 見なさず、`navigator.clipboard` が生えない。noVNC が見ている側の
+            # クリップボードを読めないのはそのためである。
+            # **失敗しても止めない。** http の 6080 は使える。
+            from . import tunnel as tunnel_mod
+            tunnel_mod.serve_https(config.VNC_HTTPS_PORT, config.VNC_WEB_PORT)
             return self._status_locked()
 
     def stop(self) -> dict:
@@ -158,6 +176,11 @@ class Vnc:
             return self._status_locked()
 
     def _stop_locked(self) -> None:
+        if self._procs:
+            # **https の出口も閉じる。** 中身が死んでいるのに口だけ残すと、
+            # 開いた人は「繋がらない」としか分からない。
+            from . import tunnel as tunnel_mod
+            tunnel_mod.serve_off(config.VNC_HTTPS_PORT)
         for p in self._procs:
             if p.poll() is None:
                 p.terminate()
@@ -180,5 +203,6 @@ class Vnc:
             "available": not why,
             "error": self._error or why,
             "web_port": config.VNC_WEB_PORT,
+            "https_port": config.VNC_HTTPS_PORT,
             "rfb_port": config.VNC_RFB_PORT,
         }

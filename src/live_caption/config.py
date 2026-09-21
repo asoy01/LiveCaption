@@ -182,6 +182,14 @@ DIRECTION_STATE_PATH = PROJECT_ROOT / "local" / "direction_state.json"
 # 経路の書き間違い1つで、URLを知った人が字幕アプリを止められるようになる。
 WEB_PORT = 8080
 CONTROL_PORT = 8081
+# **操作画面の https の出口**（`tailscale serve`。tailnet の中だけ）。
+# 秘匿が増えるわけではない（tailnet は既に WireGuard で暗号化されている）。
+# 効くのは、ブラウザが secure context と認めることである。`navigator.clipboard`
+# が使えるようになり、URLのコピーボタンが古いやり方に落ちなくて済む。
+#
+# **`allowed_origins()` にこの出口を入れること。** 入れないと、画面は開くのに
+# `Origin` が合わず、**ボタンが全部 403 になる**（2026-09-19 に同じ形で踏んだ）。
+CONTROL_HTTPS_PORT = 8443
 # 閲覧を待ち受けるアドレス。既定は自分の機体からだけ。
 # トンネルを使うときは cloudflared が 127.0.0.1 に繋ぐので、ここは既定のままでよい。
 # 同じLANの端末から直接見せたいときだけ 0.0.0.0 にする（--web-bind）。
@@ -435,7 +443,11 @@ ENV_PATH = PROJECT_ROOT / ".env"
 # **常用しない。** 認証が無く、tailnet の中からは誰でも届く。
 # 会議ソフトへのサインインと、自動参加が詰まったときの様子見に使う。
 VNC_RFB_PORT = 5900          # VNC クライアントから繋ぐ先
-VNC_WEB_PORT = 6080          # ブラウザから繋ぐ先（noVNC）
+VNC_WEB_PORT = 6080          # ブラウザから繋ぐ先（noVNC、http）
+# **https の出口**（`tailscale serve`。tailnet の中だけ）。
+# ブラウザは `http` を secure context と見なさないので、`navigator.clipboard` が
+# 生えない。**noVNC が見ている側のクリップボードを読めないのはこれが理由である。**
+VNC_HTTPS_PORT = 6443
 NOVNC_ROOT = "/usr/share/novnc"
 # 1 なら起動した時点から上げる。既定は上げない（操作画面から開ける）。
 VNC_ENV = "LIVECAPTION_VNC"

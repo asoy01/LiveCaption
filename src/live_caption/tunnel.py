@@ -248,6 +248,60 @@ def find_tailscale(explicit: str | None = None) -> str | None:
     return str(config.TAILSCALE_LOCAL) if config.TAILSCALE_LOCAL.exists() else None
 
 
+# --- tailnet の中だけに https で出す（`tailscale serve`） ---------------------
+#
+# **これは配信（Funnel）とは別物である。** Funnel は誰でも見られる。`serve` は
+# tailnet の中からしか届かない。操作画面と noVNC を https にするために使う。
+#
+# **証明書は Tailscale が取って、更新まで面倒を見る。** `tailscale cert` を
+# 自分で回す必要はない。名前は完全名（`<機体>.<tailnet>.ts.net`）になるので、
+# 短い名前やIPで開くと証明書が合わない。
+#
+# **`reset` を使ってはいけない。** `serve` と `funnel` は同じ設定を共有するので、
+# 片方を消すつもりで両方消すことになる。止めるときはポートを指定する。
+# 配信の停止は `funnel --https=443 off` で443だけを落としており、こちらの
+# 8443 / 6443 は巻き添えにならない（2026-09-21 に実測した）。
+
+
+def serve_https(public_port: int, local_port: int) -> str:
+    """`https://<完全名>:<public_port>` を `127.0.0.1:<local_port>` に繋ぐ。
+
+    失敗したときだけ理由を返す。成功なら空。**失敗しても呼ぶ側は止まらない。**
+    https は便利だが、無くても http で使える。
+    """
+    exe = find_tailscale()
+    if exe is None:
+        return "tailscale が見つからない。"
+    try:
+        out = subprocess.run(
+            [exe, "serve", "--bg", f"--https={public_port}", str(local_port)],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=config.TUNNEL_TIMEOUT_SEC,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return str(exc)
+    if out.returncode != 0:
+        return ((out.stderr or "") + (out.stdout or "")).strip()[:300]
+    return ""
+
+
+def serve_off(public_port: int) -> None:
+    """`serve` の1本だけを止める。**`reset` は使わない。**"""
+    exe = find_tailscale()
+    if exe is None:
+        return
+    try:
+        subprocess.run(
+            [exe, "serve", f"--https={public_port}", "off"],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=15,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
 # 直前に調べたホスト名を覚えておく。`(調べた時刻, ホスト名, 失敗の理由)`。
 _HOST_CACHE: tuple[float, str, str] = (0.0, "", "")
 _HOST_CACHE_LOCK = threading.Lock()
