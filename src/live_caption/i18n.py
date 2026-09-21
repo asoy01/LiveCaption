@@ -176,6 +176,8 @@ EN: dict[str, str] = {
     "操作画面に戻る": "Back to the control page",
     "作成 ": "created ",
     "配信中": "delivering",
+    "編集": "Edit",
+    "閉じる": "Close",
     "同じ曜日・同じ時刻で繰り返す": "Repeat on the same weekday at the same time",
     "Zoomの招待URLか会議番号。空なら自分では入らない":
         "Zoom invitation URL or meeting number. Empty: it does not join",

@@ -36,7 +36,10 @@ BODY = """</style>
   .head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
           margin-bottom: 12px; }
   .head .nm { font-size: 17px; font-weight: 600; color: var(--fg); }
+  .head .when { font-size: 13px; color: var(--ja); }
   .head .made { font-size: 12px; color: var(--muted); margin-left: auto; }
+  /* 開く・閉じるの札。**見出しの右端に置く。** */
+  .head .editbtn { font-size: 13px; padding: 4px 12px; }
   .badge { font-size: 12px; padding: 2px 9px; border-radius: 999px;
            border: 1px solid var(--accent); color: var(--accent); }
   .grid { display: grid; grid-template-columns: auto 1fr; gap: 9px 12px;
@@ -115,6 +118,9 @@ BODY = """</style>
   // **触っている欄があるうちは描き直さない。** 打ちかけの値が手の下で消える。
   let seen = "";
   const touched = new Set();
+  // 入力欄を開いてある会議。**描き直しをまたいで覚える。**
+  // 覚えないと、30秒ごとの取り直しで手の下の欄が畳まれる。
+  const opened = new Set();
 
   function say(text, ok) { msg.textContent = text; msg.className = ok ? "ok" : "ng"; }
 
@@ -176,10 +182,40 @@ BODY = """</style>
       badge.className = "badge"; badge.textContent = "配信中";
       head.appendChild(badge);
     }
+    // **畳んでいる間も、いつの会議かは見えていないといけない。**
+    // 名前だけの一覧にすると、どれを開けばよいか分からなくなる。
+    const when = document.createElement("span");
+    when.className = "when";
+    when.textContent = it.start
+      ? (it.repeat === "weekly" ? "毎週 " : "") + it.start
+        + (it.auto ? "　自動で開始" : "")
+      : "予定なし";
+    head.appendChild(when);
+
     const made = document.createElement("span");
     made.className = "made"; made.textContent = "作成 " + it.created;
     head.appendChild(made);
+
+    // **入力欄は畳んでおく。** 予定が増えると、全部を開いたままでは下の会議が
+    // 画面の外へ押し出される（麻生の指摘、2026-09-21）。編集するときだけ開く。
+    const edit = document.createElement("button");
+    edit.className = "editbtn";
+    head.appendChild(edit);
     box.appendChild(head);
+
+    const body = document.createElement("div");
+    body.className = "cardbody";
+    function setOpen(on) {
+      if (on) { opened.add(it.id); } else { opened.delete(it.id); }
+      body.style.display = on ? "" : "none";
+      // 畳んであるときは、見出しの下の余白も要らない。
+      head.style.marginBottom = on ? "" : "0";
+      edit.textContent = on ? "閉じる" : "編集";
+    }
+    edit.addEventListener("click", () => setOpen(body.style.display === "none"));
+    // **触ってある会議は開けておく。** 打ちかけの値が畳まれて見えなくなると、
+    // 保存し忘れる。
+    setOpen(opened.has(it.id) || touched.has(it.id));
 
     // --- 予定 ---
     const grid = document.createElement("div");
@@ -219,7 +255,7 @@ BODY = """</style>
     zoom.value = it.zoom || "";
     zoom.addEventListener("input", mark);
     row("Zoomのリンク", zoom);
-    box.appendChild(grid);
+    body.appendChild(grid);
 
     const nums = document.createElement("div");
     nums.className = "nums";
@@ -237,7 +273,7 @@ BODY = """</style>
     const lead = num("何分前から", it.lead_min, 0, 60);
     const silence = num("無音で終了（分）", it.silence_min, 0.5, 240, "0.5");
     const cap = num("安全上限（分）", it.max_min, 5, 1440);
-    box.appendChild(nums);
+    body.appendChild(nums);
 
     const autorow = document.createElement("label");
     autorow.className = "autorow";
@@ -250,13 +286,13 @@ BODY = """</style>
     autorow.appendChild(auto);
     autorow.appendChild(document.createTextNode(
       "この会議を自動で開始する（時刻が来たら配信を始める）"));
-    box.appendChild(autorow);
+    body.appendChild(autorow);
 
     const warn = document.createElement("div");
     warn.className = "warn";
     warn.textContent = "自動で開始すると、人が見ていなくても字幕が外に出る。"
       + "外に出せない内容の会議では印を付けないこと。";
-    box.appendChild(warn);
+    body.appendChild(warn);
 
     // **Zoomのチャットに投げる印。** これも既定は切りである。押すと、会議の
     // 参加者全員に字幕のURLが見える。
@@ -268,13 +304,13 @@ BODY = """</style>
     chatrow.appendChild(chat);
     chatrow.appendChild(document.createTextNode(
       "字幕が出たら、ZoomのチャットにURLとQRを投げる"));
-    box.appendChild(chatrow);
+    body.appendChild(chatrow);
 
     const chatWarn = document.createElement("div");
     chatWarn.className = "warn";
     chatWarn.textContent = "参加者全員にURLが見える。"
       + "ホストがファイル送信を切っている会議では、URLだけが届く。";
-    box.appendChild(chatWarn);
+    body.appendChild(chatWarn);
 
     // --- URL ---
     const urls = document.createElement("div");
@@ -337,7 +373,7 @@ BODY = """</style>
     });
     hostLine.appendChild(show);
     urls.appendChild(hostLine);
-    box.appendChild(urls);
+    body.appendChild(urls);
 
     // --- ボタン ---
     const acts = document.createElement("div");
@@ -384,7 +420,9 @@ BODY = """</style>
       } catch (e) { say(String(e.message), false); }
     });
     acts.appendChild(del);
-    box.appendChild(acts);
+    body.appendChild(acts);
+
+    box.appendChild(body);
     return box;
   }
 
