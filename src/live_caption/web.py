@@ -47,6 +47,7 @@ from __future__ import annotations
 import hmac
 import io
 import json
+import os
 import re
 import socket
 import threading
