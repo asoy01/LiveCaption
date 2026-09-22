@@ -31,12 +31,34 @@ ASR_URL = "wss://api.openai.com/v1/realtime?intent=transcription"
 ASR_MODEL = "gpt-live-transcribe"
 # minimal と high はどちらも用語を外した。low が最良（HANDOFF 参照）。
 ASR_DELAY = "low"
-# KAGRAの朝礼は前半が英語、後半が日本語。言語を固定してはいけない。
+# 会議の途中で言語が変わることがある。言語を固定してはいけない。
 ASR_LANGUAGES = ("ja", "en")
-ASR_PROMPT = (
-    "重力波望遠鏡 KAGRA の定例会議。干渉計の光学と制御、防振系、真空、低温の話題。"
-    "日本語と英語が混ざる。"
-)
+
+# 会議の分野。**文字起こしと翻訳の両方のプロンプトに入る。**
+#
+# 既定は分野を限定しない文面である。**自分の会議の分野を書くと、専門用語の
+# 精度が上がる。** `.env` に1行書く:
+#
+#   LIVECAPTION_MEETING_CONTEXT=重力波望遠鏡の定例会議。干渉計の光学と制御、防振系、真空、低温の話題。
+#
+# 用語対訳表とは役割が違う。表は個々の語の対訳を与えるもので、こちらは
+# 「どの分野の語として解釈するか」をモデルに伝えるものである。
+MEETING_CONTEXT_ENV = "LIVECAPTION_MEETING_CONTEXT"
+MEETING_CONTEXT_DEFAULT = "技術的な内容の定例会議。"
+
+
+def meeting_context() -> str:
+    """会議の分野。`.env` で差し替えられる。
+
+    **起動のたびに読む。** 定数にすると、`load_env()` より先に評価されて
+    `.env` の値が効かない。
+    """
+    return os.environ.get(MEETING_CONTEXT_ENV, "").strip() or MEETING_CONTEXT_DEFAULT
+
+
+def asr_prompt() -> str:
+    """文字起こしに渡すプロンプト。"""
+    return f"{meeting_context()}日本語と英語が混ざる。"
 # keywords に渡せる語数の上限。
 #
 # **用語表の全語が入る値にしておくこと。** `keywords()` は日本語と英語の両方を
@@ -424,7 +446,9 @@ GLOSSARY_DIR = PROJECT_ROOT / "etc" / "glossary"
 # 置かないと、アップロードした表がコンテナの作り直しで消える。
 GLOSSARY_DIR_ENV = "LIVECAPTION_GLOSSARY_DIR"
 # 何も選ばれていないときに読むもの（拡張子は付けない）。
-GLOSSARY_DEFAULT: tuple[str, ...] = ("KAGRA_basic",)
+# **リポジトリには表が入っていないので、既定は空である。** 表を用意したら、
+# 操作画面から選ぶ。ここに名前を書いておくこともできる。
+GLOSSARY_DEFAULT: tuple[str, ...] = ()
 
 
 def glossary_dir() -> Path:

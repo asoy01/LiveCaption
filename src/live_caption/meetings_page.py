@@ -92,7 +92,7 @@ BODY = """</style>
   <div id="msg"></div>
 
   <div class="add">
-    <input type="text" id="newName" placeholder="会議の名前（例: KAGRA朝礼 9/25）">
+    <input type="text" id="newName" placeholder="会議の名前（例: 定例会議 9/25）">
     <button id="add" class="primary">追加</button>
   </div>
 

@@ -46,7 +46,7 @@ class Asr:
                         "format": {"type": "audio/pcm", "rate": config.ASR_RATE},
                         "transcription": {
                             "model": config.ASR_MODEL,
-                            "prompt": config.ASR_PROMPT,
+                            "prompt": config.asr_prompt(),
                             "keywords": self.keywords,
                             "languages": list(self.languages),
                             "delay": self.delay,

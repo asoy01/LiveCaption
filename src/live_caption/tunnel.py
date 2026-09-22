@@ -314,7 +314,7 @@ def tailscale_host(command: str | None = None, max_age: float | None = None
     **配信していなくても分かる。** これが Tailscale を選ぶ理由である。会議の前日に
     URLを確定して、案内に載せられる。
 
-        tailscale status --json  →  Self.DNSName  →  ms-s1-max.tail1234.ts.net
+        tailscale status --json  →  Self.DNSName  →  livecaption.tail1234.ts.net
 
     **結果を少しのあいだ覚える。** ここは `Funnel.status()` から呼ばれ、
     `status()` は操作画面が2秒ごとに叩く `/api/status` から呼ばれる。覚えないと、

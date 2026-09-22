@@ -33,7 +33,7 @@ RUN printf 'pcm.!default { type pulse }\nctl.!default { type pulse }\n' \
 # python3 で測ったので、ここは新しく要るものである。
 ENV ALSA_PLUGIN_DIR=/usr/lib/x86_64-linux-gnu/alsa-lib
 
-# pixi は版を固定する。osmium に入っているものと同じ。
+# pixi は版を固定する。ホスト側と揃えてある。
 ENV PIXI_VERSION=v0.72.0 \
     PIXI_HOME=/opt/pixi \
     PATH=/opt/pixi/bin:$PATH
@@ -51,7 +51,7 @@ RUN pixi install --locked \
 
 # Tailscale。**サイドカーにはせず、この箱の中に入れる。**
 # `tunnel.py` は `shutil.which("tailscale")` で CLI を探すので、PATH に置けば
-# 本体のコードは変えずに済む。版は osmium のホスト側と揃えてある。
+# 本体のコードは変えずに済む。版はホスト側と揃えてある。
 #
 # **userspace-networking は使えない。** 操作画面を出すには `--control-bind` が
 # 100.x のアドレスを実際のインターフェースに見つける必要があり、userspace では

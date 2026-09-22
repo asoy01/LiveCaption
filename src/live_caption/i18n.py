@@ -193,7 +193,7 @@ EN: dict[str, str] = {
     "会議ごとに別のURLを使う。": "Each meeting gets its own URL.",
     "配信するのは選んである1つだけで、": "Only the meeting you select is delivered, and ",
     "他の会議のURLは開けない。": "the other meetings' URLs do not open.",
-    "会議の名前（例: KAGRA朝礼 9/25）": "Meeting name (for example: KAGRA morning 9/25)",
+    "会議の名前（例: 定例会議 9/25）": "Meeting name (for example: weekly meeting 9/25)",
     "追加": "Add",
     "削除": "Delete",
     "この会議を配信する": "Deliver this meeting",

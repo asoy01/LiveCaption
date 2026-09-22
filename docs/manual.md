@@ -760,6 +760,7 @@ the delay tuning are all in that one file. The sample with the explanations is
 | Name in `.env` | What it decides | Where it is explained |
 |---|---|---|
 | `OPENAI_API_KEY` | **The API key. This one is required** | 2.3 |
+| `LIVECAPTION_MEETING_CONTEXT` | **What your meetings are about. It improves technical terms** | below |
 | `LIVECAPTION_RESTART` | Whether it runs resident. `no` for a laptop | 2.3 |
 | `TS_HOSTNAME` | The container's name on the tailnet. **Change it if you run more than one** | Appendix B.2 |
 | `TS_AUTHKEY` | A Tailscale auth key. **Not needed if you approve by hand** | Appendix B.3 |
@@ -767,6 +768,25 @@ the delay tuning are all in that one file. The sample with the explanations is
 | `LIVECAPTION_SAVE_DIR` | Where the meeting record is written | Appendix C.4 |
 | `LIVECAPTION_GLOSSARY_DIR` | Where the glossary tables are kept | Appendix E.4 |
 | `LIVECAPTION_IDLE_FLUSH_SEC` and three more | Delay tuning | Appendix E.4 |
+
+### Telling it what your meetings are about
+
+**After the glossary, this is the setting that matters most.** One sentence
+describing the field goes into both the transcription prompt and the translation
+prompt, and it tells the models which field to read every technical term in.
+
+```ini
+LIVECAPTION_MEETING_CONTEXT=A weekly meeting about radio astronomy. Topics include receivers, calibration and observation scheduling.
+```
+
+The default names no field. It works, but technical terms come out wrong more
+often. **Write the sentence in the language your meetings are mostly held in.**
+
+**This is not the same as the glossary.** The glossary gives the translation of
+one term; this sentence tells the model which field to read every term in. Use
+both.
+
+### Editing `.env`
 
 **After you edit `.env`, recreate the container**, because `.env` is read only at
 start-up. Run this in PowerShell.

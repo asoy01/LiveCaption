@@ -51,7 +51,7 @@ URLは会議ごとに別で、配信するのは操作画面で選んである1�
 必要なぶんだけ重ねる。操作画面の「用語集」で選べる。選択は覚えているので、
 次の起動も同じ組み合わせで始まる。起動時に決めるなら:
 
-    pixi run python run.py --glossary KAGRA_basic Interferometer
+    pixi run python run.py --glossary Optics Control
 """
 
 from __future__ import annotations
@@ -93,7 +93,7 @@ def parse_args() -> argparse.Namespace:
                         "指定しなければ前回の選択（操作画面からいつでも変えられる）")
     p.add_argument("--glossary", nargs="*", metavar="名前", default=None,
                    help="使う用語集（etc/glossary/ の .tsv の名前）。複数を重ねられる。"
-                        "例: --glossary KAGRA_basic Interferometer。"
+                        "例: --glossary Optics Control。"
                         "指定しなければ前回の選択（操作画面からいつでも変えられる）")
     p.add_argument("--web", nargs="?", type=int, const=config.WEB_PORT, default=None,
                    metavar="ポート",

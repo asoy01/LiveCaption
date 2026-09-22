@@ -55,7 +55,7 @@ def parse_meeting(text: str) -> tuple[str, str]:
     受け付ける形:
 
         https://zoom.us/j/1234567890?pwd=abc
-        https://u-tokyo-ac-jp.zoom.us/j/1234567890?pwd=abc
+        https://example.zoom.us/j/1234567890?pwd=abc
         zoommtg://zoom.us/join?action=join&confno=1234567890&pwd=abc
         1234567890
         123 4567 890        （人が貼るとこうなる）

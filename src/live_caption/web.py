@@ -2636,7 +2636,7 @@ class WebCaptions:
         """この操作画面自身のURL。`Origin` の検査に使う。
 
         **アドレスだけでは足りない。** tailnet には MagicDNS があるので、人は
-        `http://ms-s1-max:8081` のように**名前で開く。** 名前を入れておかないと、
+        `http://livecaption:8081` のように**名前で開く。** 名前を入れておかないと、
         画面は見えるのにボタンが全部断られる（2026-09-19 に踏んだ）。
         """
         out = {f"http://localhost:{self.control_port}",

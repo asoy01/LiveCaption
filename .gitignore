@@ -8,8 +8,12 @@ data/recordings/*
 # local files
 local/
 
-# 用語対訳表。**共有しない。** 人名・組織名が入るうえ、内容は各自の分野に固有である。
-# 見本は docs/glossary-example.tsv にある。
-# フォルダだけは残す。無いと、見本をコピーする先が無い。
+# Glossary tables. **Never share these.** They hold personal and organisation
+# names, and their contents are specific to your own field.
+# The sample is docs/glossary-example.tsv.
+# Keep the folder itself, or there is nowhere to copy the sample to.
 etc/glossary/*
 !etc/glossary/.gitkeep
+
+# Notes for Claude Code. They refer to local/HANDOFF.md, which is not published.
+.claude/
