@@ -90,7 +90,9 @@ async def run(path: Path, seconds: int, delay: str) -> int:
                     "format": {"type": "audio/pcm", "rate": RATE},
                     "transcription": {
                         "model": "gpt-live-transcribe",
-                        "prompt": "重力波望遠鏡 KAGRA の定例会議。干渉計の光学と制御の話題。日本語と英語が混ざる。",
+                        # **Take the prompt from the app.** A copy here
+                        # would drift away from what the app really sends.
+                        "prompt": config_mod.asr_prompt(),
                         "keywords": kw,
                         "languages": ["ja", "en"],
                         "delay": delay,
