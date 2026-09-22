@@ -156,7 +156,6 @@ src/live_caption/        the application
 scripts/                 one-off measurement and check scripts
 docs/                    manual, test procedure
 etc/                     the application icon, and your glossary tables (not in git)
-data/recordings/         audio used for comparing speech recognition engines (not in git)
 local/                   working files (not in git)
 ```
 

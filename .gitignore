@@ -4,11 +4,11 @@ __pycache__/
 # Every .env variant holds secrets. Only the sample is published.
 .env*
 !.env.example
-data/recordings/*
-!data/recordings/.gitkeep
 
 # local files
 local/
+# Scratch audio and other local working files.
+data/
 
 # Glossary tables. **Never share these.** They hold personal and organisation
 # names, and their contents are specific to your own field.

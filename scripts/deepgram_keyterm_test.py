@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """See whether the keyterm option of Deepgram nova-3 really works in Japanese.
 
-    pixi run python scripts/deepgram_keyterm_test.py [audio file]
+    pixi run python scripts/deepgram_keyterm_test.py <audio file>
 
 It sends the same audio four ways (language=ja / multi, with and without
 keyterm) and prints the outputs side by side.
-The default audio is data/recordings/tts_jargon.wav, made with the Windows
-speech synthesizer.
+
+Give it any short recording that contains the terms in KEYTERMS below.
 
 What Deepgram announced was "keyterm support on the multilingual model".
 It may not work with language=ja (a single language) and work only with
@@ -26,7 +26,6 @@ import urllib.request
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_AUDIO = PROJECT_ROOT / "data" / "recordings" / "tts_jargon.wav"
 TIMEOUT = 120.0
 
 # The spelling we want to see. The same strings are passed as keyterm.
@@ -84,7 +83,11 @@ def main() -> int:
         print("DEEPGRAM_API_KEY is not set. Write it in .env.")
         return 1
 
-    path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_AUDIO
+    if len(sys.argv) < 2:
+        print("Give the audio file as an argument.")
+        print("  pixi run python scripts/deepgram_keyterm_test.py <audio file>")
+        return 1
+    path = Path(sys.argv[1])
     if not path.exists():
         print(f"No audio file: {path}")
         return 1
