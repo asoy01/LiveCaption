@@ -1,7 +1,9 @@
 .pixi/
 __pycache__/
 *.pyc
-.env
+# Every .env variant holds secrets. Only the sample is published.
+.env*
+!.env.example
 data/recordings/*
 !data/recordings/.gitkeep
 
