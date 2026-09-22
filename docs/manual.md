@@ -293,12 +293,21 @@ thing in section 3 by joining a meeting of your own.
 **If LiveCaption runs resident, there is nothing to start.** Open the control
 page in a browser.
 
-**If you set `LIVECAPTION_RESTART=no`,** start LiveCaption first: start Docker
-Desktop, go to the LiveCaption folder, and run this in PowerShell.
+**If you set `LIVECAPTION_RESTART=no`,** start LiveCaption first. Start Docker
+Desktop, then use either of these.
+
+**From the Docker Desktop window.** Open **Containers** on the left and press
+**Start** (the play button) on the `livecaption` row. **From the second time
+on this is the easiest way**, and it needs no PowerShell.
+
+**From PowerShell.** Go to the LiveCaption folder and run this in PowerShell.
 
 ```powershell
 docker compose up -d
 ```
+
+**If `livecaption` is not in the list, it has not been created yet.** Do the
+install in section 2 first.
 
 Then open the control page.
 
@@ -480,16 +489,18 @@ Say this at the start of the meeting, to the people who will read the captions:
 now" or "Stop", no API is called and nothing is billed. Leave it until the next
 meeting.
 
-On a laptop with `LIVECAPTION_RESTART=no`, shut LiveCaption down on the host
-when you are done. Run this in PowerShell.
+On a laptop with `LIVECAPTION_RESTART=no`, stop LiveCaption when you are done.
+**There are two ways to stop it, and they differ in how much work starting it
+again takes.**
 
-```powershell
-docker compose down
-```
+| How you stop it | The container | Starting it again |
+|---|---|---|
+| **Stop in Docker Desktop**, or `docker compose stop` | stays | **press Start in Docker Desktop** |
+| `docker compose down` | is removed | `docker compose up -d` in PowerShell |
 
-`down` removes the container, but the settings, the list of meetings, the
-records and the Tailscale registration stay in the volumes. **Do not use
-`down -v`**: that deletes the volumes too.
+**Stop is enough for everyday use.** The settings, the list of meetings, the
+records and the Tailscale registration are kept in the volumes, so either way
+of stopping keeps them. **Do not use `down -v`**: that deletes the volumes too.
 
 ---
 

@@ -274,11 +274,20 @@ Zoom へは何も送りません。
 **常駐させている場合、起動は要りません。** ブラウザで操作画面を開くだけです。
 
 **`LIVECAPTION_RESTART=no` にしてある場合は、先に立ち上げます。** Docker Desktop を
-起動し、LiveCaption のフォルダへ移動して、PowerShell で次を実行します。
+起動してから、次のどちらかで動かします。
+
+**Docker Desktop の画面から。** 左の **Containers** を開き、`livecaption` の行の
+**Start**（▶）を押します。**2回目からはこれがいちばん手軽です。** PowerShell を
+開かずに済みます。
+
+**PowerShell から。** LiveCaption のフォルダへ移動して、次を実行します。
 
 ```powershell
 docker compose up -d
 ```
+
+**`livecaption` が一覧に無いときは、まだ作られていません。** 2章のインストールを
+済ませてください。
 
 そのうえで、操作画面を開きます。
 
@@ -435,15 +444,17 @@ Zoom の字幕欄に出す方法です。トークンは会議中にしか作れ
 **会議ごとにアプリを終わらせる必要はありません。** 「いま止める」か「停止」を押せば、
 API も呼ばれず、課金も止まります。次の会議までそのままにしておけます。
 
-`LIVECAPTION_RESTART=no` のノートPCでは、終わったらホストで落とします。PowerShell で
-次を実行します。
+`LIVECAPTION_RESTART=no` のノートPCでは、終わったら止めます。**止め方は2通りあり、
+次に立ち上げるときの手間が変わります。**
 
-```powershell
-docker compose down
-```
+| 止め方 | コンテナ | 次に立ち上げるとき |
+|---|---|---|
+| **Docker Desktop の Stop**（■）、または `docker compose stop` | 残る | **Docker Desktop の Start を押すだけ** |
+| `docker compose down` | 消える | PowerShell で `docker compose up -d` |
 
-`down` はコンテナを消しますが、設定・会議の一覧・記録・Tailscale の登録はボリュームに
-残ります。**`down -v` は使わないでください。** ボリュームまで消えます。
+**普段は Stop で足ります。** 設定・会議の一覧・記録・Tailscale の登録はボリュームに
+あるので、どちらで止めても残ります。**`down -v` は使わないでください。**
+ボリュームまで消えます。
 
 ---
 
