@@ -274,22 +274,27 @@ Zoom へは何も送りません。
 **常駐させている場合、起動は要りません。** ブラウザで操作画面を開くだけです。
 
 **`LIVECAPTION_RESTART=no` にしてある場合は、先に立ち上げます。** Docker Desktop を
-起動してから、次のどちらかで動かします。
+起動してから、**下のAとBのどちらか一方**を行います。**両方やる必要はありません。**
 
-**Docker Desktop の画面から。** 左の **Containers** を開き、`livecaption` の行の
-**Start**（▶）を押します。**2回目からはこれがいちばん手軽です。** PowerShell を
-開かずに済みます。
+#### A. Docker Desktop の画面から（2回目以降はこれが最短）
 
-**PowerShell から。** LiveCaption のフォルダへ移動して、次を実行します。
+左の **Containers** を開き、`livecaption` の行の **Start**（▶）を押します。
+これで立ち上がるので、**このあと PowerShell で打つことはありません。**
+
+**`livecaption` が一覧に無いときは、まだ作られていません。** 2章のインストールを
+済ませてください。
+
+#### B. PowerShell から
+
+LiveCaption のフォルダへ移動して、PowerShell で次を実行します。
 
 ```powershell
 docker compose up -d
 ```
 
-**`livecaption` が一覧に無いときは、まだ作られていません。** 2章のインストールを
-済ませてください。
+#### 立ち上げたあと
 
-そのうえで、操作画面を開きます。
+**AとBのどちらで立ち上げても、ここから先は同じです。** 操作画面を開きます。
 
 ```
 https://livecaption.<tailnet名>.ts.net:8443

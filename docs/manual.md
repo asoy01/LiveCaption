@@ -294,22 +294,28 @@ thing in section 3 by joining a meeting of your own.
 page in a browser.
 
 **If you set `LIVECAPTION_RESTART=no`,** start LiveCaption first. Start Docker
-Desktop, then use either of these.
+Desktop, then do **either A or B below. You never need both.**
 
-**From the Docker Desktop window.** Open **Containers** on the left and press
-**Start** (the play button) on the `livecaption` row. **From the second time
-on this is the easiest way**, and it needs no PowerShell.
+#### A. From the Docker Desktop window (the shortest way after the first time)
 
-**From PowerShell.** Go to the LiveCaption folder and run this in PowerShell.
+Open **Containers** on the left and press **Start** (the play button) on the
+`livecaption` row. That starts it, so **there is nothing to type in PowerShell
+afterwards.**
+
+**If `livecaption` is not in the list, it has not been created yet.** Do the
+install in section 2 first.
+
+#### B. From PowerShell
+
+Go to the LiveCaption folder and run this in PowerShell.
 
 ```powershell
 docker compose up -d
 ```
 
-**If `livecaption` is not in the list, it has not been created yet.** Do the
-install in section 2 first.
+#### Once it is running
 
-Then open the control page.
+**Whether you used A or B, the rest is the same.** Open the control page.
 
 ```
 https://livecaption.<your-tailnet>.ts.net:8443
