@@ -1,0 +1,63 @@
+# Build the documentation site and publish it to GitHub Pages.
+#
+#   https://asoy01.github.io/LiveCaption/
+#
+# **The versions here have to match ../../../LiveCaption-work/docs-env/pixi.toml**,
+# the environment used to preview the site while writing. If the two drift, a
+# page can look right locally and break here.
+#
+# Pages has to be set to "GitHub Actions" as its source, once, in the
+# repository settings.
+
+name: docs
+
+on:
+  push:
+    branches: [main]
+    # Only rebuild when something the site is made of changes.
+    paths:
+      - docs/**
+      - mkdocs.yml
+      - .github/workflows/docs.yml
+  # So the site can be rebuilt by hand after changing a repository setting.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# **Never publish two builds at once.** Let a running one finish rather than
+# cancelling it, so a half-written site is never what people see.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the documentation tools
+        run: pip install "mkdocs-material>=9.5" "mkdocs-static-i18n>=1.2"
+      - name: Build
+        # **--strict turns a warning into a failure.** A link that no longer
+        # resolves is how a manual quietly stops matching the program it
+        # documents, so the build should stop instead of publishing it.
+        run: mkdocs build --strict
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

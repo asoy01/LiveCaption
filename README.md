@@ -11,6 +11,11 @@ the caption language, LiveCaption shows that speech without translating it.
 **LiveCaption is not limited to Zoom.** It reads the audio that the meeting
 software plays, so any meeting software works.
 
+**The manual is also on the web, in English and Japanese:**
+[asoy01.github.io/LiveCaption](https://asoy01.github.io/LiveCaption/). It is
+built from the same files that ship in the download, so the two cannot drift
+apart.
+
 ## Quick start (Docker)
 
 You need one machine with Docker, an OpenAI API key, and a Tailscale account.
@@ -138,6 +143,7 @@ tables are kept in a volume and survive recreating the container.
 
 | Document | Contents |
 |---|---|
+| [The documentation site](https://asoy01.github.io/LiveCaption/) | The manual as a searchable site, with a language switch |
 | [docs/manual.md](docs/manual.md) | Manual: install, run a meeting, the glossary, settings, troubleshooting. Linux, Tailscale, maintenance and Windows native are in the appendices |
 | [docs/manual.ja.md](docs/manual.ja.md) | The same manual in Japanese |
 | [docs/test-procedure.md](docs/test-procedure.md) | Staged test for bringing up a new caption PC, and the checklist for the day |

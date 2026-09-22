@@ -1,6 +1,7 @@
 # LiveCaption Manual
 
-日本語版は [manual.ja.md](manual.ja.md) にあります。
+日本語版は `manual.ja.md` にあります。ウェブ版では、上の言語の切り替えから
+読めます。
 
 LiveCaption shows real-time captions for a meeting. It translates between
 Japanese and English. You choose the direction for each meeting.

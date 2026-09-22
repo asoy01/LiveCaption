@@ -1,6 +1,7 @@
 # LiveCaption マニュアル
 
-The English version is [manual.md](manual.md).
+The English version is `manual.md`. On the website, use the language switch
+at the top.
 
 LiveCaption は、会議にリアルタイムの字幕を出すシステムです。日本語と英語の間で
 翻訳します。字幕の向きは会議ごとに選びます。

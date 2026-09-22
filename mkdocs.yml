@@ -1,0 +1,98 @@
+# The documentation site. Built by .github/workflows/docs.yml and served from
+# GitHub Pages.
+#
+#   https://asoy01.github.io/LiveCaption/
+#
+# **The sources are the same .md files that ship in the download.** Nothing is
+# generated into docs/, and nothing is written for the site alone, so the
+# manual a reader downloads and the manual on the web cannot drift apart.
+#
+# To preview it while editing (the environment lives outside this repository,
+# so that the container does not carry the documentation tools):
+#
+#   pixi run --manifest-path ../LiveCaption-work/docs-env/pixi.toml serve
+
+site_name: LiveCaption
+site_description: Real-time translated subtitles for meetings
+site_url: https://asoy01.github.io/LiveCaption/
+repo_url: https://github.com/asoy01/LiveCaption
+repo_name: asoy01/LiveCaption
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  language: en
+  features:
+    # The manual is one long page per language, so the reader needs to be able
+    # to move around inside it.
+    - navigation.top
+    - navigation.tracking
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+  palette:
+    # **Light by default.** The manual is read next to a meeting, often
+    # projected or on a laptop in a bright room.
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+plugins:
+  - search
+  # **The suffix layout matches the file names we already had.**
+  # `manual.md` is English, `manual.ja.md` is Japanese. No file was moved to
+  # build this site.
+  #
+  # A page that exists in English only (test-procedure.md) falls back to the
+  # English text when the site is read in Japanese, instead of disappearing.
+  - i18n:
+      docs_structure: suffix
+      fallback_to_default: true
+      languages:
+        - locale: en
+          default: true
+          name: English
+          build: true
+        - locale: ja
+          name: 日本語
+          build: true
+          nav_translations:
+            Home: ホーム
+            Manual: マニュアル
+            Test procedure: 段階試験
+
+nav:
+  - Home: index.md
+  - Manual: manual.md
+  - Test procedure: test-procedure.md
+
+markdown_extensions:
+  # The manuals lean on tables, fenced code and **bold** lead-ins.
+  - tables
+  - admonition
+  - attr_list
+  - toc:
+      permalink: true
+      # The manuals go three levels deep (2.5.1 is never used, but appendices
+      # do reach ###).
+      toc_depth: 3
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/asoy01/LiveCaption

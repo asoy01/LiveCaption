@@ -5,6 +5,9 @@ __pycache__/
 .env*
 !.env.example
 
+# The rendered documentation site (built by CI).
+site/
+
 # local files
 local/
 # Scratch audio and other local working files.
