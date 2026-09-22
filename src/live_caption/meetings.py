@@ -1,22 +1,27 @@
-"""会議ごとの閲覧URL。作る・選ぶ・消す。
+"""The viewer URL for each meeting. Create, select, delete.
 
-閲覧URLは `https://<ホスト名>/v/<経路>` という形で、後半の `<経路>` をここで持つ。
+A viewer URL looks like `https://<host name>/v/<path>`. This module holds the
+`<path>` part.
 
-**会議ごとに別の経路を使う。** 参加者が会議ごとに違うので、先週の会議のURLで
-今日の字幕が見えてはいけない。
+**Each meeting uses a different path.** The people who join differ from meeting
+to meeting, so the URL of last week's meeting must not show today's captions.
 
-**前もって作れる。** Tailscale Funnel はホスト名が変わらないので、会議の前日でも
-URLを確定できる。Zoomのリンクと一緒に案内に載せるための作りである。
-Cloudflare の一時トンネルはホスト名が毎回変わるので、経路だけ先に作れても
-URL全体は当日まで決まらない。
+**The URL can be made in advance.** The host name of Tailscale Funnel does not
+change, so the URL is already fixed the day before the meeting. This is what
+lets you put it in the invitation next to the Zoom link. The host name of a
+Cloudflare temporary tunnel changes every time, so even when the path is ready,
+the whole URL is not known until the day itself.
 
-**配信するのは選んである1つだけ。** 他の会議のURLは、その日には404を返す。
-`web.py` の閲覧サーバが見るのは `viewer_path` 1本だけなので、これは自然に成り立つ。
+**Only the one selected meeting is delivered.** On that day, the URLs of the
+other meetings return 404. The viewer server in `web.py` looks at a single
+`viewer_path`, so this holds by itself.
 
-**会議は必ず1つ以上ある。** 0個になると閲覧URLが決まらず、画面共有もできない。
-最後の1つを消したときは、今日の日付で代わりを作る。
+**There is always at least one meeting.** With zero meetings the viewer URL is
+undefined, and screen sharing is not possible either. When the last one is
+deleted, a replacement is created with today's date.
 
-置き場は `local/meetings.json`。ここは git に入らない。会議の名前が入るためである。
+The file is `local/meetings.json`. It is not in git, because it holds the names
+of the meetings.
 """
 
 from __future__ import annotations
@@ -29,41 +34,51 @@ from datetime import date, datetime, timedelta
 
 from . import config
 
-# 名前の長さの上限。操作画面の一覧に収めるためで、中身の制約ではない。
+# Upper limit for the length of a name. It is there so the list on the control
+# page stays readable. It is not a limit on the content.
 NAME_MAX = 60
-# 予定の書き方。**秒も時間帯も持たない。** 1台の機体で、人が手で打つ値である。
+# How a scheduled time is written. **No seconds and no time zone.** This runs on
+# one machine, and a person types the value by hand.
 TIME_FMT = "%Y-%m-%d %H:%M"
-# 繰り返しはこの2つだけ。cron も RRULE も持ち込まない。
+# These two are the only repeats. No cron, no RRULE.
 REPEATS = ("", "weekly")
 
 
 @dataclass(frozen=True)
 class Meeting:
-    """1つの会議ぶん。`id` がURLに載る。
+    """One meeting. The `id` appears in the URL.
 
-    **下の予定の欄は後から足した。** 古い `local/meetings.json` には入っていないので、
-    既定値を持たせてある（`_meeting_from` が補う）。
+    **The schedule fields below were added later.** They are not in an old
+    `local/meetings.json`, so they have default values (`_meeting_from` fills
+    them in).
     """
 
     id: str
     name: str
     created: str
-    # --- 予定（無人で回すための欄） ---
-    start: str = ""            # "2026-09-25 09:30"。空なら予定なし
-    repeat: str = ""           # "" か "weekly"
-    zoom: str = ""             # Zoomの招待URLか会議番号。空なら自分では入らない
-    lead_min: int = 2          # 何分前に動き出すか
-    silence_min: float = 10.0  # 無音がこれだけ続いたら畳む
-    max_min: int = 180         # 安全上限。無音でなくてもここで必ず止める
-    # **自動で回す印。dataclass の既定は切り。** 保存済みの会議に後から足した欄
-    # なので、書いていなければ切りとして読む。**自分で足した会議には `create` が
-    # 入れる。** 数合わせで作る会議は、ここの既定のまま切りである。
+    # --- Schedule (the fields that let it run unattended) ---
+    start: str = ""            # "2026-09-25 09:30". Empty means no schedule
+    repeat: str = ""           # "" or "weekly"
+    zoom: str = ""             # Zoom invitation URL or meeting number. Empty
+                               # means it does not join by itself
+    lead_min: int = 2          # How many minutes before the start it wakes up
+    silence_min: float = 10.0  # Stop after this much silence
+    max_min: int = 180         # Safety limit. It always stops here, even
+                               # without silence
+    # **The flag for running automatically. The dataclass default is off.** This
+    # field was added to meetings that were already saved, so when it is not
+    # written, it is read as off. **`create` turns it on for a meeting you added
+    # yourself.** A meeting created only to keep the count above zero stays off,
+    # with this default.
     auto: bool = False
-    # **Zoomのチャットに字幕のURLを投げる印。** 扱いは `auto` と同じ。
-    # 投げると、会議の参加者全員にURLが見える。外に出せない会議では外すこと。
+    # **The flag for posting the caption URL to the Zoom chat.** It is handled
+    # the same way as `auto`. When it posts, every participant of the meeting
+    # sees the URL. Turn it off for a meeting that must not leave the room.
     chat: bool = False
-    last_fired: str = ""       # 済ませた回の `start`。**時刻ではなく回を書く**
-    host_id: str = ""          # ホストがトークンを貼るURLの経路（Phase 6）
+    last_fired: str = ""       # The `start` of the occurrence that is done.
+                               # **It records the occurrence, not a clock time**
+    host_id: str = ""          # The path of the URL where the host pastes the
+                               # token (Phase 6)
 
     def as_dict(self) -> dict:
         return {
@@ -84,18 +99,20 @@ def _new_id() -> str:
 
 
 def _new_host_id() -> str:
-    """ホスト用URLの経路。
+    """The path of the URL for the host.
 
-    **閲覧用の `id` より長くする。** 閲覧用は破られても字幕が漏れるだけで、
-    しかも数十人に配るものである。こちらは Zoom へ何を送るかを決めるので、
-    桁を変えてある。**閲覧用から導けてはいけない。**
+    **Make it longer than the viewer `id`.** If the viewer path is broken, only
+    the captions leak, and that path is handed to tens of people anyway. This
+    one decides what is sent to Zoom, so it has more digits. **It must not be
+    derivable from the viewer path.**
     """
     return secrets.token_urlsafe(config.HOST_SECRET_BYTES)
 
 
-# --- 読み込みの補正 -----------------------------------------------------------
-# **手で直した `meetings.json` で落ちないようにする。** 読めない値は既定に戻す。
-# ここで例外を出すと、スケジューラが5秒ごとに同じ会議で転び続ける。
+# --- Repair on load -----------------------------------------------------------
+# **Do not crash on a `meetings.json` that was edited by hand.** A value that
+# cannot be read falls back to the default. Raising here would make the
+# scheduler trip over the same meeting every 5 seconds.
 
 
 def _clean_start(raw) -> str:  # noqa: ANN001
@@ -113,13 +130,13 @@ def _num(raw, lo: float, hi: float, default: float) -> float:  # noqa: ANN001
         value = float(raw)
     except (TypeError, ValueError):
         return default
-    if value != value or value < lo or value > hi:  # NaN もここで落ちる
+    if value != value or value < lo or value > hi:  # NaN is caught here too
         return default
     return value
 
 
 def _meeting_from(m: dict) -> Meeting:
-    """1件ぶんを読む。**足りない欄は既定値で埋める。**"""
+    """Read one entry. **Missing fields are filled with the defaults.**"""
     return Meeting(
         id=str(m["id"]),
         name=str(m.get("name", "")),
@@ -138,25 +155,28 @@ def _meeting_from(m: dict) -> Meeting:
 
 
 class Store:
-    """会議の一覧と、いま配信している会議。
+    """The list of meetings, and the meeting that is being delivered now.
 
-    **操作画面（HTTPサーバのスレッド）から触られる。** `_lock` で守る。
-    書き込みに失敗しても落とさない。会議は続けられるべきである。
+    **It is touched from the control page (a thread of the HTTP server).**
+    `_lock` protects it. A failed write does not stop the program. The meeting
+    must be able to go on.
     """
 
     def __init__(self, path=None) -> None:  # noqa: ANN001
-        # **既定値引数で MEETINGS_STATE_PATH を捕まえない。** import のときに
-        # 1回だけ評価されるので、試験から差し替えられなくなる。
+        # **Do not capture MEETINGS_STATE_PATH in a default argument.** A
+        # default argument is evaluated once at import time, so a test could no
+        # longer replace it.
         self.path = config.MEETINGS_STATE_PATH if path is None else path
         self._lock = threading.Lock()
         self._items: list[Meeting] = []
         self._active = ""
         self._error = ""
-        # 経路が変わったときに呼ぶ。閲覧サーバの `viewer_path` を合わせるため。
+        # Called when the path changes, so that the viewer server can follow
+        # the new `viewer_path`.
         self.on_change = None
         self._load()
 
-    # --- 読み書き -----------------------------------------------------------
+    # --- Reading and writing the file ---------------------------------------
 
     def _load(self) -> None:
         try:
@@ -172,10 +192,10 @@ class Store:
         self._items = items
         self._active = active if any(m.id == active for m in items) else ""
         if not self._items:
-            # **1つも無い状態を作らない。** 閲覧URLが決まらないと、画面もQRも
-            # 出せない。今日の日付で1つ作っておく。
-            # **`create` と違い、印は何も付けない。** 人が頼んで作ったものでは
-            # ないので、Zoomにも入らないし、チャットにも投げない。
+            # **Never leave the list empty.** Without a viewer URL there is no
+            # page and no QR code. Create one with today's date.
+            # **Unlike `create`, no flag is set.** Nobody asked for this
+            # meeting, so it does not join Zoom and does not post to the chat.
             self._items = [Meeting(_new_id(), str(date.today()), str(date.today()))]
             self._active = self._items[0].id
             self._save_locked()
@@ -196,7 +216,7 @@ class Store:
             self._error = f"会議の一覧を保存できない: {exc}"
             print(f"  [会議] {self._error}")
 
-    # --- 読み取り -----------------------------------------------------------
+    # --- Reading -------------------------------------------------------------
 
     @property
     def active_id(self) -> str:
@@ -205,7 +225,7 @@ class Store:
 
     @property
     def viewer_path(self) -> str:
-        """いま配信している会議の経路。"""
+        """The path of the meeting that is being delivered now."""
         return f"/v/{self.active_id}"
 
     def path_of(self, meeting_id: str) -> str:
@@ -223,18 +243,21 @@ class Store:
                 "items": [dict(m.as_dict(), path=f"/v/{m.id}") for m in self._items],
             }
 
-    # --- 書き換え -----------------------------------------------------------
+    # --- Changing ------------------------------------------------------------
 
     def create(self, name: str) -> dict:
-        """会議を1つ足す。**足すだけで、配信の相手は変えない。**
+        """Add one meeting. **It only adds. It does not change what is
+        delivered.**
 
-        先の会議のURLを作っている最中に、今日の配信が切り替わっては困る。
+        While you prepare the URL of a future meeting, today's delivery must not
+        switch over.
 
-        **自分で足した会議は `auto` と `chat` を入れた状態で作る。** 名前を打って
-        まで足すのは、その会議を回すつもりだからである。要らなければ外せばよい。
-        **数合わせで作る会議（`_load_locked` と `remove` の代わりの1つ）は
-        入れない。** そちらは人が頼んだものではなく、閲覧URLを絶やさないために
-        あるだけなので、勝手に外へ出してはいけない。
+        **A meeting you add yourself is created with `auto` and `chat` on.** If
+        you go as far as typing a name, you mean to run that meeting. Turn them
+        off if you do not need them. **The meetings created only to keep the
+        count above zero (the replacement in `_load_locked` and `remove`) do not
+        get them.** Nobody asked for those. They exist only so that a viewer URL
+        always exists, so they must not go outside on their own.
         """
         name = str(name).strip()[:NAME_MAX]
         if not name:
@@ -248,10 +271,10 @@ class Store:
             return self._status_locked()
 
     def select(self, meeting_id: str) -> dict:
-        """配信する会議を選ぶ。**その場で効く。**
+        """Select the meeting to deliver. **It takes effect at once.**
 
-        **いま開いている閲覧画面は繋がらなくなる。** 経路が変わるためである。
-        会議の最中に触るものではない。
+        **A viewer page that is open now loses its connection**, because the
+        path changes. This is not something to touch during a meeting.
         """
         meeting_id = str(meeting_id)
         with self._lock:
@@ -266,11 +289,13 @@ class Store:
         return out
 
     def delete(self, meeting_id: str) -> dict:
-        """会議を消す。URLはその場で死ぬ。
+        """Delete a meeting. The URL dies at once.
 
-        **最後の1つを消したら、代わりを1つ作る。** 閲覧URLが決まらないと、画面共有も
-        できなくなる。「消せない」と断るのではなく、今日の日付で作り直す。
-        終わった会議を全部片付けられるほうが、使う側には自然である。
+        **When the last one is deleted, a replacement is created.** Without a
+        viewer URL, screen sharing is not possible either. Instead of refusing
+        with "this one cannot be deleted", a new one is made with today's date.
+        Being able to clear away every meeting that is over feels more natural
+        to the person using it.
         """
         meeting_id = str(meeting_id)
         with self._lock:
@@ -279,7 +304,7 @@ class Store:
             self._items = [m for m in self._items if m.id != meeting_id]
             changed = meeting_id == self._active
             if not self._items:
-                # 上と同じ。**代わりに作る1つには、印を付けない。**
+                # Same as above. **The replacement gets no flags.**
                 self._items = [Meeting(_new_id(), str(date.today()), str(date.today()))]
             if changed:
                 self._active = self._items[0].id
@@ -289,21 +314,23 @@ class Store:
             self._changed()
         return out
 
-    # --- 予定 ---------------------------------------------------------------
+    # --- Schedule ------------------------------------------------------------
 
     def set_schedule(self, meeting_id: str, **fields) -> dict:  # noqa: ANN003
-        """予定の欄を書き換える。読めない値は `ValueError` で断る。
+        """Rewrite the schedule fields. A value that cannot be read is refused
+        with `ValueError`.
 
-        **ここは人が打った値を受ける入口なので、ここで断る。** 読み込みの側
-        （`_meeting_from`）は逆に、何が来ても既定値に落として通す。
-        壊れたファイルでスケジューラが転び続けるほうが困るためである。
+        **This is the entrance for values a person typed, so refuse here.** The
+        loading side (`_meeting_from`) does the opposite: whatever arrives, it
+        falls back to the default and lets it through. A broken file that makes
+        the scheduler trip over and over is the worse outcome.
         """
         meeting_id = str(meeting_id)
         clean: dict = {}
 
         if "start" in fields:
             raw = str(fields["start"] or "").strip().replace("T", " ")
-            # ブラウザの datetime-local は "2026-09-25T09:30" を返す。
+            # The browser's datetime-local returns "2026-09-25T09:30".
             if raw and _clean_start(raw) == "":
                 raise ValueError(f"日時の書き方が違う: 「{raw}」。{TIME_FMT} の形で入れること。")
             clean["start"] = _clean_start(raw)
@@ -338,8 +365,8 @@ class Store:
             if not found:
                 raise ValueError("その会議は無い。")
             old = found[0]
-            # 予定を変えたら、済ませた印を落とす。時刻を動かしたのに
-            # 「もう済んだ」と見なされては困る。
+            # When the schedule changes, clear the "done" mark. After moving the
+            # time, the occurrence must not still count as finished.
             if clean.get("start", old.start) != old.start:
                 clean["last_fired"] = ""
             new = replace(old, **clean)
@@ -348,7 +375,8 @@ class Store:
             return self._status_locked()
 
     def ensure_host_id(self, meeting_id: str, renew: bool = False) -> str:
-        """ホスト用URLの経路。無ければ作って保存する。"""
+        """The path of the URL for the host. If there is none, make one and save
+        it."""
         meeting_id = str(meeting_id)
         with self._lock:
             found = [m for m in self._items if m.id == meeting_id]
@@ -362,10 +390,10 @@ class Store:
             return new.host_id
 
     def mark_fired(self, meeting_id: str, occurrence: str) -> None:
-        """その回を済ませたことにする。**失敗しても投げない。**
+        """Mark that occurrence as done. **It never raises, even on failure.**
 
-        スケジューラから呼ばれる。ここで例外を出すとスケジューラが転び、同じ回を
-        何度も掴むことになる。
+        The scheduler calls this. An exception here would trip the scheduler,
+        and it would pick up the same occurrence again and again.
         """
         try:
             with self._lock:
@@ -379,10 +407,11 @@ class Store:
             print(f"  [会議] 済ませた印を残せない: {exc}")
 
     def next_occurrence(self, m: Meeting, now: datetime) -> datetime | None:
-        """次に来る回。無ければ None。
+        """The next occurrence. None if there is none.
 
-        **`weekly` は日付に7日足して組み直す。** 「7日ぶんの秒を足す」ではない。
-        夏時間のある土地に機体を動かしても、指定した時刻のままになる。
+        **`weekly` adds 7 days to the date and rebuilds the value.** It does not
+        add the number of seconds in 7 days. Even if the machine is moved to a
+        place that uses summer time, the clock time stays as it was set.
         """
         if not m.start:
             return None
@@ -392,9 +421,10 @@ class Store:
             return None
         if not m.repeat:
             return when
-        # 過去になっていたら、次に来る同じ曜日・同じ時刻まで進める。
+        # If it is in the past, move forward to the next same weekday and same
+        # clock time.
         guard = 0
-        while when < now and guard < 520:  # 10年ぶんで打ち切る
+        while when < now and guard < 520:  # Give up after 10 years
             when = datetime.combine(
                 when.date() + timedelta(days=7), when.time())
             guard += 1
@@ -404,9 +434,11 @@ class Store:
         return when.strftime(TIME_FMT)
 
     def due(self, now: datetime) -> list[tuple[Meeting, datetime]]:
-        """いま動き出すべき会議。**新しい順ではなく、開始の早い順に返す。**
+        """The meetings that should wake up now. **They are returned by earliest
+        start time, not newest first.**
 
-        重なっていることが分かるように、1つに絞らず全部返す。選ぶのはスケジューラである。
+        All of them are returned, not just one, so that overlaps are visible.
+        The scheduler is the one that chooses.
         """
         out = []
         for m in self.items():
@@ -418,8 +450,9 @@ class Store:
             key = self.occurrence_key(when)
             if m.last_fired == key:
                 continue
-            # 開始の `lead_min` 分前から掴む。過ぎすぎた回は拾わない
-            # （止めていた間に流れた回まで、まとめて始めない）。
+            # Pick it up from `lead_min` minutes before the start. An occurrence
+            # that is long past is not picked up, so the occurrences that went
+            # by while the program was stopped do not all start at once.
             begin = when - timedelta(minutes=m.lead_min)
             if begin <= now <= when + timedelta(minutes=config.SCHEDULE_GRACE_MIN):
                 out.append((m, when))
@@ -427,7 +460,7 @@ class Store:
         return out
 
     def upcoming(self, now: datetime, limit: int = 3) -> list[dict]:
-        """これから来る回を早い順に。操作画面に出す。"""
+        """The coming occurrences, earliest first. Shown on the control page."""
         out = []
         for m in self.items():
             if not m.scheduled:
@@ -449,7 +482,7 @@ class Store:
         out.sort(key=lambda d: d["at"])
         return out[:limit]
 
-    # --- 内部 ---------------------------------------------------------------
+    # --- Internal ------------------------------------------------------------
 
     def _changed(self) -> None:
         if self.on_change is not None:

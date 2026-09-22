@@ -1,30 +1,39 @@
-"""用語対訳表の読み込み。
+"""Loading the glossary.
 
-**表は複数ある。** `etc/glossary/` に置いた `.tsv` を、会議に合わせて選んで重ねる。
-例: `Optics` + `Control`。選択は操作画面から変えられる。
+**There is more than one glossary.** The `.tsv` files in `etc/glossary/` are
+selected to match the meeting and stacked together. For example, `Optics` +
+`Control`. The selection can be changed from the control page.
 
-分けるのは、サブシステムによって語彙が違うためである。1つの大きな表を
-全部の会議で使うと、関係の無い語が認識の `keywords` を食い、上限
-（`config.ASR_KEYWORD_LIMIT`）で本当に要る語が落ちる。
+They are kept apart because the vocabulary differs between subsystems. Using one
+large glossary for every meeting lets unrelated terms eat up the `keywords` of
+the speech recognition, and the terms that are really needed are dropped at the
+limit (`config.ASR_KEYWORD_LIMIT`).
 
-書式は `etc/glossary/*.tsv`:
+The format of `etc/glossary/*.tsv` is:
 
-    日本語(正しい表記) <TAB> English <TAB> よくある誤認識(カンマ区切り)
+    Japanese (correct spelling) <TAB> English <TAB> common misrecognitions
+    (separated by commas)
 
-第3列が本体である。実際に出た誤認識を貯めると効く。英語の誤認識も入れる
-（例:「people」は「p-pol」の誤認識）。
+The third column is the important one. Collecting the misrecognitions that
+actually appeared is what makes it work. Put English misrecognitions in as well
+(for example, "people" is a misrecognition of "p-pol").
 
-この表は2箇所で使う。
+The glossary is used in two places.
 
-1. 音声認識の `keywords`（認識の段で音を拾わせる）
-2. 翻訳のプロンプト（認識が漢字を外しても英語に復元する）
+1. The `keywords` of the speech recognition (so the transcription stage picks up
+   the sounds)
+2. The translation prompt (so the English is restored even when the recognition
+   picks the wrong kanji)
 
-本命は2である。参考情報として並べるだけでは効かないので、置換規則として渡す。
-根拠は local/HANDOFF.md の「用語対訳表を置換規則にした効果」。
+The second one is the important one. Simply listing the terms as reference
+information does not work, so they are passed as replacement rules. This was
+confirmed by measurement.
 
-**字幕の向きを変えても、表は作り直さない。** `日本語 / English` の対なので、
-`prompt_block()` が左右を入れ替えるだけで `en2ja` に使える。認識に渡す
-`keywords()` は、そもそも両方の言語を常に渡しているので向きに依存しない。
+**Changing the caption direction does not mean rebuilding the glossary.** It is
+a `Japanese / English` pair, so `prompt_block()` only swaps the two sides and
+the same glossary works for `en2ja`. The `keywords()` passed to the speech
+recognition do not depend on the direction at all, because both languages are
+always passed.
 """
 
 from __future__ import annotations
@@ -44,18 +53,22 @@ class Entry:
     wrong: tuple[str, ...]
 
 
-#: 表の名前に使ってよい文字。**操作画面には認証が無い。**
-#: 名前はそのままファイル名になるので、ここを緩めるとディレクトリを遡られる。
+#: The characters allowed in the name of a glossary. **The control page has no
+#: authentication.** The name becomes the file name as it is, so loosening this
+#: would let someone walk up the directory tree.
 _NAME_OK = re.compile(r"\A[A-Za-z0-9_\-. ぁ-んァ-ヶ一-龠々ー]{1,64}\Z")
 
-#: アップロードを受ける上限。用語表は数百行のテキストなので、1 MB あれば余る。
+#: The upper limit for an upload. A glossary is a few hundred lines of text, so
+#: 1 MB is more than enough.
 MAX_UPLOAD_BYTES = 1 << 20
 
 
 def check_name(name: str) -> str:
-    """表の名前として使える形に直す。使えなければ `ValueError`。
+    """Turn the input into a usable glossary name. `ValueError` if it cannot be
+    used.
 
-    **`.tsv` を外した「名前」だけを扱う。** パスの区切りも `..` も通さない。
+    **It handles the "name" only, with `.tsv` removed.** Neither a path
+    separator nor `..` gets through.
     """
     stem = name[:-4] if name.lower().endswith(".tsv") else name
     stem = stem.strip()
@@ -68,14 +81,16 @@ def check_name(name: str) -> str:
 
 
 def path_of(name: str) -> Path:
-    """名前から表のファイルの場所を作る。拡張子は付けても付けなくてもよい。"""
+    """Build the path of the glossary file from a name. The extension may be
+    given or left out."""
     return config.glossary_dir() / f"{check_name(name)}.tsv"
 
 
 def available() -> list[dict]:
-    """`etc/glossary/` にある表の一覧。名前順。
+    """The list of glossaries in `etc/glossary/`, by name.
 
-    語数まで返す。**どれを選ぶと何語になるかが見えないと、選べない。**
+    The number of terms is returned as well. **Without seeing how many terms a
+    selection adds up to, you cannot choose.**
     """
     out = []
     root = config.glossary_dir()
@@ -87,7 +102,7 @@ def available() -> list[dict]:
 
 
 def read_text(name: str) -> str:
-    """表の中身をそのまま返す。ダウンロードに使う。"""
+    """Return the content of a glossary as it is. Used for downloading."""
     path = path_of(name)
     if not path.is_file():
         raise ValueError(f"そういう名前の用語集は無い: 「{name}」")
@@ -95,10 +110,12 @@ def read_text(name: str) -> str:
 
 
 def save_text(name: str, text: str) -> str:
-    """表を書き込む。同じ名前があれば置き換える。保存した名前を返す。
+    """Write a glossary. An existing one with the same name is replaced. Return
+    the name that was saved.
 
-    **中身を確かめてから書く。** 操作画面から入る唯一の書き込み口なので、
-    壊れた表を置いて会議の当日に気づく、ということが無いようにする。
+    **Check the content before writing.** This is the only way in from the
+    control page, so it must not be possible to store a broken glossary and find
+    out on the day of the meeting.
     """
     stem = check_name(name)
     raw = text.encode("utf-8")
@@ -110,9 +127,10 @@ def save_text(name: str, text: str) -> str:
     if "\x00" in text:
         raise ValueError("テキストではない。.tsv を渡すこと。")
 
-    # **書式を間違えた表を受け取らない。** カンマ区切りで出した `.csv` は、
-    # 1行まるごとが日本語の語1つとして読めてしまう。黙って壊れた表になり、
-    # 会議の当日に「用語が効かない」という形で気づくことになる。
+    # **Do not accept a glossary in the wrong format.** A `.csv` saved with
+    # commas reads as one Japanese term per whole line. It becomes a broken
+    # glossary without a word, and you find out on the day of the meeting, in
+    # the form of "the terms are not working".
     lines = [ln for ln in text.splitlines()
              if ln.strip() and not ln.startswith("#")]
     entries = parse_text(text)
@@ -127,11 +145,13 @@ def save_text(name: str, text: str) -> str:
     root = config.glossary_dir()
     root.mkdir(parents=True, exist_ok=True)
     path = root / f"{stem}.tsv"
-    # 改行は LF に揃える。Windows で編集した表がそのまま来る。
+    # Normalize the line endings to LF. A glossary edited on Windows arrives as
+    # it is.
     body = text.replace("\r\n", "\n").replace("\r", "\n")
     if not body.endswith("\n"):
         body += "\n"
-    # **書きかけを残さない。** 会議中に置き換えることがある。
+    # **Never leave a half-written file.** A glossary is sometimes replaced
+    # during a meeting.
     tmp = path.with_suffix(".tsv.tmp")
     tmp.write_text(body, encoding="utf-8")
     tmp.replace(path)
@@ -139,7 +159,7 @@ def save_text(name: str, text: str) -> str:
 
 
 def delete_file(name: str) -> str:
-    """表を消す。消した名前を返す。"""
+    """Delete a glossary. Return the name that was deleted."""
     path = path_of(name)
     if not path.is_file():
         raise ValueError(f"そういう名前の用語集は無い: 「{name}」")
@@ -148,7 +168,8 @@ def delete_file(name: str) -> str:
 
 
 def parse_text(text: str) -> list[Entry]:
-    """表の中身を解く。**受け取る前の検査にも使うので、ファイルとは別にしてある。**"""
+    """Parse the content of a glossary. **It is kept separate from the file,
+    because it is also used to check an upload before it is accepted.**"""
     entries: list[Entry] = []
     for line in text.splitlines():
         if not line.strip() or line.startswith("#"):
@@ -165,18 +186,22 @@ def parse_text(text: str) -> list[Entry]:
 
 
 def load_file(path: Path) -> list[Entry]:
-    """1つの表を読む。"""
+    """Read one glossary."""
     return parse_text(path.read_text(encoding="utf-8"))
 
 
 def load(names: list[str] | tuple[str, ...] | None = None) -> list[Entry]:
-    """選んだ表を重ねて読む。`names` が None なら既定の選択を使う。
+    """Read the selected glossaries, stacked together. If `names` is None, the
+    default selection is used.
 
-    **同じ日本語が複数の表に出たら、1つにまとめる。** 英語は最初に出たものを採り、
-    誤認識の列は全部の表から集める。誤認識は多いほうがよいので捨てない。
+    **When the same Japanese term appears in several glossaries, they are merged
+    into one.** The English of the first one is kept, and the misrecognition
+    column is collected from every glossary. More misrecognitions is better, so
+    none are thrown away.
 
-    英語が食い違ったら画面に出す。**黙って片方を捨てると、会議中に
-    「表に書いたはずの英語が出ない」と悩むことになる。**
+    When the English differs, it is printed. **Dropping one of them without a
+    word would leave you puzzling during the meeting over why the English you
+    wrote in the glossary does not appear.**
     """
     if names is None:
         names = selection()
@@ -186,8 +211,8 @@ def load(names: list[str] | tuple[str, ...] | None = None) -> list[Entry]:
         try:
             path = path_of(name)
         except ValueError:
-            # **読み込みで落とさない。** 覚えていた選択が壊れていても、
-            # 会議は始められないといけない。
+            # **Do not crash while loading.** Even when the remembered
+            # selection is broken, the meeting has to be able to start.
             print(f"  [用語集] 「{name}」は名前として使えない。飛ばす")
             continue
         if not path.exists():
@@ -207,18 +232,21 @@ def load(names: list[str] | tuple[str, ...] | None = None) -> list[Entry]:
 
 
 def selection() -> tuple[str, ...]:
-    """いま選ばれている表の名前。前回の選択を覚えている。
+    """The names of the glossaries selected now. The last selection is
+    remembered.
 
-    **覚えるのは、会議ごとに選び直す手間を無くすためである。** 同じ種類の
-    会議が続くことが多い。起動時の画面と操作画面の両方に出るので、
-    前回のままなことに気づけないという心配はない。
+    **It is remembered so that you do not have to choose again for every
+    meeting.** Meetings of the same kind usually come one after another. The
+    selection is shown both on the startup screen and on the control page, so
+    there is no risk of not noticing that it is still the last one.
     """
     try:
         saved = json.loads(config.GLOSSARY_STATE_PATH.read_text(encoding="utf-8"))
         names = tuple(str(n) for n in saved.get("names", []))
     except (OSError, ValueError, AttributeError):
         names = ()
-    # 消えた表を覚えたままにしない。壊れた名前も落とす。
+    # Do not keep remembering a glossary that is gone. A broken name is dropped
+    # as well.
     names = tuple(n for n in names if _exists(n))
     if names:
         return names
@@ -233,7 +261,8 @@ def _exists(name: str) -> bool:
 
 
 def remember(names: list[str] | tuple[str, ...]) -> None:
-    """次の起動のために選択を覚える。書けなくても落とさない。"""
+    """Remember the selection for the next start. It does not crash when the
+    file cannot be written."""
     try:
         config.GLOSSARY_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
         config.GLOSSARY_STATE_PATH.write_text(
@@ -247,9 +276,11 @@ def remember(names: list[str] | tuple[str, ...]) -> None:
 def keywords(
     entries: list[Entry], limit: int | None = config.ASR_KEYWORD_LIMIT
 ) -> list[str]:
-    """音声認識に渡す語。日本語の正しい表記と英語の両方を渡す。
+    """The terms passed to the speech recognition. Both the correct Japanese
+    spelling and the English are passed.
 
-    `limit=None` なら切り捨てない。上限で何語が落ちるかを数えるときに使う。
+    With `limit=None` nothing is cut off. That is used to count how many terms
+    the limit drops.
     """
     out: list[str] = []
     for e in entries:
@@ -260,18 +291,21 @@ def keywords(
 
 
 def prompt_block(entries: list[Entry], direction: str | None = None) -> str:
-    """翻訳のプロンプトに埋める2節を作る。
+    """Build the two sections embedded in the translation prompt.
 
-    **向きで左右を入れ替える。** 表は `日本語 / English` の対なので、どちらを
-    字幕の言語にするかで、対訳表の並びと、置換規則の行き先が変わる。表そのものは
-    作り直さない。`en2ja` でも同じ `.tsv` をそのまま使う。
+    **The two sides are swapped by the caption direction.** The glossary is a
+    `Japanese / English` pair, so which of them is the caption language decides
+    the order of the glossary and where the replacement rules land. The glossary
+    itself is not rebuilt. The same `.tsv` is used as it is for `en2ja`.
 
-    `direction` が None なら、いま選ばれている向き（`config.DIRECTION`）。
+    If `direction` is None, the caption direction that is selected now
+    (`config.DIRECTION`) is used.
     """
     name = config.DIRECTION if direction is None else direction
 
     if name == "en2ja":
-        # 出すのは日本語。英語 = 日本語 の順に並べ、置換規則も日本語に着地させる。
+        # The captions are Japanese. List them as English = Japanese, and let
+        # the replacement rules land on Japanese as well.
         header = "## 用語対訳表（この日本語を必ず使う）"
         terms = [f"- {e.en} = {e.ja}" for e in entries if e.en]
         rules = [f"- 「{w}」 → 「{e.en}」 = {e.ja}"

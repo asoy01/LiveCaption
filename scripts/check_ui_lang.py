@@ -1,25 +1,30 @@
 #!/usr/bin/env python3
-"""出荷前の検査。操作画面と、起動用のファイルを調べる。
+"""Checks to run before release. It inspects the control page and the
+launcher files.
 
     pixi run python scripts/check_ui_lang.py
 
-1. **スクリプトが壊れていないか。** 訳した文字列は JavaScript の文字列リテラルの
-   中にも入る。訳文に `"` が混ざるとリテラルがそこで閉じ、**操作画面の
-   スクリプト全体が構文エラーになって、どのボタンも効かなくなる。**
-   日本語では何ともないので、英語で使っている人にだけ起きる。
-   2026-09-19 にこれで操作画面が丸ごと死んだ。訳表の `「」` が `"` に化けていた。
-2. **訳し残した日本語が無いか。** 訳表（`src/live_caption/i18n.py`）に無い
-   文字列は、英語にしても日本語のまま出る。壊れはしないが、画面が日英混在になる。
+1. **Is the script still valid?** Translated strings also go inside
+   JavaScript string literals. A `"` in a translation closes the literal
+   there, and **the whole control page script becomes a syntax error, so no
+   button works at all.** Nothing goes wrong in Japanese, so it only hits
+   people who use English.
+   On 2026-09-19 the whole control page died this way. A `「」` in the
+   translation table had turned into `"`.
+2. **Is any Japanese left untranslated?** A string that is not in the
+   translation table (`src/live_caption/i18n.py`) stays Japanese even in
+   English. Nothing breaks, but the page mixes the two languages.
 
-3. **起動用の `.vbs` が純ASCIIか。** Windows Script Host は `.vbs` を
-   システムのANSIコードページとして読む。UTF-8 で日本語のコメントを書くと
-   **何も起きない。エラーも出ない。窓も出ない。**
-   2026-09-19 に、ダブルクリックしても常駐しない形でこれを踏んだ。
+3. **Is the launcher `.vbs` pure ASCII?** Windows Script Host reads a `.vbs`
+   in the system ANSI code page. Write a Japanese comment in UTF-8 and
+   **nothing happens. No error. No window.**
+   On 2026-09-19 we hit this: a double-click left nothing resident.
 
-操作画面の文言を足したら、これを走らせること。
+Run this after you add wording to the control page.
 
-1 には `node` が要る。無ければその検査だけ飛ばす。
-コメント（`/* */`・`//`・`<!-- -->`）は画面に出ないので、2 では数えない。
+Check 1 needs `node`. If it is missing, only that check is skipped.
+Comments (`/* */`, `//`, `<!-- -->`) never reach the screen, so check 2 does
+not count them.
 """
 
 from __future__ import annotations
@@ -39,12 +44,14 @@ HISTORY = 300
 
 
 def strip_comments(text: str) -> str:
-    """画面に出ない部分と、訳さない部分を落とす。"""
-    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)      # CSS と JS のブロック
+    """Drop what never reaches the screen, and what we do not translate."""
+    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)      # CSS and JS blocks
     text = re.sub(r"<!--.*?-->", " ", text, flags=re.S)     # HTML
-    # 行末コメント。`https://` を巻き込まないよう、空白か行頭に続くものだけ。
+    # End-of-line comments. Only ones after a space or at the start of a line,
+    # so that `https://` is not caught.
     text = re.sub(r"(?m)(^|\s)//.*$", " ", text)
-    # 言語を選ぶ欄。**言語の名前は訳さない。** 日本語は日本語で書いてあるほうが探せる。
+    # The language selector. **Do not translate the language names.** Japanese
+    # is easier to find when it is written in Japanese.
     text = re.sub(r'<select id="uiLang".*?</select>', " ", text, flags=re.S)
     return text
 
@@ -59,10 +66,10 @@ def build_page() -> str:
 
 
 def build_meetings_page() -> str:
-    """会議の管理画面。**操作画面とは別に調べる。**
+    """The meeting management page. **Check it apart from the control page.**
 
-    こちらは `web.CONTROL_BODY` に入っていないので、操作画面だけを見ていると
-    訳し残しも構文エラーも素通りする。
+    This one is not part of `web.CONTROL_BODY`, so if you look only at the
+    control page, both missing translations and syntax errors slip through.
     """
     return web._head("Live Captions ・ 会議の管理", 8) + meetings_page.BODY
 
@@ -73,7 +80,7 @@ def scripts_of(page: str) -> str:
 
 
 def check_syntax(page: str) -> list[str]:
-    """それぞれの言語で、スクリプトが構文として通るかを見る。"""
+    """Check that the scripts parse in each language."""
     node = shutil.which("node")
     if node is None:
         print("node が無いので、スクリプトの構文検査は飛ばした。")
@@ -92,11 +99,12 @@ def check_syntax(page: str) -> list[str]:
 
 
 def check_scheduler_strings() -> list[str]:
-    """見張りが状態に載せる一言の訳し残し。
+    """Missing translations in the notes the scheduler puts in the status.
 
-    **これらはページのマークアップに現れない。** `/api/status` に載って画面へ
-    行くので、ページだけを見ていると英語表示のときだけ日本語が混ざる。
-    2026-09-19 に「本体を組み立てているところ」がこれで漏れた。
+    **These never appear in the page markup.** They travel to the screen in
+    `/api/status`, so if you look only at the page, Japanese shows up in the
+    English display alone.
+    On 2026-09-19 "本体を組み立てているところ" got through this way.
     """
     left = []
     for text in schedule.UI_STRINGS:
@@ -105,15 +113,15 @@ def check_scheduler_strings() -> list[str]:
     return left
 
 
-# WSH が ANSI として読むファイル。**純ASCIIでなければならない。**
+# Files that WSH reads as ANSI. **They have to be pure ASCII.**
 ASCII_ONLY = ("StartLiveCaptionTray.vbs",)
 
 
 def check_ascii_launchers() -> list[str]:
-    """起動用の `.vbs` に、ASCII以外が混ざっていないか。
+    """Look for non-ASCII bytes in the launcher `.vbs`.
 
-    混ざっていると、Windows Script Host は**黙って何もしない。**
-    エラーも出ないので、原因に辿り着くまでが長い。
+    If there are any, Windows Script Host **silently does nothing.** There is
+    no error either, so it takes a long time to find the cause.
     """
     root = Path(__file__).resolve().parent.parent
     bad = []

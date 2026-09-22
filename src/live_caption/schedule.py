@@ -1,27 +1,36 @@
-"""予定された会議を、人が居なくても回すスケジューラ。
+"""A scheduler that runs a scheduled meeting with nobody present.
 
-字幕の機体は常時起動している。時刻が来たら、これが順に手を動かす。
+The caption machine runs all the time. When the time comes, this module does
+the work step by step.
 
-    開始 lead_min 分前  会議を選ぶ → 配信を始める →（Zoomに入る）
-    開始時刻            記録を会議用に切り替える → 字幕の生成を開始
-    その数秒後          **本当に始まったかを確かめる**
-    無音が続いたら      生成を停止 → Zoomから出る → 配信を停止 → 記録を閉じる
+    lead_min before start  select the meeting -> start the delivery ->
+                           (join Zoom)
+    start time             switch the record to this meeting -> start captions
+    a few seconds later    **check that captions really started**
+    after a long silence   stop captions -> leave Zoom -> stop the delivery ->
+                           close the record
 
-**これは決して返らないし、例外も外に出さない。**
-`app.App.run()` は `asyncio.wait(..., FIRST_COMPLETED)` で待っているので、
-どのタスクが終わってもアプリ全体が畳まれる。予定の都合で字幕アプリが落ちてはいけない。
+**This never returns, and it never lets an exception out.**
+`app.App.run()` waits with `asyncio.wait(..., FIRST_COMPLETED)`, so the whole
+app is shut down when any task finishes. LiveCaption must not go down because
+of the schedule.
 
-**始まったかどうかは、状態を見て確かめる。** `EngineControl.set_running(True)` は
-すぐ返る。入力デバイスを開けなかったときは `_pipeline` が捕まえて停止状態に戻すだけで、
-呼び手には何も届かない（再試行も無い）。`generating` が False なのは「まだ」と「失敗」の
-両方を意味するので、先に `audio.status()["error"]` を見る。
+**Check the status to see whether captions started.**
+`EngineControl.set_running(True)` returns at once. When the input device could
+not be opened, `_pipeline` catches that and only returns to the stopped state.
+Nothing reaches the caller, and there is no retry. `generating` being False
+means both "not yet" and "it failed", so look at `audio.status()["error"]`
+first.
 
-**畳む判断は、音量ではなく「文になったか」で行う。** Zoomのミックス音声には
-暗騒音が常に乗る。振幅で黙っているかを決めると、誰も居ない部屋に繋がったまま止まらない。
+**Decide to shut down by "did a sentence come out", not by the sound level.**
+The Zoom mix always carries background noise. If you decide that the room is
+quiet from the amplitude, the app stays connected to an empty room and never
+stops.
 
-**安全上限を必ず持つ。** 文字起こしは流した音声の分だけ課金され、無音でも同じである
-（$0.017/分 ≒ 150円/時）。マイクが開きっぱなしの部屋に繋がったままだと止まらないので、
-無音の判定とは別に、硬い上限を置く。
+**Always keep a hard cap.** Transcription is billed for the audio you send,
+and silence costs the same ($0.017/min, about 1 USD/hour). A room with an open
+microphone never goes quiet, so keep a hard limit separate from the silence
+test.
 """
 
 from __future__ import annotations
@@ -34,31 +43,34 @@ from datetime import datetime, timedelta
 from . import config
 from . import meetings
 
-# **会議ソフトの操作は、機体によって中身が違う。**
-# Windows は窓のクラス名とレジストリ、Linux（コンテナ）は Xvfb の上の窓と
-# `xdotool` である。共通にできるのは URL の組み立てだけだったので、
-# 実装ごと分けてある。**`zoom_join.py`（Windows 版）は凍結してある。**
-# 口は同じ（`running` / `in_meeting` / `join` / `leave` / `JoinError`）。
+# **Driving the meeting client works differently on each machine.**
+# Windows uses window class names and the registry. Linux (the container) uses
+# windows on Xvfb and `xdotool`. Only the URL building could be shared, so the
+# two implementations are kept apart. **`zoom_join.py` (the Windows one) is
+# frozen.** The interface is the same on both sides
+# (`running` / `in_meeting` / `join` / `leave` / `JoinError`).
 if os.name == "nt":
     from . import zoom_join
 else:
     from . import zoom_join_linux as zoom_join
 
-# 状態。操作画面にもこの名前で出す。
+# States. The control page shows these same names.
 IDLE = "idle"
 JOINING = "joining"
 ARMING = "arming"
 RUNNING = "running"
 STOPPING = "stopping"
-# **「失敗」という状態は持たない。** 入ったら出られない状態を作ると、
-# 一度こけたきり、以後の会議が二度と始まらなくなる。失敗は `failure` に
-# 文字として残し、状態は `idle` に戻す。
+# **There is no "failed" state.** A state you cannot leave would mean that one
+# failure stops every later meeting from ever starting. A failure is kept as
+# text in `failure`, and the state goes back to `idle`.
 
 
-# **画面に出る一言は、ここに全部並べる。** これらは `/api/status` に載って
-# 操作画面へ行くので、訳表に無いと英語表示のときだけ日本語が混ざる。
-# ページのマークアップには現れないため、`scripts/check_ui_lang.py` は
-# この一覧を見て訳し残しを調べる。文を足したら、ここにも足すこと。
+# **Every short note that appears on the page is listed here.** These notes
+# ride on `/api/status` to the control page, so a note that is missing from the
+# translation table shows up in Japanese only in the English display. They do
+# not appear in the page markup, so `scripts/check_ui_lang.py` reads this list
+# to find notes that were not translated. When you add a sentence, add it here
+# as well.
 UI_STRINGS = (
     "会議を選んだ",
     "配信を始めた",
@@ -89,58 +101,67 @@ def now_str() -> str:
 
 
 class Scheduler:
-    """予定を見て、会議を1本ずつ回す。
+    """Read the schedule and run one meeting at a time.
 
-    **同時に回すのは1本だけである。** 重なったときは後から来たほうを飛ばす
-    （動いているほうを切らない。会議が延びるのは普通のことで、古い予定のために
-    字幕を途中で切るほうが困る）。
+    **Only one meeting runs at a time.** When two overlap, the later one is
+    skipped. The running one is not cut off: meetings run long all the time,
+    and cutting captions in the middle for the sake of an older entry is worse.
 
-    持ち主は `app.App`。呼ばれるのは本体のイベントループからだけである。
+    `app.App` owns this object. It is called from the main event loop only.
     """
 
     def __init__(self, app) -> None:  # noqa: ANN001
         self.app = app
         self.state = IDLE
-        # いま回している会議と、その回。
+        # The meeting that is running now, and which occurrence it is.
         self.meeting_id = ""
         self.meeting_name = ""
         self.occurrence = ""
-        # 生成を始めた時刻（`time.monotonic`）。安全上限はここから数える。
+        # When caption generation started (`time.monotonic`). The hard cap is
+        # counted from here.
         self.started_at = 0.0
-        # 最後の失敗。**時間で消さない。** 押して消すまで画面に残す。
+        # The last failure. **It is not cleared by time.** It stays on the page
+        # until someone presses the button to clear it.
         self.failure = ""
         self.failure_at = ""
-        # 直前に何をしたか。画面に出す。
+        # What was done just before. It is shown on the page.
         self.note = ""
-        # いま回している会議の畳み方。会議ごとに違う。
+        # How to shut down the meeting that is running. It differs per meeting.
         self._silence_min = 10.0
         self._max_min = 180
-        # 配信をこちらで始めたかどうか。人が始めた配信は止めない。
+        # Whether we started the delivery. A delivery a person started is not
+        # stopped here.
         self._we_started_tunnel = False
-        # Zoomをこちらで起こしたかどうか。**人が開いていた会議は殺さない。**
+        # Whether we launched Zoom. **A meeting a person had open is never
+        # killed.**
         self._we_launched_zoom = False
-        # この回でZoomに入りに行ったか。音が来ないときの見立てに使う。
+        # Whether we tried to join Zoom for this occurrence. It is used to
+        # judge the case where no sound arrives.
         self._joined_zoom = False
-        # 音が一度でも届いたか。届いたら、以後は待機室を疑わない。
+        # Whether sound has arrived even once. Once it has, the waiting room is
+        # no longer suspected.
         self._saw_audio = False
-        # 回の始まりの `last_sentence_at`。**これが動いたら「誰かが喋った」。**
-        # 振幅（`_saw_audio`）では代用できない。参加者を待っている間の暗騒音でも
-        # 立ってしまうからである。
+        # `last_sentence_at` at the start of this occurrence. **When it moves,
+        # somebody spoke.** The amplitude (`_saw_audio`) cannot stand in for
+        # this, because background noise while waiting for people also raises
+        # the amplitude.
         self._sentence_mark = 0.0
-        # チャットへ投げる回の時刻。**空になるまで、来るたびに投げる。**
+        # The times at which to post to the chat. **Posting is retried every
+        # time this is checked, until the list is empty.**
         self._chat_todo: list[datetime] = []
         self._chat_total = 0
         self._chat_next = 0.0
 
-    # --- 操作画面に返す -----------------------------------------------------
+    # --- What goes back to the control page ---------------------------------
 
     def status(self) -> dict:
         left_silence = -1.0
         left_max = -1.0
         if self.state == RUNNING:
-            # **画面に出す残りは、実際に効いている時計のものにする。**
-            # 冒頭はもっと長く待つので、そこで短い数字を見せると、
-            # 「もうすぐ切れる」と誤解させる。
+            # **The time left on the page must come from the timer that is
+            # really in effect.** At the start of a meeting the app waits
+            # longer, so a short number there would make people think that
+            # captions are about to stop.
             quiet, limit, _why = self._quiet_state()
             left_silence = max(0.0, limit - quiet)
             left_max = max(0.0, self._max_limit() - (time.monotonic() - self.started_at))
@@ -165,19 +186,19 @@ class Scheduler:
         except Exception:  # noqa: BLE001
             return []
 
-    # --- 操作画面からの指示 -------------------------------------------------
+    # --- Commands from the control page -------------------------------------
 
     def ack(self) -> dict:
-        """失敗の表示を消す。**押すまで消えない。**"""
+        """Clear the failure shown on the page. **It stays until pressed.**"""
         self.failure = ""
         self.failure_at = ""
         return self.status()
 
     def stop_now(self) -> dict:
-        """いま回している会議を、こちらから畳む。
+        """Shut down the meeting that is running now.
 
-        **`App.request_stop` ではない。** あれはプロセスごと終わらせるので、
-        常駐が壊れる。
+        **This is not `App.request_stop`.** That one ends the whole process,
+        which breaks a machine that is meant to stay up.
         """
         if self.state == IDLE:
             return self.status()
@@ -185,21 +206,26 @@ class Scheduler:
         return self.status()
 
     def start_now(self, meeting_id: str = "") -> dict:
-        """**いま、この会議を1本始める。** 予定の時刻を待たない。
+        """**Start this meeting right now.** It does not wait for the set time.
 
-        走る順序は予定の回とまったく同じである（`_begin`）。配信を始め、記録を
-        会議の名前で切り替え、Zoomに入り、生成を開始し、チャットに投げる。
-        **同じ道を通す。** 手動のために別の順序を書くと、片方だけ直す日が来る。
+        The order of the steps is exactly the same as for a scheduled
+        occurrence (`_begin`): start the delivery, switch the record to the
+        meeting name, join Zoom, start caption generation, post to the chat.
+        **Both go down the same path.** A separate order written for the manual
+        case would mean that one day only one of the two gets fixed.
 
-        予定を入れていない会議を、その場で1本回すためのものである。会議に
-        `chat` の印が付いていれば、**押した時と3分後**にチャットへ投げる
-        （予定の回では、定刻と3分後）。Zoom のURLが空なら、入りに行かない。
+        This is for running a meeting that has no schedule entry. If the
+        meeting has the `chat` box ticked, the URL is posted to the chat **when
+        the button is pressed and again three minutes later** (for a scheduled
+        occurrence it is the set time and three minutes later). If the Zoom URL
+        is empty, it does not join.
 
-        **待たずに返す。** `_begin` はZoomの起動と配信の立ち上げを含むので、
-        数十秒かかる。HTTPの返事をそこまで止めない。進み具合は `status()` の
-        `state` と `note` に出る。
+        **It returns without waiting.** `_begin` includes launching Zoom and
+        bringing the delivery up, which takes tens of seconds. The HTTP reply
+        is not held that long. The progress appears in `state` and `note` of
+        `status()`.
 
-        呼ぶのはHTTPサーバのスレッドである。
+        It is called from the HTTP server thread.
         """
         if self.state != IDLE:
             raise ValueError("いま会議を回している。先に「いま止める」を押すこと。")
@@ -214,8 +240,9 @@ class Scheduler:
         if loop is None:
             raise ValueError("本体がまだ動いていない。")
         meeting = found[0]
-        # **ここで掴んだことにする。** `_begin` が状態を立てるのは輪の中なので、
-        # それまでの数秒に、スケジューラが別の回を始められる。
+        # **Take the slot here.** `_begin` sets the state inside the event
+        # loop, so during the few seconds before that the scheduler could start
+        # another occurrence.
         self.state = JOINING
         self.note = f"「{meeting.name}」をいま始める"
         occurrence = store.occurrence_key(datetime.now())
@@ -225,7 +252,10 @@ class Scheduler:
         return self.status()
 
     def skip_next(self) -> dict:
-        """次の回を済ませたことにして飛ばす。「明日は出ない」ときに使う。"""
+        """Mark the next occurrence as done and skip it.
+
+        Use it when you will not attend, for example tomorrow.
+        """
         store = self.app.web.meetings if self.app.web else None
         if store is None:
             return self.status()
@@ -240,12 +270,13 @@ class Scheduler:
         return self.status()
 
     async def _begin_guarded(self, meeting, occurrence: str) -> None:  # noqa: ANN001
-        """`start_now` から投げる `_begin`。**例外を外に出さない。**
+        """`_begin` as thrown from `start_now`. **No exception gets out.**
 
-        `run_coroutine_threadsafe` で投げた輪は誰も待たないので、例外が出ても
-        どこにも現れない。**そして状態は JOINING のまま固まる。** そうなると、
-        以後どの会議も始まらない（スケジューラは JOINING を「回している」と見る）。
-        `run_forever` が `_tick` に対してやっているのと同じ始末をする。
+        Nobody awaits the coroutine sent with `run_coroutine_threadsafe`, so an
+        exception would show up nowhere. **And the state would stay stuck at
+        JOINING.** After that, no meeting would ever start again, because the
+        scheduler reads JOINING as "a meeting is running". This does the same
+        cleanup that `run_forever` does for `_tick`.
         """
         try:
             await self._begin(meeting, occurrence)
@@ -258,14 +289,14 @@ class Scheduler:
             except Exception:  # noqa: BLE001
                 self.state = IDLE
 
-    # --- 本体のループ ---------------------------------------------------------
+    # --- The main loop --------------------------------------------------------
 
     async def run_forever(self) -> None:
-        """**決して返らない。決して例外を外に出さない。**
+        """**It never returns. It never lets an exception out.**
 
-        `app.App.run()` の `asyncio.wait(..., FIRST_COMPLETED)` は、どのタスクが
-        終わってもアプリ全体を畳む。ここが1回でも返ると、字幕アプリが予定の
-        都合で落ちることになる。
+        The `asyncio.wait(..., FIRST_COMPLETED)` in `app.App.run()` shuts the
+        whole app down as soon as any task finishes. If this returned even
+        once, LiveCaption would go down because of the schedule.
         """
         while True:
             try:
@@ -273,8 +304,9 @@ class Scheduler:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
-                # **掴んだままにしない。** 状態が途中で止まると、以後どの会議も
-                # 始まらなくなる。理由を残して待機に戻す。
+                # **Do not hold the slot.** If the state stops halfway, no
+                # meeting will start again. Keep the reason and go back to
+                # idle.
                 self._fail(f"スケジューラで例外: {type(exc).__name__}: {exc}")
                 if self.state != IDLE:
                     try:
@@ -295,22 +327,23 @@ class Scheduler:
         meeting, when = due[0]
         key = self.app.web.meetings.occurrence_key(when)
         for other, other_when in due[1:]:
-            # 重なった回は飛ばす。掴んだままにすると、40分遅れて誰も居ない
-            # 部屋に入りに行く。
+            # Skip an overlapping occurrence. If it were kept, the app would
+            # join an empty room 40 minutes late.
             other_key = self.app.web.meetings.occurrence_key(other_when)
             self.app.web.meetings.mark_fired(other.id, other_key)
             print(f"[{now_str()}] 予定        {other_key} の「{other.name}」は飛ばした"
                   f"（「{meeting.name}」と重なっている）")
         await self._begin(meeting, key)
 
-    # --- 開始 ---------------------------------------------------------------
+    # --- Starting -------------------------------------------------------------
 
     async def _begin(self, meeting, occurrence: str) -> None:  # noqa: ANN001
-        """会議を1本始める。
+        """Start one meeting.
 
-        **いちばん先に「済ませた印」を残す。** 印を残す前に時間のかかる作業を
-        すると、5秒後のループが同じ回をもう一度掴み、Zoomを何度も起こす。
-        始めそこねた回は捨てる。**1本落とすほうが、暴れるよりましである。**
+        **Mark the occurrence as done first of all.** If slow work ran before
+        the mark, the loop five seconds later would pick up the same occurrence
+        again and launch Zoom over and over. An occurrence that failed to start
+        is dropped. **Losing one meeting is better than going wild.**
         """
         store = self.app.web.meetings
         store.mark_fired(meeting.id, occurrence)
@@ -327,18 +360,19 @@ class Scheduler:
         self._chat_todo = []
         print(f"[{now_str()}] 予定        「{meeting.name}」を始める（{occurrence}）")
 
-        # 1. 配信する会議を切り替える。
+        # 1. Switch the meeting that is delivered.
         try:
             store.select(meeting.id)
         except ValueError as exc:
-            # **待機に戻す。** JOINING のまま返ると、以後どの会議も始まらない。
+            # **Go back to idle.** If this returned with JOINING still set, no
+            # meeting would ever start again.
             self._fail(f"会議を選べない: {exc}")
             self.state = IDLE
             self.meeting_id = self.meeting_name = self.occurrence = ""
             return
         self.note = "会議を選んだ"
 
-        # 2. 配信を始める。**すでに人が始めていたら、そのままにする。**
+        # 2. Start the delivery. **If a person already started it, leave it.**
         tunnel = self.app.web.tunnel
         if tunnel is not None:
             st = tunnel.status()
@@ -346,19 +380,20 @@ class Scheduler:
                 st = await asyncio.to_thread(tunnel.start)
                 self._we_started_tunnel = True
                 if st["state"] == "error":
-                    # 配信できなくても続ける。画面共有とZoom字幕は使える。
+                    # Carry on even without a delivery. Screen sharing and the
+                    # Zoom captions still work.
                     print(f"[{now_str()}] 予定        配信を始められない: {st['error']}")
                     self.note = "配信を始められなかった"
                 else:
                     self.note = "配信を始めた"
 
-        # 3. 記録を会議ごとに切り替える。
+        # 3. Switch the record so that each meeting gets its own file.
         self.app.roll_transcript(label=meeting.name)
 
-        # 4. Zoomに入る（Phase 4 で中身を入れる）。
+        # 4. Join Zoom.
         await self._join_zoom(meeting)
 
-        # 5. 生成を開始して、本当に始まったかを確かめる。
+        # 5. Start caption generation and check that it really started.
         self.state = ARMING
         self.app.engine.set_running(True)
         self.started_at = time.monotonic()
@@ -372,17 +407,20 @@ class Scheduler:
         self.note = "字幕を出している"
         print(f"[{now_str()}] 予定        「{meeting.name}」の字幕を出している")
 
-        # 6. Zoomのチャットに投げるのは、あとで。**ここではまだ投げない。**
+        # 6. Posting to the Zoom chat comes later. **Nothing is posted here.**
         #
-        #    **予定の開始時刻を過ぎてから投げる。** Zoomのチャットは、入る前の
-        #    発言が見えない。字幕アプリは開始の lead_min 分前に動き出すので、
-        #    ここで投げると、定刻に入ってきた人が全員取りこぼす
-        #    （麻生の指摘、2026-09-20）。
+        #    **Post only after the scheduled start time.** The Zoom chat does
+        #    not show messages that were sent before you joined. LiveCaption
+        #    starts lead_min minutes before the meeting, so a message posted
+        #    here would be missed by everyone who joins on time (reported by a
+        #    user, 2026-09-20).
         #
-        #    それに、`zoommtg:` を投げてから会議の窓が出るまで、Zoomは数十秒から
-        #    数分かかる（実測: 起動の5秒後にはまだ無かった）。
+        #    Also, Zoom takes tens of seconds to a few minutes to show the
+        #    meeting window after `zoommtg:` is handed over (measured: it was
+        #    still not there five seconds after launch).
         #
-        #    時刻と窓の両方が揃うのを `_watch_running` が待つ。
+        #    `_watch_running` waits until both the time and the window are
+        #    ready.
         self._chat_next = 0.0
         self._chat_todo = []
         if meeting.chat:
@@ -395,19 +433,21 @@ class Scheduler:
         self._chat_total = len(self._chat_todo)
 
     async def _try_chat(self) -> None:
-        """会議の窓が出ていたら、チャットに投げる。出るまで何度でも見に来る。
+        """Post to the chat once the meeting window is up. Retry until it is.
 
-        **字幕が出た時点では、まだZoomが会議に入り終えていない。** そこで一度
-        試して諦めると、印を付けた会議でも一度も投げられない（2026-09-20 に
-        麻生の実会議でそうなった）。
+        **When captions start, Zoom has not finished joining the meeting yet.**
+        Trying once and giving up there means that a meeting with the box
+        ticked never gets a post at all (seen in a real meeting, 2026-09-20).
 
-        **別のスレッドで投げること。** 投げるのに8秒ほどかかる。本体の
-        イベントループで待つと、そのあいだ音の取り込みも字幕も止まる。
+        **Post from another thread.** Posting takes about eight seconds.
+        Waiting for it on the main event loop would stop both the audio capture
+        and the captions for that time.
         """
         if not self._chat_todo:
             return
-        # **その回の時刻を過ぎるまで投げない。** 早く投げると、後から入ってきた
-        # 人に何も残らない。Zoomのチャットは、入る前の発言が見えない。
+        # **Do not post before the time of this round.** A message posted early
+        # leaves nothing for the people who join later. The Zoom chat does not
+        # show messages that were sent before you joined.
         wall = datetime.now()
         if wall < self._chat_todo[0]:
             return
@@ -417,13 +457,15 @@ class Scheduler:
         self._chat_next = now + config.SCHEDULE_CHAT_RETRY_SEC
         late = wall > self._chat_todo[0] + timedelta(
             seconds=config.SCHEDULE_CHAT_WAIT_SEC)
-        # 何回目か。**記録に残す。** 2回投げるので、どちらが落ちたかが要る。
+        # Which round this is. **Keep it in the log.** There are two posts, so
+        # you need to know which one failed.
         which = self._chat_total - len(self._chat_todo) + 1
         round_ = f"（{which}/{self._chat_total}回目）"
 
-        # **機体で実装が違う。** Windows は窓のクラスとクリップボードAPI、
-        # Linux（コンテナ）は Xvfb の上の窓と `xdotool` である。
-        # 口は同じ（`meeting_window` / `compose` / `qr_file` / `post`）。
+        # **The implementation differs per machine.** Windows uses window
+        # classes and the clipboard API. Linux (the container) uses windows on
+        # Xvfb and `xdotool`. The interface is the same on both sides
+        # (`meeting_window` / `compose` / `qr_file` / `post`).
         if os.name == "nt":
             from . import zoom_chat
         else:
@@ -459,20 +501,23 @@ class Scheduler:
             extra = "（QRも）" if done["files"] else ""
             print(f"[{now_str()}] 予定        チャットにURLを投げた{round_}{extra}")
             if not done["files"]:
-                # ホストがファイル送信を切っていると、こうなる。**URLは届いている。**
+                # This happens when the host has turned file sending off.
+                # **The URL did arrive.**
                 print(f"[{now_str()}] 予定        QRは送れなかった。URLだけ届いている。")
             return
-        # 貼っている途中で前面が入れ替わった、など。**もう一度だけ見に来る。**
+        # Another window came to the front while pasting, and so on.
+        # **Come back and try once more.**
         if late:
             self._chat_todo.pop(0)
             why = done["why"]
             print(f"[{now_str()}] 予定        チャットに投げられない{round_}: {why}")
 
     def _space_out_next(self) -> None:
-        """次の回を、いまから少なくとも `SCHEDULE_CHAT_GAP_SEC` 先へずらす。
+        """Move the next round at least `SCHEDULE_CHAT_GAP_SEC` into the future.
 
-        **Zoomの参加が遅れると、1回目が押し出される。** そのとき2回目の時刻を
-        既に過ぎていると、同じ文が数秒差で2つ並ぶ。壊れているように見える。
+        **When joining Zoom is late, the first post is pushed back.** If the
+        time of the second post has already passed by then, the same message
+        appears twice a few seconds apart. It looks broken.
         """
         if not self._chat_todo:
             return
@@ -482,10 +527,11 @@ class Scheduler:
 
     @staticmethod
     def _post_chat_now(url: str, name: str) -> dict:
-        """**別のスレッドで動く。** ここから本体の状態を触らないこと。"""
-        # **機体で実装が違う。** Windows は窓のクラスとクリップボードAPI、
-        # Linux（コンテナ）は Xvfb の上の窓と `xdotool` である。
-        # 口は同じ（`meeting_window` / `compose` / `qr_file` / `post`）。
+        """**Runs on another thread.** Do not touch the app state from here."""
+        # **The implementation differs per machine.** Windows uses window
+        # classes and the clipboard API. Linux (the container) uses windows on
+        # Xvfb and `xdotool`. The interface is the same on both sides
+        # (`meeting_window` / `compose` / `qr_file` / `post`).
         if os.name == "nt":
             from . import zoom_chat
         else:
@@ -495,27 +541,30 @@ class Scheduler:
         return zoom_chat.post(zoom_chat.compose(url), [shot] if shot else [])
 
     async def _join_zoom(self, meeting) -> None:  # noqa: ANN001
-        """Zoomに入る。**入れたかどうかは、ここでは分からない。**
+        """Join Zoom. **Whether it worked cannot be known here.**
 
-        `zoommtg:` はハンドラに渡すだけで、待機室・パスコード違い・更新の
-        ダイアログのどれに落ちても何も返ってこない。**確認は音で取る**
-        （`_watch_running` が、文字起こしが出ないまま時間が経つのを見る）。
+        `zoommtg:` is only handed to the handler. Nothing comes back, whether
+        the app lands in the waiting room, hits a wrong passcode, or stops at
+        an update dialog. **The check is done through the sound**:
+        `_watch_running` watches for time passing with no transcript.
         """
         if not meeting.zoom:
             return
-        # **すでに人が会議に入っていたら、後で切らない。** 開いたままの会議を
-        # 巻き添えにしないよう、こちらが入れたときだけ覚えておく。
+        # **If a person was already in a meeting, do not cut it later.** Only
+        # remember the case where we joined, so that a meeting somebody had
+        # open is not taken down with ours.
         #
-        # **`running()` で見てはいけない。** Zoomは会議を抜けても常駐の窓口を
-        # 残すので、常時起動の機体ではほぼいつでも True になる。それを
-        # 「会議中」と読むと、こちらが入れた会議から永遠に出なくなる
-        # （2026-09-19、実機で踏んだ）。
+        # **Do not test this with `running()`.** Zoom keeps a resident window
+        # after you leave a meeting, so on a machine that stays up it is True
+        # almost all the time. Reading that as "in a meeting" means we never
+        # leave the meeting we joined (hit on the real machine, 2026-09-19).
         already = zoom_join.in_meeting()
         try:
             url = await asyncio.to_thread(
                 zoom_join.join, meeting.zoom, config.ZOOM_DISPLAY_NAME)
         except zoom_join.JoinError as exc:
-            # **ここで会議を畳まない。** 人が手でZoomに入れば字幕は出せる。
+            # **Do not shut the meeting down here.** Captions still work if
+            # somebody joins Zoom by hand.
             self._fail(f"Zoomに入れない: {exc}")
             self.note = "Zoomに入れなかった（手で入れば字幕は出る）"
             return
@@ -527,11 +576,12 @@ class Scheduler:
                   "終わっても終了させない")
 
     async def _arm(self) -> str:
-        """生成が本当に始まったかを確かめる。始まらなければ理由を返す。
+        """Check that captions really started. Return the reason if they did not.
 
-        **`generating` だけを見てはいけない。** 入力デバイスを開けなかったときも
-        `_pipeline` が黙って False に戻す。False は「まだ」と「失敗」の両方を
-        意味するので、先に `audio.status()["error"]` を見る。
+        **Do not look at `generating` alone.** When the input device could not
+        be opened, `_pipeline` quietly sets it back to False as well. False
+        means both "not yet" and "it failed", so look at
+        `audio.status()["error"]` first.
         """
         deadline = time.monotonic() + config.SCHEDULE_ARM_SEC
         while time.monotonic() < deadline:
@@ -543,46 +593,50 @@ class Scheduler:
                 return ""
         return "生成が始まらない。"
 
-    # --- 動いている間 -------------------------------------------------------
+    # --- While it is running ------------------------------------------------
 
     def _heard_sound(self) -> bool:
-        """会議が始まってから、音が一度でも届いたか。
+        """Whether any sound arrived at all since the meeting started.
 
-        **こちらは振幅で見る。** 文になったかではない。知りたいのは
-        「Zoomから音の経路が繋がっているか」であって、誰かが喋ったかではない。
-        待機室で止まっていれば、暗騒音すら来ない。
+        **This one looks at the amplitude**, not at whether a sentence came
+        out. The question here is whether the audio path from Zoom is
+        connected, not whether somebody spoke. If the app is stuck in the
+        waiting room, not even background noise arrives.
         """
         capture = self.app.capture
         quiet_for = getattr(capture, "quiet_for", None)
         if quiet_for is None:
-            return True     # 分からないときは、疑わない
+            return True     # when we cannot tell, do not suspect anything
         return quiet_for() < config.SCHEDULE_JOIN_AUDIO_SEC
 
     def _silence_limit(self) -> float:
         return self._silence_min * 60.0
 
     def _quiet_state(self) -> tuple[float, float, str]:
-        """`(黙っている秒数, 上限, 止めるときの一言)`。
+        """`(seconds of silence, the limit, the note shown when stopping)`.
 
-        **「まだ誰も喋っていない」と「会議が終わった」は別である。**
-        会議の冒頭は、参加者を待って数分の無言が続くのが普通である
-        （麻生の指摘、2026-09-21）。そこで無音の時計を回すと、**始まる前の
-        会議を畳んでしまう。**
+        **"Nobody has spoken yet" and "the meeting is over" are two different
+        things.** At the start of a meeting, a few minutes of silence while
+        waiting for people is normal (reported by a user, 2026-09-21). Running
+        the silence timer there **shuts down a meeting before it begins.**
 
-        だから、最初の1文が出るまでは別の時計で見る。区別に使うのは
-        **文が出たかどうか**で、振幅ではない。参加者を待っている間の暗騒音でも
-        振幅は立つので、それでは区別にならない。
+        So a different timer is used until the first sentence comes out. What
+        tells the two apart is **whether a sentence came out**, not the
+        amplitude. Background noise while waiting for people raises the
+        amplitude too, so the amplitude cannot tell them apart.
 
-        始まらないまま置き去りにはしない。上限を過ぎたら畳む。認識の接続は
-        黙っていても課金されるので、空の会議に何時間も座らせない。
+        A meeting that never starts is not left alone either. It is shut down
+        past the limit. The speech recognition connection is billed even while
+        nobody speaks, so the app does not sit in an empty meeting for hours.
         """
         now = time.monotonic()
         if self.app.last_sentence_at != self._sentence_mark:
-            # 一度は喋った。以後は「途切れてから」を見る。
+            # Somebody spoke at least once. From here on, look at the time
+            # since speech stopped.
             return now - self.app.last_sentence_at, self._silence_limit(), \
                 "無音が続いたので止めた"
-        # まだ一文も出ていない。参加してからの時間で見る。
-        # **会議ごとの設定のほうが長ければ、そちらを立てる。**
+        # Not a single sentence yet. Look at the time since joining.
+        # **If the per-meeting setting is longer, use that one.**
         limit = max(self._silence_limit(), config.SCHEDULE_OPENING_SEC)
         return now - self.started_at, limit, "会議が始まらないので止めた"
 
@@ -592,40 +646,44 @@ class Scheduler:
     async def _watch_running(self) -> None:
         if self.state != RUNNING:
             return
-        # 人が操作画面から止めたなら、こちらも片付ける。
+        # If a person stopped it from the control page, clean up here too.
         if not self.app.engine.status()["generating"]:
             self._teardown("生成が止められた")
             return
-        # チャットへの投稿は、Zoomの窓が出てから。ここで何度でも試す。
+        # The chat post waits for the Zoom window. Retry it here as often as
+        # needed.
         await self._try_chat()
         elapsed = time.monotonic() - self.started_at
-        # **音が一度も来ないまま時間が経ったら、入れていない可能性が高い。**
-        # Zoomは待機室・パスコード違い・更新のダイアログのどれで止まっても
-        # 何も報せてこない。こちらから見えるのは「音が来ない」ことだけである。
-        # 会議が始まるのは遅れるものなので、判断は急がない。
+        # **If time passes with no sound at all, we probably did not get in.**
+        # Zoom reports nothing, whether it stopped in the waiting room, on a
+        # wrong passcode, or at an update dialog. All we can see from here is
+        # that no sound arrives. Meetings do start late, so do not judge this
+        # in a hurry.
         if not self._saw_audio and self._heard_sound():
             self._saw_audio = True
         if (self._joined_zoom and not self._saw_audio
                 and elapsed > config.SCHEDULE_JOIN_AUDIO_SEC):
             self._fail("Zoomから音が来ない。パスコード違いか、待機室で止まっているか、"
                        "更新のダイアログが出ている可能性がある。画面を見ること。")
-            self._joined_zoom = False   # 一度出したら繰り返さない
+            self._joined_zoom = False   # report it once, not again
         if elapsed > self._max_limit():
-            # **無音でなくても必ず止める。** 課金が止まらないのを防ぐ最後の砦。
+            # **Stop even when it is not silent.** This is the last guard
+            # against a bill that never stops.
             self._teardown("安全上限で止めた", detail=f"{self._max_min}分")
             return
         quiet, limit, why = self._quiet_state()
         if quiet > limit:
             self._teardown(why, detail=f"{limit / 60:g}分")
 
-    # --- 片付け -------------------------------------------------------------
+    # --- Cleaning up --------------------------------------------------------
 
     def _teardown(self, why: str, detail: str = "") -> None:
-        """会議1本ぶんを畳む。**プロセスは終わらせない。**
+        """Shut one meeting down. **The process is not ended.**
 
-        `why` は画面に出す一言で、**数字を混ぜない固定の文にする。**
-        訳表は固定の文しか置き換えられない。数字は `detail` に入れて
-        端末のログにだけ残す。診断はそちらで足りる。
+        `why` is the short note shown on the page, and it **must be a fixed
+        sentence with no number in it.** The translation table can only replace
+        fixed sentences. Put numbers in `detail`, which is kept in the terminal
+        log only. That is enough for diagnosis.
         """
         self.state = STOPPING
         name = self.meeting_name
@@ -636,8 +694,8 @@ class Scheduler:
         except Exception as exc:  # noqa: BLE001
             print(f"[{now_str()}] 予定        生成を止められない: {exc}")
         self._leave_zoom()
-        # Zoom字幕のトークンを捨てる。**会議ごとに別のトークンである。**
-        # 残すと、次の会議の字幕が前の会議へ流れる。
+        # Drop the Zoom caption token. **Each meeting has its own token.**
+        # Keeping it would send the next meeting's captions to the old meeting.
         try:
             self.app.zoom.set_enabled(False)
         except Exception:  # noqa: BLE001
@@ -657,16 +715,17 @@ class Scheduler:
         self._we_started_tunnel = False
         self._joined_zoom = False
         self._saw_audio = False
-        # チャットへ投げる回。**畳むときに捨てる。**
+        # The chat posts that were still due. **They are dropped on teardown.**
         self._chat_todo = []
         self._chat_total = 0
         self._chat_next = 0.0
 
     def _leave_zoom(self) -> None:
-        """Zoomから出る。**こちらが起こしたときだけ。**
+        """Leave Zoom. **Only when we launched it.**
 
-        会議から出る口は無いので、終了させることになる。`Zoom.exe` を全部
-        落とすので、人が開いていた会議まで巻き添えにしてはいけない。
+        There is no way to leave a meeting, so Zoom has to be quit. That kills
+        every `Zoom.exe`, so a meeting a person had open must never be taken
+        down with it.
         """
         if not self._we_launched_zoom:
             return
@@ -677,10 +736,14 @@ class Scheduler:
         except Exception as exc:  # noqa: BLE001
             print(f"[{now_str()}] 予定        Zoomを終了させられない: {exc}")
 
-    # --- 失敗 ---------------------------------------------------------------
+    # --- Failures -----------------------------------------------------------
 
     def _fail(self, why: str) -> None:
-        """**押して消すまで画面に残す。** 無人の機体では、流れた失敗は見られない。"""
+        """**Keep it on the page until it is cleared by hand.**
+
+        On a machine with nobody in front of it, a failure that scrolls past is
+        never seen.
+        """
         self.failure = why
         self.failure_at = time.strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{now_str()}] 予定        失敗: {why}")

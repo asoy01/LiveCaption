@@ -1,24 +1,26 @@
 #!/usr/bin/env python3
-"""一時トンネル（TryCloudflare）越しに、どの転送方式が通るかを測る。
+"""Measure which transport works through a temporary tunnel (TryCloudflare).
 
-**本体に手を入れる前に、これで確かめること。** Cloudflare は「一時トンネルは
-Server-Sent Events に対応しない」と明記している。事実なら `web.py` の転送を
-変える必要があり、設計が変わる。
+**Check this before you touch the engine.** Cloudflare states that a
+temporary tunnel does not support Server-Sent Events. If that is true, the
+transport in `web.py` has to change, and the design changes with it.
 
-    pixi run python scripts/tunnel_probe.py            # サーバだけ立てる
-    pixi run python scripts/tunnel_probe.py --measure <URL>   # 外から測る
+    pixi run python scripts/tunnel_probe.py            # only start the server
+    pixi run python scripts/tunnel_probe.py --measure <URL>   # measure from outside
 
-使い方:
+How to use it:
 
-    1. この窓で   pixi run python scripts/tunnel_probe.py
-    2. 別の窓で   local/bin/cloudflared.exe tunnel --url http://127.0.0.1:8099
-    3. 3つ目の窓で pixi run python scripts/tunnel_probe.py --measure https://xxx.trycloudflare.com
+    1. In this window    pixi run python scripts/tunnel_probe.py
+    2. In another        local/bin/cloudflared.exe tunnel --url http://127.0.0.1:8099
+    3. In a third        pixi run python scripts/tunnel_probe.py --measure https://xxx.trycloudflare.com
 
-1秒ごとに1行増えるだけのサーバである。測る側は、行が届くまでの時間を見る。
+The server does nothing but add one line every second. The measuring side
+watches how long a line takes to arrive.
 
-- **長ポーリング**が通れば、1秒前後で返る
-- 溜め込まれていれば、待ち時間いっぱい（10秒）まで何も返らない
-- SSEは、届くか届かないかを見る
+- If **long polling** works, it comes back in about one second
+- If it is buffered, nothing comes back until the whole wait (10 seconds) is
+  over
+- For SSE, it only shows whether anything arrives at all
 """
 
 from __future__ import annotations
@@ -33,7 +35,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 PORT = 8099
-# 測るときの待ち時間。本体（25秒）より短くして、判定を早くする。
+# The wait used when measuring. It is shorter than the engine's (25 seconds)
+# so that the answer comes sooner.
 WAIT = 10.0
 
 _lines: list[str] = []
@@ -41,7 +44,7 @@ _cond = threading.Condition()
 
 
 def _grow() -> None:
-    """1秒ごとに1行増やす。"""
+    """Add one line every second."""
     while True:
         time.sleep(1.0)
         with _cond:
@@ -145,12 +148,12 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def measure(base: str) -> int:
-    """外から、長ポーリングとSSEの届き方を測る。"""
+    """Measure, from outside, how long polling and SSE arrive."""
     base = base.rstrip("/")
     print(f"測る先: {base}")
     print()
 
-    # --- 長ポーリング ---
+    # --- long polling ---
     print("長ポーリング")
     ok = 0
     try:

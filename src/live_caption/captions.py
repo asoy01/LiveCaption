@@ -1,21 +1,26 @@
-"""Zoom字幕APIへの送信。
+"""Sending to the Zoom caption API.
 
-ホストが会議中に「字幕」→「∧」→「手動字幕の設定」→「APIトークンをコピー」で
-得たURLに、UTF-8のプレーンテキストをPOSTする。
+We POST plain UTF-8 text to the URL that the host obtains during the meeting
+through Captions -> the caret -> Manual Captions settings -> Copy the API
+token.
 
-**seq はミーティングのセッション全体で単調増加していないといけない。**
-巻き戻すと Zoom はエラーを返さずに黙って捨てる。字幕アプリが落ちて再起動したとき、
-seq を 1 に戻すと字幕が無言で止まる。会議IDごとに保存し、時刻から作った値との
-大きい方から始める（飛ばして送るのは可。2億の飛びまで実測済み）。
+**seq must increase monotonically across the whole meeting session.**
+If it goes backwards, Zoom drops the caption silently, without an error. When
+the caption application crashes and restarts, resetting seq to 1 makes the
+captions stop without a word. We save seq per meeting ID and start from the
+larger of the saved value and a value built from the clock. (Skipping ahead is
+allowed; jumps of 200 million were measured and worked.)
 
-根拠は local/HANDOFF.md の「実測結果: Zoom 字幕API」。
+All of this was measured against the live Zoom caption API.
 
-**トークンは起動後に差し替えられる。** ブラウザの操作画面（`web.py`）から
-入れる使い方があるためである。会議が始まってからでないとトークンは取れないので、
-起動時に決め打ちにはできない。送信の開始・停止も同じ理由で切り替えられる。
+**The token can be replaced after startup.** It is entered through the control
+page in the browser (`web.py`). The token cannot be obtained until the meeting
+has started, so it cannot be fixed at startup. Sending can be started and
+stopped for the same reason.
 
-トークンの差し替えと送信は別のスレッドから来る（本体のイベントループと、
-HTTPサーバのスレッド）。`_lock` で URL・seq・状態をまとめて守る。
+Replacing the token and sending come from different threads (the main event
+loop and the HTTP server thread). `_lock` guards the URL, seq and the state
+together.
 """
 
 from __future__ import annotations
@@ -32,14 +37,15 @@ from . import config
 
 
 class TokenError(ValueError):
-    """トークンURLとして受け付けられない文字列。"""
+    """A string that cannot be accepted as a token URL."""
 
 
 def parse_token(url: str) -> tuple[str, str]:
-    """トークンURLを検査して、(整えたURL, 会議ID) を返す。
+    """Check the token URL and return (cleaned URL, meeting ID).
 
-    間違ったものを黙って受け取ると、字幕が出ない理由が分からなくなる。
-    Zoomは巻き戻した seq をエラー無しで捨てるので、ここで弾けるものは弾く。
+    Accepting a wrong one silently leaves you with no way to see why the
+    captions are missing. Zoom drops a rewound seq without an error, so reject
+    here everything that can be rejected.
     """
     url = (url or "").strip().strip('"').strip("'")
     if not url:
@@ -66,11 +72,13 @@ class CaptionSender:
         lang: str | None = None,
         dry_run: bool = False,
     ) -> None:
-        # **既定値引数で `config.CAPTION_LANG` を捕まえてはいけない。** 既定値引数は
-        # import のときに1回だけ評価されるので、字幕の向きを `en2ja` にしても
-        # `en-US` のまま送ることになる。ここで、作られるたびに読む。
+        # **Do not capture `config.CAPTION_LANG` in a default argument.** A
+        # default argument is evaluated once at import time, so setting the
+        # caption direction to `en2ja` would still send `en-US`. Read it here,
+        # each time an instance is created.
         self.lang = config.CAPTION_LANG if lang is None else lang
-        # dry_run は「何があってもZoomへ送らない」。試験用で、実行中は変えられない。
+        # dry_run means "never send to Zoom, whatever happens". It is for
+        # testing and cannot be changed while running.
         self.dry_run = dry_run
         self._lock = threading.Lock()
         self.base_url: str | None = None
@@ -78,17 +86,17 @@ class CaptionSender:
         self.seq = 0
         self.sent = 0
         self.failed = 0
-        # トークンがあれば送る。無ければブラウザから入れてもらう。
+        # Send if there is a token. If not, the user enters one in the browser.
         self.enabled = False
         if base_url:
             self.set_token(base_url)
             self.enabled = not dry_run
 
-    # --- 状態 ---------------------------------------------------------------
+    # --- State --------------------------------------------------------------
 
     @property
     def active(self) -> bool:
-        """いまZoomへ送るか。"""
+        """Whether we send to Zoom right now."""
         return bool(self.base_url) and self.enabled and not self.dry_run
 
     def status(self) -> dict:
@@ -105,9 +113,10 @@ class CaptionSender:
             }
 
     def set_token(self, url: str) -> str:
-        """トークンを入れる（差し替える）。会議IDを返す。
+        """Set (or replace) the token. Return the meeting ID.
 
-        会議が変われば seq も取り直す。同じ会議なら保存した続きから始める。
+        When the meeting changes, seq is taken again. For the same meeting, it
+        continues from the saved value.
         """
         clean, meeting = parse_token(url)
         with self._lock:
@@ -121,7 +130,7 @@ class CaptionSender:
         with self._lock:
             self.enabled = bool(on)
 
-    # --- seq の管理 ---------------------------------------------------------
+    # --- Managing seq -------------------------------------------------------
 
     def _state(self) -> dict:
         if config.SEQ_STATE_PATH.exists():
@@ -133,8 +142,9 @@ class CaptionSender:
 
     def _initial_seq_locked(self) -> int:
         saved = self._state().get(self.meeting_key, 0) + 1
-        # 保存を失っても復帰できるように、時刻から作った値と比べて大きい方を使う。
-        # 係数は送信レートの実測（3.5 回/秒）より大きく取る。
+        # So that we can recover even if the saved state is lost, compare with
+        # a value built from the clock and use the larger one. The factor is
+        # taken larger than the measured send rate (3.5 per second).
         clock = int((time.time() - config.SEQ_EPOCH) * config.SEQ_TIME_SCALE)
         return max(saved, clock)
 
@@ -144,7 +154,7 @@ class CaptionSender:
         config.SEQ_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
         config.SEQ_STATE_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
-    # --- 送信 ---------------------------------------------------------------
+    # --- Sending ------------------------------------------------------------
 
     def _post(self, text: str) -> tuple[int | None, str]:
         with self._lock:
@@ -164,10 +174,12 @@ class CaptionSender:
             return None, str(e.reason)
 
     async def send(self, text: str) -> bool:
-        """字幕を1行送る。seq は成功したときだけ進める（リトライでは増やさない）。
+        """Send one caption line. seq advances only on success (a retry does
+        not increase it).
 
-        送らない設定のときは、何もせずに True を返す。ブラウザ字幕だけで
-        使っているときに、ここで失敗を数えても意味がない。
+        When sending is turned off, return True without doing anything.
+        Counting failures here would mean nothing when only the browser
+        captions are in use.
         """
         text = text.strip()
         if not text:
@@ -189,13 +201,15 @@ class CaptionSender:
         return False
 
     async def warmup(self) -> None:
-        """字幕を流し始めるときの捨て字幕。
+        """Throwaway captions sent when the caption stream starts.
 
-        受信側は、字幕が流れ始めるまで「字幕を表示」を有効にできない。
-        そのため最初の数個は誰にも届かない。本番の最初の発言が消えるのを避ける。
+        On the receiving side, "Show Captions" cannot be turned on until
+        captions start flowing. So the first few reach nobody. This keeps the
+        first real utterance from being lost.
 
-        **会議の途中でブラウザから開始したときも、ここを通ること。**
-        そのときが受信側にとっての「流れ始め」である。
+        **Go through here as well when captions are started from the browser in
+        the middle of a meeting.** That is the moment the stream starts for the
+        receiving side.
         """
         if not self.active:
             return

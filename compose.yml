@@ -1,19 +1,20 @@
-# LiveCaption を Docker で回す。
+# Run LiveCaption with Docker.
 #
-# **この1つの箱に全部入っている。** 字幕のエンジン・Zoom・PulseAudio・
-# Tailscale・VNC である。ホストに要るのは Docker だけで、音声装置も
-# 画面も使わない。
+# **Everything is in this one box.** The caption engine, Zoom, PulseAudio,
+# Tailscale and VNC. The host needs only Docker. It uses no audio device
+# and no display.
 #
-#   cp .env.example .env    # OPENAI_API_KEY を入れる
+#   cp .env.example .env    # put OPENAI_API_KEY in it
 #   docker compose up -d --build
-#   docker compose logs -f  # 操作画面のURLが出る
+#   docker compose logs -f  # the control page URL appears here
 #
-# 手順は docs/manual.ja.md の「2. インストール（Windows + Docker）」にある。
-# Linux との違いは付録A。
+# The steps are in docs/manual.md, section "2. Install (Windows + Docker)".
+# Appendix A covers what differs on Linux.
 #
-# **ConnMan を使っているホストでは、除外一覧を先に直しておくこと。**
-# 直っていないと、コンテナ起動から数十秒遅れてホストの外向き通信が死ぬ。
-# マニュアルの「付録A.2 ConnMan を使っているホストの設定」を見ること。
+# **On a host that runs ConnMan, fix the exclusion list first.**
+# If you do not, the host loses its outgoing network a few tens of seconds
+# after the container starts. See "A.2 If the machine runs ConnMan" in the
+# manual.
 
 name: livecaption
 
@@ -23,11 +24,13 @@ services:
       context: .
       dockerfile: docker/Dockerfile
     image: livecaption-engine:dev
-    # 会議で使う形。**`--device pulse` を渡すこと。** 既定の "CABLE Output" は
-    # Windows の仮想ケーブルの名前で、コンテナには無い。
-    # **閲覧画面は 0.0.0.0 で待ち受ける。** コンテナの中の話なので、外に出るのは
-    # 下の `ports` が通す分（ホストの 127.0.0.1）と、配信を始めたとき（Funnel）
-    # だけである。操作画面はこの設定の影響を受けない。
+    # The shape used in meetings. **Pass `--device pulse`.** The default
+    # "CABLE Output" is the name of the virtual cable on Windows, and the
+    # container does not have it.
+    # **The viewer page listens on 0.0.0.0.** That is inside the container, so
+    # the only ways out are what `ports` below opens (127.0.0.1 on the host)
+    # and Funnel, once delivery starts. The control page is not affected by
+    # this setting.
     command:
       - "--web"
       - "--no-browser"
@@ -41,75 +44,91 @@ services:
         required: false
     environment:
       TZ: Asia/Tokyo
-      # tailnet 上の名前。**変えると配ってあった閲覧URLが死ぬ。**
-      # **用語対訳表は state ボリュームの中に置く。** 操作画面から足したり
-      # 消したりする利用者データなので、イメージに焼き込むと作り直しで消える。
+      # **Keep the glossary inside the state volume.** It is user data that
+      # people add and delete from the control page, so baking it into the
+      # image means it is lost every time the container is rebuilt.
       LIVECAPTION_GLOSSARY_DIR: /app/local/glossary
-      # tailnet 上の名前。**機体ごとに変えること。** 同じ tailnet で2台が
-      # 同じ名前を名乗ると、あとから来たほうが `livecaption-1` にされる。
-      # **閲覧URLのホスト名が変わるので、前もって配ってあったURLが死ぬ。**
-      # ここは `.env` から取る。**直書きに戻さないこと。** `environment:` は
-      # `env_file:` より強いので、直書きすると `.env` の値が黙って無視される。
+      # The name on the tailnet. **Change it on every machine.** If two
+      # machines on the same tailnet claim the same name, the later one is
+      # renamed to `livecaption-1`.
+      # **The host name in the viewer URL changes, so URLs you handed out
+      # beforehand stop working.**
+      # This value comes from `.env`. **Do not write it here directly again.**
+      # `environment:` wins over `env_file:`, so a direct value makes the one
+      # in `.env` be ignored silently.
       TS_HOSTNAME: "${TS_HOSTNAME:-livecaption}"
-      # **下の `restart` と同じ変数である。対にする必要がない形にしてある。**
-      # 操作画面の「終了」は、戻ってくるなら「再起動」と書かなければならない。
-      # 勝手に戻ってくるのに「終了」と書いてあると、押した人は壊れたと思う。
-      # 2つの変数に分けると、片方だけ直して文言が実際と食い違う日が来る。
+      # **This is the same variable as `restart` below. It is built so that
+      # you never have to keep two of them in step.**
+      # If "Quit" on the control page brings the system back, the button has
+      # to say "Restart". If it says "Quit" and the system comes back by
+      # itself, the person who pressed it thinks it is broken.
+      # With two variables, a day comes when someone fixes only one of them
+      # and the wording no longer matches what happens.
       LIVECAPTION_RESTART: "${LIVECAPTION_RESTART:-unless-stopped}"
-      # TS_AUTHKEY は .env から入る（署名済みの鍵）。
-      # 起動と同時に VNC を上げたいときに 1 にする。Zoom へのサインインなど、
-      # コンテナの中の画面を人が操作する必要があるときに使う。
-      # **認証が無いので、常用しないこと。** 操作画面の「設定」から、
-      # 必要なときだけ起動するほうがよい。
+      # TS_AUTHKEY comes from .env (a signed key).
+      # Set this to 1 when you want VNC up as soon as the container starts.
+      # Use it when a person has to work on the screen inside the container,
+      # for example to sign in to Zoom.
+      # **There is no authentication, so do not leave it on.** It is better to
+      # start it from "Settings" on the control page only when you need it.
       LIVECAPTION_VNC: "${LIVECAPTION_VNC:-0}"
-    # **userspace-networking では足りない。** 操作画面を tailnet に出すには、
-    # 100.x のアドレスが実際のインターフェースに載っている必要がある。
+    # **userspace-networking is not enough.** To put the control page on the
+    # tailnet, the 100.x address has to sit on a real interface.
     cap_add:
       - NET_ADMIN
     devices:
       - /dev/net/tun:/dev/net/tun
     volumes:
-      # **`local/` はまるごとボリュームに載せる。** ここが消えると、
-      # 会議IDが変わって閲覧URLが毎回別物になり、Zoom字幕の `seq` も巻き戻る。
-      # 中身は meetings.json・seq_state.json・direction_state.json・
-      # glossary_state.json・ui_lang_state.json・tunnel_kind.json・transcripts/。
+      # **Put all of `local/` on a volume.** If it is lost, the meeting IDs
+      # change, every viewer URL becomes a different one, and the `seq` for
+      # the Zoom captions rolls back.
+      # It holds meetings.json, seq_state.json, direction_state.json,
+      # glossary_state.json, ui_lang_state.json, tunnel_kind.json and
+      # transcripts/.
       #
-      # **Dropbox の中には書かない。** 会議の記録が全部クラウドに上がることになる。
+      # **Do not put it inside Dropbox.** Every meeting record would then go
+      # up to the cloud.
       - state:/app/local
-      # **Tailscale の状態。消すと署名からやり直しになる。**
-      # ホスト名も変わるので、配ってあった閲覧URLが死ぬ。
+      # **Tailscale state. Delete it and you start again from the signing.**
+      # The host name changes too, so the viewer URLs you handed out die.
       - tailscale:/var/lib/tailscale
-      # **Zoom の設定とサインイン。** 消すとサインインのやり直しになる。
+      # **Zoom settings and sign-in.** Delete it and you have to sign in again.
       - zoomhome:/home/livecaption
       #
-      # **録音した音で試すときは、ここにボリュームを足さない。** 一度きりの
-      # 話なので、その場で渡すほうがよい。fresh clone に無い場所をここに書くと、
-      # Docker が root 持ちの空フォルダを勝手に作る。
+      # **When you test with a recording, do not add a volume here.** It is a
+      # one-time thing, so pass it on the command line instead. If you name a
+      # path here that a fresh clone does not have, Docker creates an empty
+      # folder owned by root.
       #
-      #   docker compose run --rm -v "$PWD/録音:/samples:ro" engine \
+      #   docker compose run --rm -v "$PWD/recordings:/samples:ro" engine \
       #     --from-file /samples/test.wav --dry-run
     ports:
-      # **閲覧画面だけを出す。** 画面共有で見せるときに、ホストのブラウザから
-      # 開くためにある。**操作画面(8081)は出さない。** 認証が無いので、
-      # tailnet の中だけに置く（コンテナ自身が tailnet のノードになっている）。
+      # **Only the viewer page is exposed.** It is there so you can open it in
+      # the host's browser when you show the captions by screen sharing.
+      # **The control page (8081) is not exposed.** It has no authentication,
+      # so it stays inside the tailnet (the container itself is a tailnet
+      # node).
       - "127.0.0.1:8080:8080"
-    # **常時起動の機体では `unless-stopped` のままにすること**（既定）。
-    # 外すと2つ起きる。
+    # **On a machine that stays powered on, leave this as `unless-stopped`**
+    # (the default). Removing it causes two problems.
     #
-    #   ホストを再起動すると、字幕システムが上がってこない。常時起動の機体で
-    #   予定の会議に備える前提が崩れる。
+    #   After the host reboots, the caption system does not come back. That
+    #   breaks the assumption that a machine which stays on is ready for a
+    #   scheduled meeting.
     #
-    #   操作画面の「終了」を押すと、コンテナが止まったきりになる。操作画面も
-    #   消えるので、**ホストに ssh しないと戻せない。**「外から操作画面だけで
-    #   使う」という前提が、そこで途切れる。
+    #   Pressing "Quit" on the control page leaves the container stopped. The
+    #   control page is gone too, so **you have to ssh into the host to bring
+    #   it back.** The idea of running everything from the control page, from
+    #   somewhere else, ends there.
     #
-    # `unless-stopped` なので、`docker compose stop` で止めたものは上がってこない。
-    # 意図して止める道は残る。
+    # It is `unless-stopped`, so what you stop with `docker compose stop`
+    # stays stopped. You can still stop it on purpose.
     #
-    # **会議のときだけ起こすノートPCでは `.env` に `LIVECAPTION_RESTART=no`。**
-    # そうしないと、Docker Desktop を立ち上げるたびに字幕システムが勝手に上がり、
-    # 予定を入れてあれば Zoom にまで入る。**上の環境変数と同じ変数なので、
-    # 片方だけ直すことはできない。**
+    # **On a laptop that you start only for a meeting, put
+    # `LIVECAPTION_RESTART=no` in `.env`.** Otherwise the caption system
+    # starts every time you start Docker Desktop, and it even joins Zoom if a
+    # meeting is scheduled. **This is the same variable as the environment
+    # variable above, so you cannot change only one of them.**
     restart: "${LIVECAPTION_RESTART:-unless-stopped}"
     init: true
     stop_grace_period: 15s

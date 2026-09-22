@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-"""Deepgram の API キーと、nova-3 のパラメータの組み合わせを確認する。
+"""Check the Deepgram API key and the nova-3 parameter combinations.
 
     pixi run python scripts/deepgram_check.py
 
-キーは .env の DEEPGRAM_API_KEY、または環境変数から読む。
+The key is read from DEEPGRAM_API_KEY in .env, or from the environment.
 
-確認すること:
-    1. キーが有効か（課金の発生しない /v1/projects で確認）
-    2. nova-3 で language=ja が使えるか
-    3. **nova-3 で language=ja と keyterm を同時に指定できるか**
-    4. language=multi ではどうか
+What it checks:
+    1. Is the key valid (through /v1/projects, which is not billed)
+    2. Does nova-3 accept language=ja
+    3. **Does nova-3 accept language=ja and keyterm at the same time**
+    4. What happens with language=multi
 
-3 が本命。ここが通らないと、Deepgram を選ぶ理由（用語指定）が消える。
+3 is the one that matters. If it fails, the reason to choose Deepgram
+(naming the terms) is gone.
 
-音声は Deepgram の公開サンプル（英語）を使う。文字起こしの中身は見ない。
-パラメータの組み合わせが受け付けられるかだけを見る。
+The audio is Deepgram's public sample, in English. The transcript itself is
+not examined. It only looks at whether the parameter combination is accepted.
 """
 
 import json
@@ -29,12 +30,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SAMPLE_AUDIO_URL = "https://dpgr.am/spacewalk.wav"
 TIMEOUT = 60.0
 
-# 実際に使う予定の KAGRA 用語。日本語が keyterm に通るかも同時に見る。
+# Terms from the field of the meeting, as they would really be used. This also
+# shows whether Japanese goes through as a keyterm.
 KEYTERMS = ["サスペンション", "防振系", "PRM", "干渉計", "type-A"]
 
 
 def load_env() -> None:
-    """.env があれば読む。**.env の値を優先し、環境変数を上書きする。**"""
+    """Read .env if it exists. **.env wins and overwrites the environment.**"""
     path = PROJECT_ROOT / ".env"
     if not path.exists():
         return
@@ -44,13 +46,13 @@ def load_env() -> None:
             continue
         key, _, value = line.partition("=")
         key, value = key.strip(), value.strip().strip('"').strip("'")
-        # .env の値を優先する。環境変数に同じ名前があっても上書きする。
+        # .env wins. It overwrites an environment variable of the same name.
         if value:
             os.environ[key] = value
 
 
 def request(url: str, key: str, body: dict | None = None):
-    """(status, 応答) を返す。status は接続失敗時 None。"""
+    """Return (status, response). status is None when the connection fails."""
     headers = {"Authorization": f"Token {key}"}
     data = None
     if body is not None:
@@ -86,7 +88,8 @@ def check_combo(key: str, label: str, params: list[tuple[str, str]]) -> None:
     status, body = request(url, key, {"url": SAMPLE_AUDIO_URL})
 
     if status == 200:
-        # 中身は英語サンプルなので見ない。通ったことだけ確認する。
+        # The content is the English sample, so it is not examined. Only that
+        # the request went through.
         alts = body["results"]["channels"][0]["alternatives"][0]
         n = len(alts.get("transcript", ""))
         print(f"   OK   {label}  (transcript {n} 文字)")

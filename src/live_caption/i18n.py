@@ -1,15 +1,19 @@
-"""操作画面の言語。日本語と英語を切り替える。
+"""Language of the control page. It switches between Japanese and English.
 
-**日本語の文をそのまま鍵にする。** 記号の鍵（`msg.start`）を使わない。理由は2つある。
+**The Japanese sentence itself is the key.** We do not use symbol keys such as
+`msg.start`. There are two reasons.
 
-1. 画面のマークアップとJSに手を入れずに済む。訳表を足すだけで英語になる
-2. **訳が無い文字列は日本語のまま出る。** 鍵方式だと `{{msg.start}}` が画面に出る。
-   会議中にそれが起きるより、日本語が残るほうがまだ読める
+1. The page markup and the JavaScript need no changes. Adding a table to this
+   file is enough to make the page English
+2. **A string with no translation stays in Japanese.** With symbol keys,
+   `{{msg.start}}` would show up on the page. If that happens during a meeting,
+   leftover Japanese is still easier to read
 
-置き換えは**長い順**に行う。「開始」は「字幕の生成を開始した。」の中にも現れるので、
-短いものから置くと、長い文の一部だけが英語になってしまう。
+Replacement runs **from the longest key to the shortest**. The key "開始" also
+appears inside "字幕の生成を開始した。", so starting with the short keys would
+turn only a part of a long sentence into English.
 
-閲覧画面は元から英語なので、ここでは扱わない。
+The viewer page is in English already, so it is not handled here.
 """
 
 from __future__ import annotations
@@ -17,9 +21,10 @@ from __future__ import annotations
 LANGS = ("ja", "en")
 DEFAULT = "ja"
 
-# 日本語 -> 英語。**画面に出る文字列だけを入れる。** コードのコメントは対象外。
+# Japanese -> English. **Put only the strings that appear on the page here.**
+# Comments in the code are not part of this table.
 EN: dict[str, str] = {
-    # --- ヘッダ ---
+    # --- Header ---
     "Live Captions ・ 操作": "Live Captions · Control",
     "生成: —": "Captions: —",
     "配信: —": "Tunnel: —",
@@ -28,7 +33,7 @@ EN: dict[str, str] = {
     "ドラッグで幅を変える": "Drag to change the width",
     "字幕を待っています…": "Waiting for captions…",
 
-    # --- 字幕の生成 ---
+    # --- Caption generation ---
     "字幕の生成": "Caption generation",
     "開始するまで、": "Until you press start, ",
     "音は取り込まれず、文字起こしも翻訳もしない。":
@@ -38,7 +43,7 @@ EN: dict[str, str] = {
     "会議に入る前に立ち上げておいてよい。":
         "You can launch it before you join the meeting.",
 
-    # --- 参加者への配信 ---
+    # --- Delivery to participants ---
     "参加者への配信": "Delivery to participants",
     "配信を開始": "Start delivering",
     "経路": "Route",
@@ -56,8 +61,8 @@ EN: dict[str, str] = {
     "このURLをQRで配る。参加者はブラウザで開くだけでよい。":
         "Hand out this URL as a QR code. People only open it in a browser.",
 
-    # --- 次にやること（スケジューラ） ---
-    # **ここも二重引用符を入れてはいけない。** JavaScript の文字列に入る。
+    # --- Coming up (the scheduler) ---
+    # **No double quotes here either.** These strings go into JavaScript strings.
     "次にやること": "Coming up",
     "了解": "Got it",
     "いま止める": "Stop now",
@@ -79,9 +84,9 @@ EN: dict[str, str] = {
     "次の予定を飛ばした。": "Skipped the next one.",
     "飛ばす予定が無い。": "There is nothing to skip.",
 
-    # --- スケジューラが出す一言（schedule.py から状態に載ってくる） ---
-    # **数字を混ぜた文はここに置けない。** 置き換えは固定の文にしか効かない。
-    # 数字は端末のログにだけ出す。
+    # --- Short notes from the scheduler (carried on the status from schedule.py) ---
+    # **A sentence that contains a number cannot go here.** Replacement works
+    # on fixed sentences only. Numbers are printed to the terminal log instead.
     "本体を組み立てているところ": "Still starting up",
     "会議を選んだ": "Meeting selected",
     "配信を始めた": "Delivery started",
@@ -108,7 +113,7 @@ EN: dict[str, str] = {
     "会議を選べない: ": "Cannot select the meeting: ",
     "スケジューラで例外: ": "Error in the scheduler: ",
 
-    # --- 予定の入力 ---
+    # --- Schedule input ---
     "予定を保存した: ": "Schedule saved: ",
     "予定を保存": "Save the schedule",
     "予定なし": "not scheduled",
@@ -151,7 +156,7 @@ EN: dict[str, str] = {
         "Running it automatically sends captions out with nobody watching.",
     "外に出せない内容の会議では印を付けないこと。":
         "Do not tick this for meetings whose content must not leave.",
-    # --- ホスト用URL ---
+    # --- Host URL ---
     "ホスト用URLを出す": "Show the host URL",
     "ホストにだけ送ること。参加者用のURLと取り違えないこと。":
         "Send it to the host only. Do not confuse it with the participants' URL.",
@@ -166,7 +171,7 @@ EN: dict[str, str] = {
     "　自動は切り": "  automatic off",
     "　Zoomに入る": "  joins Zoom",
 
-    # --- 会議の管理（別画面） ---
+    # --- Manage meetings (a separate page) ---
     "会議の管理": "Manage meetings",
     "会議ごとに別の閲覧URLを使う。": "Each meeting gets its own viewer URL.",
     "予定を入れておけば、時刻が来たときに自動で開始する。":
@@ -188,7 +193,7 @@ EN: dict[str, str] = {
     "失敗しました（": "Failed (",
     "本体が終わっただけ": "the app just stopped",
 
-    # --- 会議 ---
+    # --- Meetings ---
     "会議": "Meetings",
     "会議ごとに別のURLを使う。": "Each meeting gets its own URL.",
     "配信するのは選んである1つだけで、": "Only the meeting you select is delivered, and ",
@@ -203,7 +208,7 @@ EN: dict[str, str] = {
     "前もってURLを配るには、上の経路を ": "To hand out a URL in advance, set the route above to ",
     " にすること。": ".",
 
-    # --- Zoom字幕 ---
+    # --- Zoom captions ---
     "Zoom字幕": "Zoom captions",
     "APIトークン": "API token",
     "登録": "Register",
@@ -217,7 +222,7 @@ EN: dict[str, str] = {
     "入力欄は伏せ字で、登録すると空になる。":
         "The field is masked, and it clears after you register.",
 
-    # --- 画面共有 ---
+    # --- Screen sharing ---
     "閲覧画面を自分で開く": "Open the viewer yourself",
     "外には出ない。": "It does not leave your tailnet. ",
     "自分で見るか、この画面を全画面にして画面共有する。":
@@ -230,7 +235,7 @@ EN: dict[str, str] = {
     "この画面は共有しないこと。": "Never share this page.",
     "共有するのは閲覧画面のほう。": "Share the viewer page instead.",
 
-    # --- 会議の記録 ---
+    # --- Meeting record ---
     "会議の記録": "Meeting record",
     "読める形 (.md)": "Readable (.md)",
     "原本 (.jsonl)": "Original (.jsonl)",
@@ -249,7 +254,7 @@ EN: dict[str, str] = {
     "そのフォルダは作れない: ": "That folder cannot be created: ",
     "そのフォルダには書けない: ": "That folder cannot be written to: ",
 
-    # --- パネルのタブと、まとめ直した見出し ---
+    # --- Panel tabs, and the headings that were regrouped ---
     "いまの状態": "Right now",
     "この会議": "This meeting",
     "見せ方": "How people see it",
@@ -279,13 +284,13 @@ EN: dict[str, str] = {
     "送信中": "sending",
     "登録済み": "token set",
 
-    # --- 音声の入力 ---
+    # --- Audio input ---
     "音声の入力": "Audio input",
     "読み込み中…": "Loading…",
     "一覧を更新": "Refresh the list",
     "ファイル（--from-file）": "File (--from-file)",
 
-    # --- 字幕の向き ---
+    # --- Caption direction ---
     "字幕の向き": "Caption direction",
     "会議ごとに選ぶ。": "Choose it for each meeting. ",
     "選んだ時点で切り替わる。": "The change takes effect as soon as you pick it. ",
@@ -295,8 +300,9 @@ EN: dict[str, str] = {
     "日本語 → 英語": "Japanese → English",
     "英語 → 日本語": "English → Japanese",
 
-    # --- 用語集 ---
-    # **長い順に置き換わる。** 短い鍵を先に書いても、長い鍵が優先される。
+    # --- Glossary ---
+    # **Replacement goes from the longest key.** Even if a short key is written
+    # first, the longer key still wins.
     "用語集 ": "Glossary ",
     "用語集": "Glossary",
     "名前で絞り込む": "Filter by name",
@@ -304,7 +310,8 @@ EN: dict[str, str] = {
     "全部外す": "Clear all",
     "アップロード": "Upload",
     "ダウンロード": "Download",
-    # 「削除」は予定の欄に既にある（上の「会議の管理」）。足さない。
+    # The key "削除" is already in the schedule part above (Manage meetings).
+    # Do not add it again.
     "同じ名前があれば置き換える。": "A table with the same name is replaced. ",
     "ファイル名が表の名前になる。": "The file name becomes the table name. ",
     "いま使っている表を置き換えると、その場で読み直す。":
@@ -321,8 +328,9 @@ EN: dict[str, str] = {
         "VNC is running. Stop it when you are done.",
     "VNCを停止した。": "VNC is stopped.",
     "起動": "Start",
-    # 「停止」は字幕の生成の欄に既にある。足さない。
-    # **「停止中」は足すこと。** 無いと「停止」だけが訳されて「中」が残る。
+    # The key "停止" is already in the caption generation part. Do not add it.
+    # **But "停止中" must be added.** Without it, only "停止" is translated and
+    # "中" is left behind.
     "停止中": "stopped",
     "動作中": "running",
     "　VNCクライアントからは ": "  From a VNC client, use ",
@@ -333,15 +341,16 @@ EN: dict[str, str] = {
     "認証が無いので、常用しないこと。":
         "There is no password, so do not leave it running.",
 
-    # --- 遅延の調整 ---
+    # --- Delay tuning ---
     "遅延の調整": "Delay tuning",
     "よく変えるものではない": "Not something you change often",
     ".env に保存": "Save to .env",
     "既定に戻す": "Reset to defaults",
 
-    # --- アプリの終了 ---
-    # **Docker では「入れ直し」になる。** compose が入れ直すので、押しても
-    # 十数秒で戻ってくる。長い鍵を先に置く（置換は長い順）。
+    # --- Quitting the app ---
+    # **On Docker this turns into a restart.** compose starts the container
+    # again, so the app comes back about ten seconds after you press it. Put
+    # the long keys first (replacement goes from the longest).
     "字幕アプリを再起動する。十数秒で戻ってくる。":
         "LiveCaption will restart. It comes back in a few seconds.",
     "再起動している。十数秒したら、この画面を開き直すこと。":
@@ -353,7 +362,7 @@ EN: dict[str, str] = {
     "アプリの終了": "Quit LiveCaption",
     "音声の取り込みも文字起こしも止まる": "Audio capture and transcription both stop",
 
-    # --- 状態の表示 ---
+    # --- Status display ---
     "生成: 停止中": "Captions: stopped",
     "生成: 停止": "Captions: stopped",
     "生成: 中": "Captions: on",
@@ -388,7 +397,7 @@ EN: dict[str, str] = {
     " 文を記録した（終了時に読める形も書く）":
         " sentences recorded (a readable file is written at exit)",
 
-    # --- 操作の結果 ---
+    # --- Results of an action ---
     "字幕の生成を開始した。": "Caption generation started.",
     "字幕の生成を停止した。": "Caption generation stopped.",
     "選べない": "Cannot choose",
@@ -431,12 +440,13 @@ EN: dict[str, str] = {
     "tailscale に設定させている": "letting tailscale set it up",
     "tailscale が使えない": "tailscale is not usable",
 
-    # --- 会議（画面の中で組み立てる文） ---
-    # **ここに二重引用符を入れてはいけない。** 訳したあとの文字列は JavaScript の
-    # 文字列リテラルの中に入る。`"` を入れるとリテラルがそこで閉じ、
-    # **操作画面のスクリプト全体が構文エラーになって、どのボタンも効かなくなる。**
-    # 同じ理由で、JavaScript の文字列に 「」 を書いてはいけない（下の記号の欄で
-    # `"` に化ける）。名前は「: 」の後ろに置いて囲まない。
+    # --- Meetings (sentences that the page builds by itself) ---
+    # **Never put a double quote here.** The translated string ends up inside a
+    # JavaScript string literal. A `"` closes that literal on the spot, and
+    # **the whole control page script becomes a syntax error, so no button
+    # works any more.** For the same reason, never write 「 or 」 inside a
+    # JavaScript string (the symbol part below turns them into `"`). Put the
+    # name after ": " instead of wrapping it in brackets.
     "配信する会議: ": "Now delivering: ",
     "会議の名前を入れること。": "Type a meeting name first.",
     "会議を作った: ": "Meeting created: ",
@@ -468,7 +478,7 @@ EN: dict[str, str] = {
     "）。再試行 ": "). Retry ",
     "回目…": "…",
 
-    # --- サーバから来る説明（config.py の調整つまみ）---
+    # --- Descriptions that come from the server (the knobs in config.py) ---
     "秒。発話が途切れてから、文末記号が無くても確定させるまで。"
     "実測の delta 間隔の p99 が 2.57 秒なので、下げると話の途中で切る":
         "Seconds to wait after speech stops before finalising a sentence without "
@@ -488,7 +498,7 @@ EN: dict[str, str] = {
         "Seconds between lines sent to Zoom. The caption window is only four "
         "lines. It does not apply to the viewer page",
 
-    # --- 失敗したときに画面へ返す文 ---
+    # --- Sentences returned to the page when something fails ---
     "用語集の受け口が用意できていない。": "The glossary control is not available.",
     "設定の受け口が用意できていない。": "The settings control is not available.",
     "音声の受け口が用意できていない。": "The audio control is not available.",
@@ -512,9 +522,10 @@ EN: dict[str, str] = {
     "--from-file で起動しているので、入力は選べない。":
         "Started with --from-file, so the input device cannot be changed.",
 
-    # --- 単独で出る短い語。**長い鍵を先に置き換えたあとに残ったものだけが当たる** ---
+    # --- Short words that appear on their own. **Only what is left after the
+    #     long keys have been replaced matches here** ---
     "元の言語を表示": "Show original language",
-    # --- 停止は出口も閉じる ---
+    # --- Stopping closes the outputs as well ---
     "配信とZoom字幕も一緒に止まる": "Delivery and the Zoom captions stop with it",
     "字幕の生成・配信・Zoom字幕を止めた。":
         "Stopped caption generation, delivery and the Zoom captions.",
@@ -530,23 +541,25 @@ EN: dict[str, str] = {
     "停止": "Stop",
     "終了": "Quit",
 
-    # --- 記号。**いちばん短いので最後に置き換わる** ---
-    # 長い鍵を先に当てたあとに残るのは、区切りに使っている記号だけである。
+    # --- Symbols. **They are the shortest, so they are replaced last** ---
+    # After the long keys have been applied, the only thing left is the symbols
+    # used as separators.
     "（": "(",
     "）": ")",
     "「": '"',
     "」": '"',
     "。": ". ",
     "、": ", ",
-    "　": " · ",   # 状態の表示をつなぐ全角空白
+    "　": " · ",   # full-width space that joins status items
 }
 
-# **長い順に置き換える。** 短い鍵を先に置くと、長い文の一部だけが英語になる。
+# **Replace from the longest key.** If a short key goes first, only a part of a
+# long sentence becomes English.
 _ORDER = sorted(EN, key=len, reverse=True)
 
 
 def apply(text: str, lang: str) -> str:
-    """文字列を指定した言語にする。`ja` なら何もしない。"""
+    """Turn a string into the given language. For `ja` it does nothing."""
     if lang != "en" or not text:
         return text
     for ja in _ORDER:
@@ -556,10 +569,11 @@ def apply(text: str, lang: str) -> str:
 
 
 def apply_json(obj, lang: str):
-    """JSONで返す入れ子を、まとめて言語に合わせる。
+    """Translate a nested structure that is returned as JSON, all at once.
 
-    **字幕そのものには使わない。** 会議の中身を訳してはいけない。
-    使うのは状態や説明を返す口だけである（`web.py` の `_send_json`）。
+    **Never use this on the captions themselves.** The content of the meeting
+    must not be translated. Use it only on the endpoints that return status or
+    descriptions (`_send_json` in `web.py`).
     """
     if lang != "en":
         return obj
@@ -573,7 +587,10 @@ def apply_json(obj, lang: str):
 
 
 def remaining_japanese(text: str) -> list[str]:
-    """訳し残した日本語を返す。`scripts/check_ui_lang.py` が使う。"""
+    """Return the Japanese that was left untranslated.
+
+    `scripts/check_ui_lang.py` uses this.
+    """
     import re
 
     return sorted(set(re.findall(r"[ぁ-んァ-ヶ一-龥々]+", text)))

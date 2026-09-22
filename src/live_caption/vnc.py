@@ -1,29 +1,33 @@
-"""中の画面を人が見るための口。TigerVNC と noVNC を起こす。
+"""A window for a person to look at the screen inside. Starts TigerVNC and noVNC.
 
-**常用しない。** 認証が無く、tailnet の中からは誰でも届く。使うのは、
-会議ソフトへのサインインと、自動参加が詰まったときの様子見だけである。
-字幕の操作（開始・停止・配信・トークン・記録）は操作画面のほうにある。
+**Do not use this routinely.** There is no authentication, and anyone inside
+the tailnet can reach it. Use it only to sign in to the meeting software, and
+to look around when automatic joining gets stuck. The caption controls (start,
+stop, delivery, token, record) are on the control page.
 
-繋ぎ方は3つある。
+There are three ways to connect.
 
-    https://<完全名>:6443/vnc.html   ブラウザ（`tailscale serve`）
-    http://<機体>:6080/vnc.html      ブラウザ（素）
-    <機体>:5900                       VNCクライアント
+    https://<full-name>:6443/vnc.html   browser (`tailscale serve`)
+    http://<host>:6080/vnc.html         browser (plain)
+    <host>:5900                         VNC client
 
-**クリップボードを自動で同期したいなら、VNCクライアントで繋ぐこと。**
-ブラウザは `http` では secure context にならず、`navigator.clipboard` が
-生えないので、見ている側のクリップボードを読めない。`https` の口を
-用意してあるのはそのためである。
+**If you want the clipboard to sync automatically, connect with a VNC client.**
+Over `http` a browser is not a secure context, so `navigator.clipboard` does
+not exist and the page cannot read the clipboard of the person watching. That
+is why an `https` entrance is provided.
 
-**会議中でも起動・停止できる。** `x0vncserver` は、既に上がっている X 画面に
-あとから貼り付くだけである。会議ソフトも字幕の生成も止まらない。
-ここを起動時の設定だけにしてしまうと、**いちばん中を見たい「会議中に
-様子がおかしい」ときに、コンテナを作り直すしかなくなり、会議から抜ける。**
+**You can start and stop this during a meeting.** `x0vncserver` only attaches
+to an X display that is already up. Neither the meeting software nor the
+caption generation stops. If this were a startup setting only, then **at the
+moment you most want to look inside -- "something looks wrong during the
+meeting" -- your only option would be to rebuild the container, which drops
+you out of the meeting.**
 
-**子プロセスは持っておいて回収する。** 入口のシェルから起こすと、シェルが
-最後に `exec` で本体になるため、子の親が本体（Python）になる。本体が
-`wait()` しないので、止めるたびにゾンビが1つ残る。起動・停止を繰り返す
-ボタンにする以上、これは溜まる。
+**Hold on to the child processes and reap them.** When they are started from
+the entry shell, the shell finally `exec`s into the main program, so the parent
+of each child becomes the main program (Python). The main program never calls
+`wait()`, so one zombie is left behind every time you stop. Since this is a
+button that gets pressed to start and stop over and over, they pile up.
 """
 
 from __future__ import annotations
@@ -39,9 +43,9 @@ from . import config
 
 
 class Vnc:
-    """TigerVNC（`x0vncserver`）＋ noVNC の開始・停止。
+    """Start and stop TigerVNC (`x0vncserver`) plus noVNC.
 
-    呼ぶのはHTTPサーバのスレッドである。
+    The caller is the HTTP server thread.
     """
 
     def __init__(self) -> None:
@@ -49,13 +53,13 @@ class Vnc:
         self._procs: list[subprocess.Popen] = []
         self._error = ""
 
-    # --- 使えるかどうか -----------------------------------------------------
+    # --- Can we use it? -----------------------------------------------------
 
     def _missing(self) -> str:
-        """使えない理由。使えるなら空。
+        """The reason it cannot be used. Empty when it can.
 
-        **`autocutsel` は要求しない。** 無ければクリップボードが繋がらない
-        だけで、画面は見られる。
+        **Do not require `autocutsel`.** Without it you only lose the clipboard
+        connection; you can still see the screen.
         """
         if not os.environ.get("DISPLAY"):
             return "画面が無い（DISPLAY が空）。Windows では使わない。"
@@ -70,10 +74,13 @@ class Vnc:
     def available(self) -> bool:
         return not self._missing()
 
-    # --- 状態 ---------------------------------------------------------------
+    # --- State --------------------------------------------------------------
 
     def _reap(self) -> None:
-        """終わった子を回収し、生きているものだけ残す。**呼ぶ側が lock を持つこと。**"""
+        """Reap finished children and keep only the live ones.
+
+        **The caller must hold the lock.**
+        """
         alive = []
         for p in self._procs:
             if p.poll() is None:
@@ -93,7 +100,7 @@ class Vnc:
                 "rfb_port": config.VNC_RFB_PORT,
             }
 
-    # --- 開け閉め -----------------------------------------------------------
+    # --- Start and stop -----------------------------------------------------
 
     def start(self) -> dict:
         with self._lock:
@@ -106,29 +113,35 @@ class Vnc:
                 return self._status_locked()
             display = os.environ["DISPLAY"]
             try:
-                # **TigerVNC を使う。** x11vnc の古い cut-text は Latin-1 しか
-                # 運べず、クリップボードの日本語が `???` になる。
-                # `-AlwaysShared` = 2人以上が同時に見られる。
-                # `-SecurityTypes None` = パスワードを持たない。
-                # **守っているのは tailnet の中だけという一点である。**
+                # **Use TigerVNC.** The old cut-text of x11vnc carries Latin-1
+                # only, so Japanese text in the clipboard turns into `???`.
+                # `-AlwaysShared` = two or more people can watch at once.
+                # `-SecurityTypes None` = there is no password.
+                # **The only thing protecting this is that it stays inside the
+                # tailnet.**
                 #
-                # **`-fg` を必ず付けること。** Debian の `x0vncserver` は perl の
-                # ラッパーで、既定では自分で `setsid` して切り離す。こちらが掴んだ
-                # 子は即座に終わるので、**「上がらなかった」と誤判定したうえ、
-                # 本物が野良で残る**（2026-09-21 に踏んだ）。
+                # **Always pass `-fg`.** On Debian, `x0vncserver` is a perl
+                # wrapper that by default calls `setsid` and detaches itself.
+                # The child we hold then exits at once, so **we wrongly decide
+                # that it "did not come up", and the real process is left
+                # running loose** (hit on 2026-09-21).
                 #
-                # **`-localhost no` が要る。** TigerVNC の既定は localhost だけで、
-                # そのままだと VNC クライアントから繋げない。ブラウザ（noVNC）は
-                # `http` では Windows のクリップボードを読めない（secure context で
-                # ないので `navigator.clipboard` が無い）。**手で貼らずに済ませたい
-                # なら、VNC クライアントで直に繋ぐしかない。**
+                # **`-localhost no` is needed.** TigerVNC listens on localhost
+                # only by default, and then a VNC client cannot connect. A
+                # browser (noVNC) over `http` cannot read the Windows clipboard
+                # (it is not a secure context, so `navigator.clipboard` is
+                # missing). **If you want to avoid pasting by hand, connecting
+                # directly with a VNC client is the only way.**
                 #
-                # **`--I-KNOW-THIS-IS-INSECURE` を付けている。** TigerVNC は、
-                # 認証なしで localhost 以外に出すことを拒む。もっともな警告だが、
-                # **同じ箱の 6080（noVNC）が既に tailnet 全体へ認証なしで出ている**
-                # ので、5900 を開けても露出の種類は変わらない。守っているのは
-                # 「tailnet の中からしか届かない」の一点である。
-                # 既定では動かさず、要るときだけ操作画面から開ける。
+                # **We pass `--I-KNOW-THIS-IS-INSECURE`.** TigerVNC refuses to
+                # listen outside localhost without authentication. The warning
+                # is fair, but **port 6080 (noVNC) on the same box is already
+                # open to the whole tailnet without authentication**, so
+                # opening 5900 does not change the kind of exposure. The only
+                # thing protecting this is that it can be reached from inside
+                # the tailnet only.
+                # It does not run by default; open it from the control page
+                # only when you need it.
                 self._procs.append(subprocess.Popen(
                     ["x0vncserver", "-fg", "-display", display,
                      "-rfbport", str(config.VNC_RFB_PORT),
@@ -136,8 +149,9 @@ class Vnc:
                      "-SecurityTypes", "None", "-AlwaysShared"],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     stdin=subprocess.DEVNULL))
-                # **待ち受けるまで少し待つ。** すぐ websockify を向けると、
-                # 繋がらないまま上がったように見える。
+                # **Wait a little until it listens.** If websockify is pointed
+                # at it right away, it looks like it came up while nothing is
+                # actually connected.
                 time.sleep(1.0)
                 self._procs.append(subprocess.Popen(
                     ["websockify", f"--web={config.NOVNC_ROOT}",
@@ -153,18 +167,20 @@ class Vnc:
             time.sleep(0.5)
             self._reap()
             if len(self._procs) < 2:
-                # 片方だけ落ちた状態で「上がっている」と言わない。
+                # Do not report "it is up" when only one of the two died.
                 self._error = "上がらなかった。ポートが空いているか確かめること。"
                 self._stop_locked()
                 return self._status_locked()
 
-            # **クリップボードの橋渡しは要らない。** TigerVNC が X の選択を
-            # 自分で見張る（`autocutsel` を足していた時期があったが、不要）。
+            # **No clipboard bridge is needed.** TigerVNC watches the X
+            # selection by itself (`autocutsel` was added for a while, but it
+            # is not necessary).
             self._error = ""
-            # **https でも出す。** `http` のままだとブラウザが secure context と
-            # 見なさず、`navigator.clipboard` が生えない。noVNC が見ている側の
-            # クリップボードを読めないのはそのためである。
-            # **失敗しても止めない。** http の 6080 は使える。
+            # **Publish over https as well.** Over plain `http` the browser
+            # does not treat the page as a secure context, so
+            # `navigator.clipboard` is missing. That is why noVNC cannot read
+            # the clipboard of the person watching.
+            # **Do not stop on failure.** Port 6080 over http still works.
             from . import tunnel as tunnel_mod
             tunnel_mod.serve_https(config.VNC_HTTPS_PORT, config.VNC_WEB_PORT)
             return self._status_locked()
@@ -177,8 +193,9 @@ class Vnc:
 
     def _stop_locked(self) -> None:
         if self._procs:
-            # **https の出口も閉じる。** 中身が死んでいるのに口だけ残すと、
-            # 開いた人は「繋がらない」としか分からない。
+            # **Close the https entrance too.** If the entrance stays open
+            # while what is behind it is dead, the person who opens it only
+            # learns that "it does not connect".
             from . import tunnel as tunnel_mod
             tunnel_mod.serve_off(config.VNC_HTTPS_PORT)
         for p in self._procs:

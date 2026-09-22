@@ -1,30 +1,35 @@
-"""全体の組み立て。
+"""How the whole thing fits together.
 
-    CABLE Output（または WAVファイル）
-       ↓ 24 kHz mono PCM、100 ms ずつ
-    gpt-live-transcribe（delta を連続で返す）
-       ↓
-    Segmenter（文の切り出し。モデルは区切りを返さない）
-       ↓
-    Translator（gpt-4.1-mini。用語表＋置換規則。英語はそのまま）
-       ↓ 1行ずつ
-    Zoom字幕API（seq を保存しながらPOST）
+    CABLE Output (or a WAV file)
+       | 24 kHz mono PCM, 100 ms at a time
+    gpt-live-transcribe (returns deltas continuously)
+       |
+    Segmenter (cuts sentences; the model returns no boundaries)
+       |
+    Translator (gpt-4.1-mini; glossary plus replacement rules; English is
+                passed through unchanged)
+       | one line at a time
+    Zoom caption API (POST, saving seq as we go)
 
-翻訳は1文あたり約0.9秒（実測、2026-09-09）。会議では文がそれより短い間隔で
-出ることがあるので、**訳しながら次の文の翻訳を始める。ただし送る順序は守る。**
-順序が入れ替わると読めなくなる。
+Translation takes about 0.9 seconds per sentence (measured, 2026-09-09). In a
+meeting, sentences can arrive faster than that, so **we start translating the
+next sentence while one is still being translated, but we keep the order in
+which we send them.** Captions out of order cannot be read.
 
-**無音で確定する文（約8.6%）は、確定を待たずに先回りで訳しておく。**
-`IDLE_FLUSH_SEC` は下げられないので（delta 間隔の p99 が閾値より上）、
-待っている間に訳しておくのが、この経路を速くする唯一の手である。
+**Sentences that become final through silence (about 8.6%) are translated
+ahead of time, without waiting for them to be final.** `IDLE_FLUSH_SEC`
+cannot go lower (the p99 of the gap between deltas is above the threshold),
+so translating during that wait is the only way to make this path faster.
 
-ホストの画面には字幕が出ないので、麻生が動作を確認する手段はこの画面のログだけである。
-送った内容を必ず表示する。
+The host's own screen shows no captions, so the log on this screen is the
+only way to check that the system is working. Always print what we sent.
 
-字幕の出口は2つある。**どちらか一方でも、両方同時でもよい。**
+There are two ways out for the captions. **You can use either one, or both
+at the same time.**
 
-1. Zoom字幕API（`captions.py`）。ホスト権限で取ったトークンが要る
-2. ブラウザ字幕（`web.py`）。権限は要らない。画面共有して見せる
+1. The Zoom caption API (`captions.py`). Needs a token taken with host rights
+2. Browser captions (`web.py`). Needs no rights. Show them by sharing your
+   screen
 """
 
 from __future__ import annotations
@@ -45,7 +50,8 @@ from . import transcript as transcript_mod
 from . import translator as translator_mod
 from . import vnc as vnc_mod
 
-# 同時に走らせる翻訳の数。多くしても順序は守るが、遅れが見えにくくなる。
+# How many translations run at the same time. A larger number still keeps
+# the order, but it makes the delay harder to see.
 MAX_INFLIGHT = 4
 
 
@@ -54,31 +60,34 @@ def now() -> str:
 
 
 def _bare(text: str) -> str:
-    """末尾の文末記号と空白を落とす。先回りの翻訳の照合に使う。"""
+    """Drop trailing sentence-ending marks and spaces. Used to match a
+    speculative translation against the final sentence."""
     return text.rstrip("。！？.!? 　")
 
 
 class ZoomControl:
-    """Zoom字幕の開始・停止を、ブラウザの操作画面から扱えるようにする。
+    """Lets the browser control page start and stop the Zoom captions.
 
-    **呼ぶのはHTTPサーバのスレッドである。** 本体のイベントループとは別なので、
-    コルーチン（捨て字幕の送信）は `run_coroutine_threadsafe` で渡す。
+    **The caller is a thread of the HTTP server.** That is not the main
+    event loop, so we hand coroutines (sending the throwaway captions) to it
+    with `run_coroutine_threadsafe`.
 
-    トークンは会議が始まらないと取れない。したがって起動時には決められず、
-    ここで後から差し替えられるようにしてある。
+    The token cannot be taken until the meeting starts. So it cannot be
+    decided at startup, and this class lets us set it later.
     """
 
     def __init__(self, sender: captions_mod.CaptionSender) -> None:
         self.sender = sender
         self.loop: asyncio.AbstractEventLoop | None = None
-        # 状態が変わったときに呼ぶ。ブラウザ側の表示を揃えるために使う。
+        # Called when the state changes. Used to keep the browser display in
+        # step.
         self.on_change = None
 
     def status(self) -> dict:
         return self.sender.status()
 
     def set_token(self, url: str) -> dict:
-        """トークンを入れる。不正なら captions.TokenError を投げる。"""
+        """Set the token. Raise captions.TokenError if it is not valid."""
         meeting = self.sender.set_token(url)
         print(f"[{now()}] Zoom        トークンを受け取った（会議 {meeting}、"
               f"seq {self.sender.seq} から）")
@@ -86,7 +95,7 @@ class ZoomControl:
         return self.status()
 
     def set_enabled(self, on: bool) -> dict:
-        """Zoomへの送信を開始・停止する。"""
+        """Start or stop sending to Zoom."""
         if on and self.sender.dry_run:
             raise captions_mod.TokenError(
                 "--dry-run で起動しているので、Zoomへは送らない。"
@@ -99,8 +108,9 @@ class ZoomControl:
         self.sender.set_enabled(on)
         print(f"[{now()}] Zoom        送信を{'開始' if on else '停止'}した")
 
-        # 停止していたものを開始したときは、捨て字幕から始める。
-        # 受信側は字幕が流れ始めるまで「字幕を表示」を有効にできない。
+        # When we start something that was stopped, begin with the throwaway
+        # captions. The receiving side cannot turn on "show captions" until
+        # captions start arriving.
         if on and not was_active and self.loop is not None:
             asyncio.run_coroutine_threadsafe(self.sender.warmup(), self.loop)
         self._changed()
@@ -112,15 +122,18 @@ class ZoomControl:
 
 
 class EngineControl:
-    """**字幕の生成そのもの**（録音・認識・翻訳）の開始と停止。
+    """Start and stop **the caption generation itself** (recording, speech
+    recognition, translation).
 
-    Zoomへの送信とは別の関門である。こちらを止めると、音声デバイスを閉じ、
-    認識のWebSocketも切る。**音は取り込まれず、APIも呼ばれない。**
+    This is a separate gate from sending to Zoom. Stopping here closes the
+    audio device and cuts the recognition WebSocket. **No audio is captured,
+    and no API is called.**
 
-    操作画面がある起動（`--web`）では、**停止した状態から始める。** 会議に入る前に
-    アプリを立ち上げておけるようにするためである。準備中の雑談を認識に流さない。
+    When the app starts with a control page (`--web`), **it begins in the
+    stopped state.** That lets you start the app before you join the
+    meeting, without sending the small talk of the setup to recognition.
 
-    呼ぶのはHTTPサーバのスレッドである。
+    The caller is a thread of the HTTP server.
     """
 
     def __init__(self, app: "App") -> None:
@@ -136,20 +149,22 @@ class EngineControl:
 
 
 class AudioControl:
-    """入力デバイスの一覧と差し替え。
+    """List the input devices and switch between them.
 
-    **選び違えても、誰かが喋るまで気づけないのでは遅い。** 一覧には
-    ホストAPIも出す（Windowsでは同じ名前が MME・DirectSound・WASAPI に現れる）。
-    生成中は直近の最大振幅も返すので、音が来ているかを目で見られる。
+    **Noticing a wrong choice only when someone speaks is too late.** The
+    list also shows the host API (on Windows the same name appears under
+    MME, DirectSound and WASAPI).
+    While generating, it also returns the recent peak amplitude, so you can
+    see with your eyes whether sound is arriving.
 
-    呼ぶのはHTTPサーバのスレッドである。
+    The caller is a thread of the HTTP server.
     """
 
     def __init__(self, app: "App") -> None:
         self.app = app
 
     def devices(self) -> dict:
-        """選べる入力の一覧。--from-file のときは選べない。"""
+        """The inputs you can choose. With --from-file there is no choice."""
         capture = self.app.capture
         if not isinstance(capture, audio_mod.Capture):
             return {"selectable": False, "devices": [], "index": None,
@@ -180,7 +195,8 @@ class AudioControl:
         if st["selectable"]:
             st["index"] = capture.device
             st["name"] = audio_mod.describe_device(capture.device)
-            # 生成中でなければデバイスは閉じているので、メーターは動かない。
+            # Outside generation the device is closed, so the meter does not
+            # move.
             if self.app.generating:
                 st["level"] = round(capture.take_peak(), 4)
         else:
@@ -188,10 +204,12 @@ class AudioControl:
         return st
 
     def set_device(self, index: int | None) -> dict:
-        """入力を差し替える。**生成中なら、いったん閉じて開き直す。**
+        """Switch the input. **While generating, close it and open it
+        again.**
 
-        会議の最中に「音が来ていない」と気づくことがある。そのときに
-        止めて・選んで・また開始する、という3手を踏ませたくない。
+        You sometimes notice in the middle of a meeting that no sound is
+        arriving. At that point we do not want to make you take three steps:
+        stop, choose, start again.
         """
         capture = self.app.capture
         if not isinstance(capture, audio_mod.Capture):
@@ -205,19 +223,22 @@ class AudioControl:
         self.app.audio_error = ""
         print(f"[{now()}] 音声        入力を {audio_mod.describe_device(index)} にした")
         if self.app.generating:
-            # 生成は続けたまま、音声デバイスと認識だけを開き直す。
+            # Keep generating, and reopen only the audio device and the
+            # recognition connection.
             self.app.request_restart()
         return self.status()
 
 
 class GlossaryControl:
-    """用語集の一覧と選び直し。
+    """List the glossaries and choose different ones.
 
-    **会議によって語彙が違う。** サブシステムごとの表を必要なぶんだけ重ねる。
-    1つの大きな表を全部の会議で使うと、関係の無い語が認識の keywords を食い、
-    上限で本当に要る語が落ちる。
+    **Different meetings use different words.** You stack the per-subsystem
+    glossaries you need, and no more.
+    Using one big glossary for every meeting means unrelated words eat the
+    recognition keywords, and the words you actually need fall off the end
+    at the limit.
 
-    呼ぶのはHTTPサーバのスレッドである。
+    The caller is a thread of the HTTP server.
     """
 
     def __init__(self, app: "App") -> None:
@@ -234,10 +255,12 @@ class GlossaryControl:
         }
 
     def select(self, names: list[str]) -> dict:
-        """選び直す。**生成中なら、認識を繋ぎ直して新しい keywords を届ける。**
+        """Choose different glossaries. **While generating, reconnect
+        recognition so it gets the new keywords.**
 
-        keywords はセッションの開始時にしか送れない。繋ぎ直さないと、
-        翻訳だけが新しい表になり、認識は古い表のままになる。
+        keywords can only be sent when a session starts. Without
+        reconnecting, only translation would use the new glossary, and
+        recognition would stay on the old one.
         """
         known = {s["name"] for s in glossary.available()}
         unknown = [n for n in names if n not in known]
@@ -247,14 +270,16 @@ class GlossaryControl:
         return self.status()
 
     def read(self, name: str) -> tuple[str, str]:
-        """表の中身を返す。`(名前, 本文)`。ダウンロードに使う。"""
+        """Return the content of a glossary, as `(name, text)`. Used for
+        download."""
         return glossary.check_name(name), glossary.read_text(name)
 
     def upload(self, name: str, text: str) -> dict:
-        """表を置く。同じ名前があれば置き換える。
+        """Store a glossary. Replace one of the same name.
 
-        **使っている表を置き換えたら、その場で入れ直す。** 置き換えたのに
-        古いままで会議が進む、というのがいちばん困る。
+        **When a glossary in use is replaced, load it again right away.**
+        The worst case is a meeting that goes on with the old content after
+        you replaced it.
         """
         stem = glossary.save_text(name, text)
         if stem in self.app.glossary_names:
@@ -262,7 +287,8 @@ class GlossaryControl:
         return self.status()
 
     def remove(self, name: str) -> dict:
-        """表を消す。使っていた表なら、選択から外して入れ直す。"""
+        """Delete a glossary. If it was in use, drop it from the selection
+        and load the rest again."""
         stem = glossary.delete_file(name)
         if stem in self.app.glossary_names:
             self.app.apply_glossary(
@@ -271,11 +297,12 @@ class GlossaryControl:
 
 
 class TuningControl:
-    """遅延の調整つまみを、操作画面から変えられるようにする。
+    """Lets the control page change the delay tuning knobs.
 
-    **よく変えるものではない。** 既定値は実測で決めてある。操作画面では畳んでおく。
+    **These are not changed often.** The defaults come from measurement. We
+    keep this section collapsed on the control page.
 
-    呼ぶのはHTTPサーバのスレッドである。
+    The caller is a thread of the HTTP server.
     """
 
     def __init__(self, app: "App") -> None:
@@ -289,18 +316,21 @@ class TuningControl:
         }
 
     def set(self, values: dict) -> dict:
-        """値を変える。**すぐ効く。再起動は要らない。**
+        """Change the values. **They take effect at once. No restart
+        needed.**
 
-        `ValueError` は操作した人に見せる。
+        A `ValueError` is shown to the person who made the change.
         """
-        # **全部を検算してから入れる。** 途中で弾かれたときに、半分だけ変わった
-        # 状態にしない。入れるのは `config.set_tuning` で、値だけでなく
-        # 「人が明示して変えたか」も覚える（向きの切り替えから守るため）。
+        # **Check every value before setting any of them.** If one is
+        # rejected halfway, we must not end up half changed. We set them
+        # through `config.set_tuning`, which also remembers whether a person
+        # set the value explicitly (to protect it from a direction switch).
         checked = {name: config.coerce_tuning(name, raw) for name, raw in values.items()}
         for name, value in checked.items():
             config.set_tuning(name, value)
-        # **`Segmenter` は作られたときに値を写している。** そこへ届けないと、
-        # 画面の数字だけが変わって、切り方は前のままになる。
+        # **`Segmenter` copied the values when it was created.** Without
+        # handing them to it, only the numbers on the page would change, and
+        # it would keep cutting the old way.
         self.app.segmenter.idle_sec = config.IDLE_FLUSH_SEC
         self.app.segmenter.force_cut = config.FORCE_CUT_CHARS
         if checked:
@@ -309,7 +339,8 @@ class TuningControl:
         return self.status()
 
     def save(self) -> dict:
-        """いまの値を `.env` に書く。次に起動したときも同じ値で始まる。"""
+        """Write the current values to `.env`, so the next start uses the
+        same values."""
         written = {item["env"]: str(item["value"]) for item in config.tuning()}
         path = config.save_env(written)
         print(f"[{now()}] 設定        {path} に保存した")
@@ -319,12 +350,14 @@ class TuningControl:
 
 
 class DirectionControl:
-    """字幕の向きの切り替え。
+    """Switching the caption direction.
 
-    **会議ごとに選ぶ。** 日本語の会議には英語字幕、英語の会議には日本語字幕。
-    用語集と違って、切り替えても認識は繋ぎ直さない（`keywords` が向きで変わらない）。
+    **You choose one for each meeting.** English captions for a Japanese
+    meeting, Japanese captions for an English meeting.
+    Unlike the glossary, switching does not reconnect recognition
+    (`keywords` does not change with the direction).
 
-    呼ぶのはHTTPサーバのスレッドである。
+    The caller is a thread of the HTTP server.
     """
 
     def __init__(self, app: "App") -> None:
@@ -340,23 +373,28 @@ class DirectionControl:
         }
 
     def select(self, name: str) -> dict:
-        """選び直す。**その場で効く。再起動も再接続も要らない。**"""
+        """Choose a different direction. **It takes effect at once. No
+        restart and no reconnect.**"""
         self.app.apply_direction(str(name))
         return self.status()
 
 
 class RecordControl:
-    """会議の記録。**字幕PCに溜めて、操作画面から落とす**（2026-09-20）。
+    """The meeting record. **It collects on the caption PC, and you download
+    it from the control page** (2026-09-20).
 
-    置き場は `local/transcripts/`。**画面からは選び直せない。** 字幕PCは常時
-    起動で、操作は tailnet 越しである。記録を取りに行くのに RustDesk を起こす
-    のが面倒だ、というのが元の問題なので、**落とせるようにすれば置き場を
-    動かす理由が無くなる。** 変えたい人は `.env` の `LIVECAPTION_SAVE_DIR`。
+    It goes in `local/transcripts/`. **The page cannot change that.** The
+    caption PC runs all the time, and we operate it over the tailnet. The
+    original problem was that starting a remote desktop session just to
+    fetch a record is a nuisance, so **once you can download it, there is no
+    reason left to move the folder.** Anyone who wants to change it uses
+    `LIVECAPTION_SAVE_DIR` in `.env`.
 
-    （2026-09-20 の午前には、置き場を画面から選ぶ作りにしていた。フォルダを
-    選ぶ窓と、遠隔用のフォルダ一覧の2通り。落とせるようになったので両方消した。）
+    (On the morning of 2026-09-20, the folder could be chosen from the page:
+    a folder picker, and a list of folders for remote use. Both were removed
+    once downloading worked.)
 
-    呼ぶのはHTTPサーバのスレッドである。
+    The caller is a thread of the HTTP server.
     """
 
     def __init__(self, app: "App") -> None:
@@ -369,14 +407,17 @@ class RecordControl:
         }
 
     def latest_path(self) -> Path | None:
-        """落とせる記録の `.jsonl`。**中身のあるもののうち、いちばん新しい1本。**
+        """The `.jsonl` you can download. **The newest one that has content
+        in it.**
 
-        **空のものは飛ばす。** 会議が終わると、本体は次の記録を開いて待つ
-        （`roll_transcript`）。いちばん新しいファイルをそのまま返すと、
-        会議のあとに落としたとき、1文も入っていない記録が出てくる。
+        **Skip the empty ones.** When a meeting ends, the app opens the next
+        record and waits (`roll_transcript`). Returning the newest file as
+        it is would hand you a record with not one sentence in it when you
+        download after a meeting.
 
-        画面からファイルを指す文字列は受け取らない。**どれを返すかはここで
-        決める。** 操作画面には認証が無いので、そこへパスを渡す口を作らない。
+        We do not accept a string from the page that names a file. **What we
+        return is decided here.** The control page has no authentication, so
+        we do not give it a way to pass a path.
         """
         directory = Path(self.app.settings.transcript_dir)
         for item in transcript_mod.scan(directory):
@@ -385,7 +426,8 @@ class RecordControl:
         return None
 
     def latest(self) -> dict:
-        """落とせる記録が何かを画面に知らせる。無ければ `item` は None。"""
+        """Tell the page which record can be downloaded. `item` is None when
+        there is none."""
         path = self.latest_path()
         item = None
         if path is not None:
@@ -400,24 +442,28 @@ class App:
     def __init__(self, settings: config.Settings, web=None) -> None:  # noqa: ANN001
         self.settings = settings
         self.web = web
-        # **向きは他の何よりも先に決める。** `Segmenter` は作られたときに
-        # `FORCE_CUT_CHARS` を写し、`Translator` は向きでプロンプトを選ぶ。
-        # 後から差し替えると、その2つだけが古い向きのままになる。
+        # **Decide the direction before anything else.** `Segmenter` copies
+        # `FORCE_CUT_CHARS` when it is created, and `Translator` picks its
+        # prompt from the direction. Replacing it later would leave those
+        # two, and only those two, on the old direction.
         self.direction = config.apply_direction(
             settings.direction or config.direction_selection()
         )
-        # 操作画面の言語。**字幕の向きとは無関係である。** 英語の会議に日本語字幕を
-        # 出しながら、操作画面を英語にすることもある。
+        # The control page language. **It has nothing to do with the caption
+        # direction.** You may put out Japanese captions for an English
+        # meeting while the control page is in English.
         config.apply_ui_lang(config.ui_lang_selection())
-        # **使う用語集は名前で決まる。** 起動時の指定が無ければ前回の選択。
+        # **The glossaries in use are decided by name.** With nothing given
+        # at startup, we use the last choice.
         self.glossary_names: tuple[str, ...] = tuple(
             settings.glossary_names if settings.glossary_names is not None
             else glossary.selection()
         )
         entries = glossary.load(self.glossary_names)
         self.entries = entries
-        # 上限で切り捨てられた語は認識の段に届かない。黙って落とさず、
-        # 起動時の画面に数を出す（2026-09-07 に27語が落ちていたのに気づけなかった）。
+        # Words cut off at the limit never reach the recognition stage. We
+        # do not drop them silently; we print how many on the startup screen
+        # (on 2026-09-07, 27 words were dropped and nobody noticed).
         every = glossary.keywords(entries, limit=None)
         self.keywords = every[: config.ASR_KEYWORD_LIMIT]
         self.dropped_keywords = len(every) - len(self.keywords)
@@ -437,63 +483,76 @@ class App:
         self.glossary = GlossaryControl(self)
         self.tuning = TuningControl(self)
         self.dir_control = DirectionControl(self)
-        # 予定された会議を無人で回すスケジューラ（schedule.py）。
+        # The scheduler that runs scheduled meetings with nobody watching
+        # (schedule.py).
         self.scheduler = schedule_mod.Scheduler(self)
-        # VNC（vnc.py）。**コンテナで動かすときだけ使える。**
-        # Windows では DISPLAY が無いので、操作画面には「使えない」と出る。
+        # VNC (vnc.py). **Only usable when running in a container.**
+        # On Windows there is no DISPLAY, so the control page says it is not
+        # available.
         self.vnc = vnc_mod.Vnc()
-        # run() で受け取る。操作画面から入力を差し替えるために持っておく。
+        # Set in run(). We keep it so the control page can switch the input.
         self.capture = None
-        # 音声デバイスを開けなかったときの理由。開けたら消す。
+        # Why the audio device could not be opened. Cleared once it opens.
         self.audio_error = ""
-        # 最後に1文が確定した時刻（`time.monotonic`）。無音の見張りが使う。
-        # **音量ではなく文で見る。** 理由は `_dispatch` に書いた。
+        # When the last sentence became final (`time.monotonic`). The
+        # silence watchdog uses it.
+        # **We look at sentences, not at the volume.** The reason is in
+        # `_dispatch`.
         self.last_sentence_at = time.monotonic()
-        # 字幕の生成（録音・認識・翻訳）が回っているか。
-        # **操作画面があるときは、停止した状態から始める。** 会議に入る前に
-        # アプリを立ち上げておけるようにするため。無いときは押す手段が無いので
-        # すぐ始める（run.py が決めて `start_now` で渡す）。
+        # Whether caption generation (recording, recognition, translation)
+        # is running.
+        # **With a control page, we begin in the stopped state.** That lets
+        # you start the app before you join the meeting. Without one there
+        # is no button to press, so we start at once (run.py decides and
+        # passes `start_now`).
         self.generating = False
-        # 開始と停止を _pipeline に伝える。片方が立っているときは他方を倒す。
+        # These tell _pipeline to start and to stop. When one is set, the
+        # other is cleared.
         self._gen_on = asyncio.Event()
         self._gen_off = asyncio.Event()
         self._gen_off.set()
-        # 入力デバイスを差し替えたときに立てる。生成は続けたまま、
-        # 音声デバイスと認識だけを開き直す。
+        # Set when the input device is switched. Generation continues, and
+        # only the audio device and recognition are opened again.
         self._restart = asyncio.Event()
-        # 書きかけの文字起こしを、最後に閲覧画面へ渡した時刻（`_show_partial`）。
+        # When we last handed the unfinished transcript to the viewer page
+        # (`_show_partial`).
         self._partial_at = 0.0
-        # 会議の記録。**日本語の認識文と英語の字幕を対にして残す。**
-        # 対にするために、翻訳のタスクと元の文を一緒に持ち回る（_dispatch / _post）。
+        # The meeting record. **We keep the recognized sentence and the
+        # caption as a pair.**
+        # To pair them, we carry the translation task and the original
+        # sentence together (_dispatch / _post).
         self.transcript = (
             transcript_mod.Transcript(settings.transcript_dir, meta=self._transcript_meta())
             if settings.save
             else None
         )
         if web is not None:
-            # ブラウザの操作画面から Zoom字幕を開始・停止できるようにする。
+            # Let the browser control page start and stop the Zoom captions.
             web.control = self.zoom
-            # 字幕の生成そのものを開始・停止できるようにする。
+            # Let it start and stop the caption generation itself.
             web.engine = self.engine
-            # 入力デバイスの一覧と差し替え。
+            # The list of input devices, and switching between them.
             web.audio = self.audio
-            # 用語集の一覧と選び直し。
+            # The list of glossaries, and choosing different ones.
             web.glossary = self.glossary
-            # 遅延の調整つまみ。よく変えないので、画面では畳んである。
+            # The delay tuning knobs. Rarely changed, so the page keeps this
+            # collapsed.
             web.tuning = self.tuning
-            # 字幕の向き。会議ごとに選ぶ。
+            # The caption direction. Chosen per meeting.
             web.direction = self.dir_control
-            # 同じ画面から字幕アプリそのものを終わらせる。
+            # Shut the caption app down from the same page.
             web.on_shutdown = self.request_stop
-            # 記録が溜まっていることを操作画面に出す。
+            # Show on the control page that records have collected.
             web.transcript = self.transcript
-            # 記録の置き場。フォルダ選択の窓もここから開く。
+            # Where the records go. The folder picker also opens from here.
             web.records = RecordControl(self)
-            # 予定の状態と、止める・飛ばす・失敗を消す、の操作。
+            # The state of the schedule, and stopping, skipping and clearing
+            # failures.
             web.scheduler = self.scheduler
-            # VNC。**会議中でも起動・停止できる**ようにしてある。
+            # VNC. **It can be started and stopped during a meeting.**
             web.vnc = self.vnc
-            # **既定では上げない。** 認証が無いので、要るときだけ画面から開ける。
+            # **Not started by default.** It has no authentication, so you
+            # open it from the page when you need it.
             if os.environ.get(config.VNC_ENV, "").strip().lower() in (
                     "1", "true", "yes", "on"):
                 st = self.vnc.start()
@@ -505,17 +564,20 @@ class App:
         self.sentences: asyncio.Queue[segmenter_mod.Cut] = asyncio.Queue()
         self.inflight: asyncio.Queue = asyncio.Queue(maxsize=MAX_INFLIGHT)
         self.stats = {"sentences": 0, "lines": 0}
-        # 先回りの翻訳。(投げた文字列, タスク) を1つだけ持つ。
+        # The speculative translation. We hold exactly one
+        # (text we sent, task).
         self._spec: tuple[str, asyncio.Task] | None = None
-        # 外から終了を頼まれたら立てる。run() がこれを見て後片付けに入る。
+        # Set when something outside asks us to shut down. run() watches it
+        # and starts cleaning up.
         self.stop_requested = asyncio.Event()
 
     def request_stop(self, reason: str = "外部") -> None:
-        """字幕アプリを終わらせる。**別のスレッドから呼ばれる。**
+        """Shut the caption app down. **Called from another thread.**
 
-        ブラウザの操作画面（HTTPサーバのスレッド）から来るので、
-        Event は `call_soon_threadsafe` で本体のイベントループに渡す。
-        Ctrl+C と同じところへ落ちる。後片付けは run.py が行う。
+        It comes from the browser control page (a thread of the HTTP
+        server), so we hand the Event to the main event loop with
+        `call_soon_threadsafe`.
+        It lands in the same place as Ctrl+C. run.py does the cleanup.
         """
         print(f"[{now()}] 終了        {reason}から終了を要求された")
         loop = self.zoom.loop
@@ -525,17 +587,20 @@ class App:
             loop.call_soon_threadsafe(self.stop_requested.set)
 
     def _transcript_meta(self) -> dict:
-        """記録の先頭に書く情報。
+        """The information written at the top of a record.
 
-        **呼ぶたびに今の状態から作る。** 会議ごとに記録を切り替えるので、
-        起動時の値を使い回すと、向きや用語集を途中で変えた後の記録が嘘になる。
+        **Build it from the current state on every call.** We switch records
+        per meeting, so reusing the values from startup would make a record
+        lie after the direction or the glossary was changed part way
+        through.
         """
         return {
             "asr": config.ASR_MODEL,
             "delay": self.settings.delay,
             "languages": ",".join(self.settings.languages),
             "translate": self.settings.translate_model,
-            # 始めたときの向き。**途中で変えられるので、1文ごとにも残す。**
+            # The direction we started with. **It can change part way
+            # through, so we also record it for each sentence.**
             "direction": self.direction.name,
             "glossary": len(self.entries),
             "glossary_sets": ", ".join(self.glossary_names) or "(なし)",
@@ -543,20 +608,22 @@ class App:
         }
 
     def roll_transcript(self, label: str = "") -> Path | None:
-        """いまの記録を閉じて `.md` を書き、次の記録を開く。閉じたパスを返す。
+        """Close the current record, write the `.md`, and open the next one.
+        Return the path we closed.
 
-        **プロセスの終了を待たない。** 常駐させると `report()` が呼ばれるのは
-        何週間も先になる。それまで `.md` は1本も書かれず、会議何十本ぶんが
-        1つの `.jsonl` に溜まる。会議が終わるたびにここで区切る。
+        **Do not wait for the process to end.** When the app runs all the
+        time, `report()` is called weeks later. Until then not one `.md`
+        would be written, and dozens of meetings would collect in a single
+        `.jsonl`. We cut the record here at the end of each meeting.
 
-        **`web.transcript` も差し替えること。** 差し替えないと、いま書いている
-        記録がどれかを操作画面が取り違える。
+        **Replace `web.transcript` too.** Without that, the control page
+        gets the wrong idea of which record we are writing.
 
-        1文も無い記録は `close()` が消すので、会議の前後で2回呼んでも
-        空ファイルは残らない。
+        `close()` deletes a record with no sentences in it, so calling this
+        both before and after a meeting leaves no empty file.
 
-        呼ぶのは本体のイベントループだけである（スケジューラと、停止から
-        少し置いて呼ぶ `_close_record_soon`）。
+        Only the main event loop calls this (the scheduler, and
+        `_close_record_soon`, which runs a little after a stop).
         """
         if self.transcript is None:
             return None
@@ -571,21 +638,26 @@ class App:
         return done
 
     def set_generating(self, on: bool) -> None:
-        """字幕の生成を開始・停止する。**別のスレッドから呼ばれる。**
+        """Start or stop caption generation. **Called from another thread.**
 
-        表示に使う `generating` はここで即座に立てる。操作画面は要求の返事で
-        状態を描き直すので、イベントループを待つと1拍ずれて見える。
-        実際の開始・停止（音声デバイスと認識の接続）は `_pipeline` が行う。
+        We set `generating`, which the display uses, right here. The control
+        page redraws its state from the answer to the request, so waiting
+        for the event loop would make it look one beat behind.
+        `_pipeline` does the actual start and stop (the audio device and the
+        recognition connection).
         """
         if on == self.generating:
             return
         if on:
-            # **前の失敗を引きずらない。** `audio_error` は、開けたときと
-            # デバイスを差し替えたときにしか消えない。残っていると、画面には
-            # ずっと古い失敗が出たままになり、**始まったかどうかを状態から
-            # 判定できない**（無人で回すときは、これが唯一の手がかりになる）。
+            # **Do not carry an earlier failure forward.** `audio_error` is
+            # cleared only when the device opens and when the device is
+            # switched. Left in place, the page would keep showing an old
+            # failure, and **you could not tell from the state whether it
+            # started** (with nobody watching, that is the only clue you
+            # have).
             self.audio_error = ""
-            # 無音の見張りの起点。止まっているあいだの時間を数えない。
+            # The starting point for the silence watchdog. Do not count the
+            # time while it was stopped.
             self.last_sentence_at = time.monotonic()
         self.generating = on
         loop = self.zoom.loop
@@ -595,12 +667,14 @@ class App:
             loop.call_soon_threadsafe(self._flip, on)
 
     def apply_glossary(self, names: list[str] | tuple[str, ...]) -> None:
-        """用語集を選び直して、認識と翻訳の両方に反映する。
+        """Choose different glossaries and apply them to both recognition
+        and translation.
 
-        **別のスレッドから呼ばれる。**
+        **Called from another thread.**
 
-        翻訳のプロンプトはその場で作り直せる。認識の `keywords` は
-        セッションの開始時にしか送れないので、生成中なら繋ぎ直す。
+        The translation prompt can be rebuilt on the spot. The `keywords`
+        for recognition can only be sent when a session starts, so while
+        generating we reconnect.
         """
         names = tuple(names)
         entries = glossary.load(names)
@@ -611,7 +685,8 @@ class App:
         self.keywords = every[: config.ASR_KEYWORD_LIMIT]
         self.dropped_keywords = len(every) - len(self.keywords)
         self.asr.keywords = self.keywords
-        # 翻訳のプロンプトを作り直す。訳の途中の文には影響しない。
+        # Rebuild the translation prompt. This does not affect a sentence
+        # that is already being translated.
         self.translator.system = translator_mod.build_system(entries)
         glossary.remember(names)
 
@@ -622,35 +697,41 @@ class App:
             print(f"       **{self.dropped_keywords} 語が上限で切り捨てられた。"
                   "文字起こしの段には届かない。**")
         if self.generating:
-            # keywords はセッションの開始時にしか送れない。繋ぎ直す。
+            # keywords can only be sent when a session starts. Reconnect.
             self.request_restart()
 
     def apply_direction(self, name: str) -> None:
-        """字幕の向きを切り替える。**別のスレッドから呼ばれる。**
+        """Switch the caption direction. **Called from another thread.**
 
-        **認識は繋ぎ直さない。** `keywords` は用語表の日本語と英語の両方を常に
-        渡しているので、向きを変えても同じ語が同じ並びで行く。用語集の選び直しとは
-        ここが違う。
+        **We do not reconnect recognition.** `keywords` always passes both
+        the Japanese and the English side of the glossary, so changing the
+        direction sends the same words in the same order. This is where it
+        differs from choosing a different glossary.
 
-        `config.apply_direction()` が定数を差し替え、ここが、その定数を写して
-        持っている3つ（翻訳のプロンプト・`Segmenter`・`CaptionSender`）に届ける。
+        `config.apply_direction()` replaces the constants, and this method
+        hands them to the three places that hold a copy: the translation
+        prompt, `Segmenter` and `CaptionSender`.
         """
         d = config.apply_direction(name)
         self.direction = d
-        # **走っている先回りの翻訳を捨てる。** 古いプロンプトで訳しているので、
-        # 採用すると切り替えた直後の1文だけ逆向きの字幕が出る。
+        # **Throw away the speculative translation that is running.** It is
+        # being translated with the old prompt, so using it would put out
+        # one caption in the wrong direction right after the switch.
         #
-        # **タスクの取り消しは、走らせている輪の中からでないといけない。**
-        # ここはHTTPサーバのスレッドなので、輪へ渡す（`set_generating` と同じ形）。
+        # **A task can only be cancelled from inside the loop that runs
+        # it.** We are in a thread of the HTTP server here, so we hand it to
+        # the loop (the same shape as `set_generating`).
         loop = self.zoom.loop
         if loop is None:
             self._drop_speculation()
         else:
             loop.call_soon_threadsafe(self._drop_speculation)
         self.translator.system = translator_mod.build_system(self.entries)
-        # 直前の文脈も捨てる。切り替えの前後で字幕の言語が変わるため。
+        # Throw away the recent context too, because the caption language
+        # changes across the switch.
         self.translator.history.clear()
-        # **`Segmenter` は作られたときに値を写している。** 届けないと切り方が前のまま。
+        # **`Segmenter` copied the value when it was created.** Without
+        # handing it over, it would keep cutting the old way.
         self.segmenter.force_cut = config.FORCE_CUT_CHARS
         self.sender.lang = d.caption_lang
         config.remember_direction(d.name)
@@ -659,7 +740,8 @@ class App:
               f"Zoomの lang={d.caption_lang}）")
 
     def request_restart(self) -> None:
-        """音声デバイスと認識を開き直す。**別のスレッドから呼ばれる。**"""
+        """Open the audio device and recognition again. **Called from
+        another thread.**"""
         loop = self.zoom.loop
         if loop is None:
             self._restart.set()
@@ -674,28 +756,34 @@ class App:
             self._gen_on.clear()
             self._gen_off.set()
 
-    # --- 段ごとの仕事 -------------------------------------------------------
+    # --- The work of each stage ---------------------------------------------
 
     async def _pipeline(self, capture) -> None:
-        """開始されている間だけ、取り込みと認識を回す。
+        """Run capture and recognition only while generation is started.
 
-        **停止したら音声デバイスを閉じ、認識のWebSocketも切る。** 止めているのに
-        音が取り込まれていたり、APIに送られていたりしてはいけない。
+        **On stop, close the audio device and cut the recognition
+        WebSocket.** While stopped, no audio may be captured and nothing may
+        be sent to the API.
 
-        止めるときは、切り出しの途中まで溜まっている文字を捨てる。出さずに捨てる。
-        止めた後に字幕が1行出てくると、読み手には何が起きたのか分からない。
+        On stop, throw away the text that has collected part way through a
+        sentence. Throw it away without putting it out. A caption line
+        appearing after the stop leaves the reader with no idea what
+        happened.
         """
         while True:
             await self._gen_on.wait()
-            # **開けないデバイスを選ぶことがある。** 抜けているUSB機器、
-            # 48 kHz を受け付けない装置。ここで落とすと、以後この輪は回らず、
-            # 画面には何の理由も出ない。捕まえて、止まった状態へ戻す。
+            # **People do pick a device that cannot be opened.** A USB
+            # device that was unplugged, or one that does not accept 48 kHz.
+            # Crashing here would stop this loop for good, with no reason
+            # shown on the page. Catch it, and go back to the stopped state.
             try:
                 capture.start()
-            except Exception as exc:  # noqa: BLE001 - 会議中に落とさない
-                # **開けないデバイスを選ぶことがある。** 抜けているUSB機器、
-                # 48 kHz を受け付けない装置。ここで落とすと以後この輪は回らず、
-                # 画面には何の理由も出ない。捕まえて、止まった状態へ戻す。
+            except Exception as exc:  # noqa: BLE001 - do not crash mid-meeting
+                # **People do pick a device that cannot be opened.** A USB
+                # device that was unplugged, or one that does not accept
+                # 48 kHz. Crashing here would stop this loop for good, with
+                # no reason shown on the page. Catch it, and go back to the
+                # stopped state.
                 self.audio_error = f"{type(exc).__name__}: {exc}"
                 print(f"[{now()}] 音声        入力を開けない: {self.audio_error}")
                 print("       操作画面の「音声の入力」で別のデバイスを選ぶこと。")
@@ -705,13 +793,16 @@ class App:
             self.audio_error = ""
             self.asr.resume()
             asr = asyncio.create_task(self.asr.run(capture, self._on_delta))
-            # Zoomへ送っている最中なら、ここが受信側にとっての「流れ始め」である。
+            # If we are already sending to Zoom, this is where the stream
+            # begins for the receiving side.
             if self.sender.active:
                 await self.sender.warmup()
 
-            # 停止と、入力の差し替えの、どちらが先に来ても抜ける。
-            # **イベントの立つ順に頼らない。** 捨て字幕の送信中（約1秒）に
-            # 差し替えを頼まれても、取りこぼさないようにするためである。
+            # Leave when either a stop or an input switch arrives, whichever
+            # comes first.
+            # **Do not rely on the order in which the events are set.** That
+            # way, a switch asked for while the throwaway captions are being
+            # sent (about 1 second) is not lost.
             waits = [
                 asyncio.create_task(self._gen_off.wait()),
                 asyncio.create_task(self._restart.wait()),
@@ -719,9 +810,11 @@ class App:
             try:
                 await asyncio.wait(waits, return_when=asyncio.FIRST_COMPLETED)
             finally:
-                # **終了のときもここを通る。** 認識のタスクは別に作ってあるので、
-                # 畳まないと接続が残る。ここでは待たない。待つと、取り消しの
-                # 途中でもう一度 CancelledError を受けることがある。
+                # **We pass through here on shutdown too.** The recognition
+                # task was created separately, so without closing it the
+                # connection would stay open. We do not wait here; waiting
+                # can bring a second CancelledError in the middle of the
+                # cancellation.
                 for w in waits:
                     w.cancel()
                 self.asr.stop()
@@ -729,27 +822,33 @@ class App:
             await asyncio.gather(asr, *waits, return_exceptions=True)
             capture.stop()
             self.segmenter.reset()
-            # 溜まっていた文字を捨てたので、画面の書きかけの行も消す。
+            # We threw away the text that had collected, so clear the
+            # unfinished line on the page too.
             self._show_partial(force=True)
-            # 途中の文字を捨てたので、それを訳していた先回りも捨てる。
+            # We threw away the partial text, so throw away the speculative
+            # translation of it as well.
             self._drop_speculation()
-            # 差し替えで抜けたときは _gen_on が立ったままなので、そのまま開き直す。
+            # When we left because of a switch, _gen_on is still set, so we
+            # simply open everything again.
             self._restart.clear()
-            # **止めて抜けたなら、記録を区切る。** 停止は「この会議は終わり」の
-            # 意味なので（配信もZoom字幕も閉じる）、記録もそこで閉じて `.md` を
-            # 書く。ここでは待たない。待つと、すぐ再開したときに開き直しが遅れる。
+            # **If we left because of a stop, cut the record.** Stop means
+            # "this meeting is over" (it closes delivery and the Zoom
+            # captions too), so we close the record there and write the
+            # `.md`. We do not wait here; waiting would delay reopening if
+            # generation starts again right away.
             if not self.generating:
                 asyncio.create_task(self._close_record_soon())
 
     async def _close_record_soon(self) -> None:
-        """停止から少し置いて、記録を区切る。
+        """Cut the record a little after the stop.
 
-        **すぐには閉じない。** 止めた時点で、最後の1文がまだ翻訳の途中のことが
-        ある。即座に区切ると、その1文だけが次の記録に落ちて、**中身1行の記録が
-        「最新」になる。**
+        **Do not close it right away.** At the moment you stop, the last
+        sentence may still be in translation. Cutting immediately would drop
+        that one sentence into the next record, and **a record with one line
+        in it would become the "newest" one.**
 
-        **この間に再開したら区切らない。** 休憩で止めただけなら、会議の記録は
-        1本のままにする。
+        **If generation starts again within that time, do not cut.** If you
+        only stopped for a break, the meeting record stays as one file.
         """
         await asyncio.sleep(config.STOP_ROLL_WAIT_SEC)
         if self.generating:
@@ -760,23 +859,29 @@ class App:
         cuts = self.segmenter.feed(delta)
         for cut in cuts:
             self.sentences.put_nowait(cut)
-        # 確定した直後は間引かない。書きかけが画面に残ったままになる。
+        # Do not thin out right after a sentence becomes final; the
+        # unfinished text would stay on the page.
         self._show_partial(force=bool(cuts))
 
     def _show_partial(self, force: bool = False) -> None:
-        """書きかけの文字起こしを閲覧画面へ渡す。
+        """Hand the unfinished transcript to the viewer page.
 
-        **文が確定するまでの数秒、画面には何も出ない。** 話している人の言葉は
-        `Segmenter` に溜まっているだけで、読む側からは止まって見える。届いた分を
-        そのまま流しておくと、声とほぼ同時（実測 0.24秒）に文字が出る。
+        **For the few seconds until a sentence is final, the page shows
+        nothing.** The speaker's words only collect in `Segmenter`, and to
+        the reader everything looks stopped. Sending what has arrived puts
+        the text on the page almost at the same time as the voice (measured
+        at 0.24 seconds).
 
-        **翻訳とZoom字幕には流さない。** どちらも出した行を置き換えられないので、
-        書きかけを送ると訂正版と二重に残る。置き換えられるのはブラウザだけである。
+        **Do not send this to translation or to the Zoom captions.** Neither
+        one can replace a line it has already put out, so sending
+        unfinished text would leave it there next to the corrected version.
+        The browser is the only one that can replace a line.
 
-        delta は中央値 0.01秒 の間隔で来るので、そのまま毎回渡すと長ポーリングが
-        回りっぱなしになる。`PARTIAL_INTERVAL_SEC` ごとに間引く。
-        **確定と停止のときは `force` で必ず渡す。** 間引きのせいで、書きかけが
-        画面に残ったままになるのを防ぐ。
+        Deltas arrive with a median gap of 0.01 seconds, so passing every
+        one of them would keep the long poll running without a break. We
+        thin them out to one per `PARTIAL_INTERVAL_SEC`.
+        **On a final sentence and on a stop, always pass it with `force`.**
+        That keeps the thinning from leaving unfinished text on the page.
         """
         if self.web is None or not config.WEB_PARTIAL:
             return
@@ -786,14 +891,18 @@ class App:
         self._partial_at = nowt
         self.web.partial(self.segmenter.buffer)
 
-    # --- 先回りの翻訳 -------------------------------------------------------
+    # --- Speculative translation --------------------------------------------
 
     def _speculate(self) -> None:
-        """無音が続いたら、確定を待たずに翻訳を投げておく。
+        """After enough silence, send the translation without waiting for
+        the sentence to be final.
 
-        確定した時点で中身が変わっていなければ、その結果をそのまま使う。
-        **`IDLE_FLUSH_SEC` の安全余裕はそのままで、翻訳の時間だけが消える。**
-        無音待ちを速くする手は、これしか残っていない（閾値は下げられない）。
+        If the text has not changed by the time the sentence becomes final,
+        we use that result as it is.
+        **The safety margin of `IDLE_FLUSH_SEC` stays the same, and only the
+        translation time disappears.**
+        This is the only way left to make the silence wait faster; the
+        threshold cannot go lower.
         """
         if not config.SPECULATE_AFTER_SEC:
             return
@@ -803,7 +912,7 @@ class App:
         if not text or not segmenter_mod.has_content(text):
             return
         if self._spec is not None and self._spec[0] == text:
-            return                      # 同じ中身で二度投げない
+            return                      # do not send the same text twice
         self._drop_speculation()
         self.stats["spec_fired"] = self.stats.get("spec_fired", 0) + 1
         self._spec = (
@@ -812,12 +921,14 @@ class App:
         )
 
     def _take_speculation(self, text: str):
-        """先回りの翻訳が使えるなら、そのタスクを返す。使えなければ捨てて None。"""
+        """Return the speculative translation task if it can be used.
+        Otherwise throw it away and return None."""
         if self._spec is None:
             return None
         spec_text, task = self._spec
-        # 末尾の文末記号だけの違いは許す。認識は「。」を遅れて足すことがあり、
-        # 中身は同じなので訳し直す意味が無い。
+        # Allow a difference in the trailing sentence-ending mark alone.
+        # Recognition sometimes adds the final period late, and the text is
+        # the same, so translating it again would gain nothing.
         if _bare(spec_text) != _bare(text):
             self._drop_speculation()
             return None
@@ -826,78 +937,98 @@ class App:
         return task
 
     def _drop_speculation(self) -> None:
-        """使わないと決まった先回りを捨てる。
+        """Throw away a speculative translation we have decided not to use.
 
-        取り消しても、走っているHTTPの往復そのものは止まらない
-        （`asyncio.to_thread` は途中で割り込めない）。結果を読まなくするだけである。
+        Cancelling does not stop the HTTP round trip that is already running
+        (`asyncio.to_thread` cannot be interrupted part way). It only means
+        we no longer read the result.
         """
         if self._spec is not None:
             self._spec[1].cancel()
             self._spec = None
 
     async def _watch_idle(self) -> None:
-        """発話が途切れたら、文末記号が無くても確定させる。"""
+        """When the speaker stops, make the sentence final even with no
+        sentence-ending mark."""
         while True:
             await asyncio.sleep(config.IDLE_POLL_SEC)
             self._speculate()
             for cut in self.segmenter.flush_if_idle():
                 self.sentences.put_nowait(cut)
-                # 無音で確定したときも、書きかけの行を消す。
+                # Clear the unfinished line here too, when a sentence became
+                # final through silence.
                 self._show_partial(force=True)
 
     async def _dispatch(self) -> None:
-        """文を受け取って翻訳を始める。順序を保つため、タスクを順番に積む。"""
+        """Take sentences and start translating them. We stack the tasks in
+        order, so that the order is kept."""
         while True:
             cut = await self.sentences.get()
-            # **無音の見張りの基準はここである。** 音量ではなく「文になったか」で見る。
-            # Zoomのミックス音声には暗騒音が常に乗るので、振幅で黙っているかを
-            # 決めると、誰も居ない部屋に繋がったまま止まらない。
+            # **This is what the silence watchdog measures from.** We look
+            # at "did it become a sentence", not at the volume. The Zoom
+            # mixed audio always carries background noise, so deciding
+            # silence from the amplitude would never stop, even connected to
+            # an empty room.
             self.last_sentence_at = time.monotonic()
             self.stats["sentences"] += 1
             self.stats[f"cut_{cut.reason}"] = self.stats.get(f"cut_{cut.reason}", 0) + 1
             print(f"[{now()}] 文字起こし  {cut.text}")
             if self.web is not None:
                 self.web.asr(cut.text)
-            # 先回りが当たっていれば、それを使う。翻訳の時間がまるごと消える。
+            # If the speculation hit, use it. The whole translation time
+            # disappears.
             task = self._take_speculation(cut.text)
             used_spec = task is not None
             if task is None:
                 task = asyncio.create_task(self.translator.translate(cut.text))
-            # 元の文と、認識が確定した時刻を一緒に持ち回る。記録で日本語と英語を
-            # 対にするため、そして記録の時刻を「訳せた時刻」にしないためである。
-            # 満杯なら待つ。これが翻訳の同時実行数の上限になる。
+            # Carry the original sentence and the time recognition finished
+            # along with it. This pairs the recognized text with the caption
+            # in the record, and keeps the time in the record from becoming
+            # "the time the translation was done".
+            # When the queue is full we wait. That is what limits how many
+            # translations run at the same time.
             await self.inflight.put((cut, time.time(), task, used_spec))
 
     async def _post(self) -> None:
-        """翻訳の完了を順番に待って、字幕として送る。"""
+        """Wait for each translation in order, and send it as a caption."""
         while True:
             cut, heard_at, task, used_spec = await self.inflight.get()
             lines, took = await task
-            # 確定から最初の字幕までの実測。翻訳そのものの時間と分けて出す。
-            # 差が待ち行列と諸経費である。**先回りが当たった文では total が
-            # took より小さくなる。** 翻訳が確定より前に終わっているからである。
+            # The measured time from the final sentence to the first
+            # caption. We print it separately from the translation time
+            # itself; the difference is the queue and the overhead.
+            # **For a sentence where speculation hit, total is smaller than
+            # took**, because the translation finished before the sentence
+            # became final.
             total = time.time() - heard_at
             if used_spec and lines:
-                # 先回りは文脈に足していない。採用が決まったここで足す。
+                # A speculative translation was not added to the context. We
+                # add it here, now that we have decided to use it.
                 self.translator.remember(cut.text)
-            # **閲覧画面には先に全部渡す。** 下の 0.6秒 の間隔は Zoom の表示制約への
-            # 対処で（字幕の窓は最小4行しかなく、まとめて送ると先頭が押し出される）、
-            # 8行ある閲覧画面には要らない。ここを一緒にしていたので、閲覧画面が
-            # Zoom の都合で遅れていた。
+            # **Hand every line to the viewer page first.** The 0.6 second
+            # interval below works around a Zoom display limit (the caption
+            # window holds only 4 lines at its smallest, and sending them
+            # together pushes the first one out); the viewer page, with 8
+            # lines, does not need it. These used to be done together, which
+            # delayed the viewer page for Zoom's sake.
             if self.web is not None:
                 for line in lines:
                     self.web.caption(line)
-            # 実測は最初の行にだけ出す。2行目からは同じ幅の空白で桁を揃える
-            # （「総」「訳」が全角なので、2文字ぶん余分に要る）。
+            # Print the measurements on the first line only. From the second
+            # line on, we line up the columns with spaces of the same width
+            # (the Japanese labels are full width, so we need two extra
+            # characters).
             head = f"(総 {total:.1f}s / 訳 {took:.1f}s{' 先' if used_spec else ''})"
             cont = " " * (len(head) + 2 + (1 if used_spec else 0))
             sent = 0
             for i, line in enumerate(lines):
                 if i:
-                    # まとめて送ると読み手が追えない。窓は最小4行しかない。
+                    # Sending them all at once is too fast to read. The
+                    # window holds only 4 lines at its smallest.
                     await asyncio.sleep(config.LINE_INTERVAL_SEC)
-                # Zoomへ送ったかどうかに関わらず、画面には必ず出す。
-                # 送っていないことは、行頭の印で分かるようにする。
+                # Always print to the screen, whether or not we sent it to
+                # Zoom. The mark at the start of the line shows when we did
+                # not send it.
                 mark = head if not i else cont
                 if await self.sender.send(line):
                     self.stats["lines"] += 1
@@ -905,7 +1036,8 @@ class App:
                     print(f"[{now()}] 字幕        {mark} {line}")
                 else:
                     print(f"[{now()}] 字幕        {mark} {line}   (Zoomへは送っていない)")
-            # 翻訳に失敗して lines が空でも記録する。日本語だけでも残す価値がある。
+            # Record it even when translation failed and lines is empty. The
+            # recognized text alone is worth keeping.
             if self.transcript is not None:
                 self.transcript.add(
                     cut.text, lines, sent, when=heard_at,
@@ -913,11 +1045,12 @@ class App:
                     spec=used_spec, direction=config.DIRECTION,
                 )
 
-    # --- 起動 ---------------------------------------------------------------
+    # --- Startup -----------------------------------------------------------
 
     async def run(self, capture, start_now: bool = True) -> None:
-        """`start_now=False` なら、停止した状態で待つ（操作画面から開始する）。"""
-        # 操作画面から入力を差し替えられるように、持っておく。
+        """With `start_now=False`, wait in the stopped state; you start it
+        from the control page."""
+        # Keep it, so the control page can switch the input.
         self.capture = capture
         print("=" * 70)
         print("LiveCaption")
@@ -946,8 +1079,9 @@ class App:
                 print("  ブラウザの操作画面（右上の歯車）からトークンを入れて開始できる。")
         if self.web is not None:
             print(f"操作画面:   {self.web.control_url()}  （自分だけ。共有しないこと）")
-            # **出ているなら、必ず見せる。** 出ているつもりが無いのに出ている、
-            # というのがいちばん困る。認証は無いので、届く範囲が全てである。
+            # **If it is being served, always show it.** The worst case is
+            # a page being served when you did not think it was. There is no
+            # authentication, so whoever can reach it can use it.
             for extra in self.web.control_urls_extra():
                 print(f"            {extra}  "
                       "（tailnet の中から。**ACLで絞ること**）")
@@ -957,13 +1091,15 @@ class App:
             if state == "on":
                 print(f"配信URL:    {self.web.public_url()}  （参加者に配る）")
             elif state == "starting":
-                # URLは数秒後に出てくる。出たら run.py が端末に書く。
+                # The URL appears a few seconds later. When it does, run.py
+                # prints it to the terminal.
                 print("配信URL:    起動中（URLが出たらここに表示する）")
             else:
                 print("配信URL:    **停止中**"
                       "（操作画面の「配信を開始」で、参加者に配るURLが出る）")
         if self.transcript is not None:
-            # ここでファイルを作る。会議が始まる前に、書ける場所かどうかが分かる。
+            # We create the file here, so you learn before the meeting
+            # starts whether the location can be written to.
             self.transcript.open()
             print(f"記録:       {self.transcript.path}")
             print("  文字起こしと字幕を対にして、確定するたびに書く。")
@@ -980,20 +1116,25 @@ class App:
             print("Ctrl+C で終了する。")
         print("-" * 70)
 
-        # ブラウザから開始したときに捨て字幕を送れるよう、ループを渡しておく。
+        # Hand over the loop, so that a start from the browser can send the
+        # throwaway captions.
         self.zoom.loop = asyncio.get_running_loop()
 
-        # **SIGTERM でも片付ける。** Docker の `stop` / `restart` はこれを送る。
-        # Python の既定は即死で、**`finally` を通らない。** 実測で次が起きていた
-        # （2026-09-21）。
+        # **Clean up on SIGTERM too.** Docker `stop` and `restart` send it.
+        # Python's default is to die at once, **without passing through
+        # `finally`.** We measured the following (2026-09-21):
         #
-        #   記録の `.md` が書かれない。`.jsonl` は追記済みなので中身は残るが、
-        #   読める形にならない。**会議の最中に止めると、これが起きる。**
-        #   1文も無い回の空の `.jsonl` が消されず、溜まっていく
-        #   Zoomからも配信からも抜けないまま落ちる
+        #   The `.md` of the record is not written. The `.jsonl` has been
+        #   appended to, so the content survives, but it never reaches a
+        #   readable form. **Stopping in the middle of a meeting does
+        #   exactly this.**
+        #   The empty `.jsonl` of a run with no sentences is not deleted,
+        #   and they pile up
+        #   We die without leaving Zoom or stopping delivery
         #
-        # 受け口は操作画面の「終了」と同じである。**別の道を作らない。**
-        # Windows には `add_signal_handler` が無い。Ctrl+C は従来どおり。
+        # The entry point is the same as "shut down" on the control page.
+        # **Do not build a second path.**
+        # Windows has no `add_signal_handler`. Ctrl+C works as before.
         try:
             self.zoom.loop.add_signal_handler(
                 signal.SIGTERM, self.request_stop, "SIGTERM")
@@ -1007,14 +1148,18 @@ class App:
             asyncio.create_task(self._watch_idle()),
             asyncio.create_task(self._dispatch()),
             asyncio.create_task(self._post()),
-            # 予定された会議を回すスケジューラ。**予定が1つも無くても回しておく。**
-            # 動きの分かれ目を減らすためで、費用は寝ているコルーチン1本ぶんである。
-            # **これは決して返らない。** 返ると下の wait を抜けてアプリが畳まれる。
+            # The scheduler that runs scheduled meetings. **We run it even
+            # when there is no schedule at all.** That removes one branch in
+            # the behavior, and it costs one sleeping coroutine.
+            # **This must never return.** If it did, the wait below would
+            # finish and the app would shut down.
             asyncio.create_task(self.scheduler.run_forever()),
-            # ブラウザから終了を頼まれたら、これが完了して下の wait を抜ける。
+            # When the browser asks us to shut down, this completes and the
+            # wait below finishes.
             asyncio.create_task(self.stop_requested.wait()),
         ]
-        # --from-file のとき、ファイルを流し終えたら少し待って終わる。
+        # With --from-file, wait a little after the file has played, then
+        # finish.
         finished = getattr(capture, "finished", None)
         if finished is not None:
             tasks.append(asyncio.create_task(self._wait_end(finished)))
@@ -1025,7 +1170,8 @@ class App:
             pass
         finally:
             self.asr.stop()
-            # 覗き口を開けたままにしない。認証が無いので、閉じて終わる。
+            # Do not leave the peephole open. It has no authentication, so
+            # we close it before we finish.
             self.vnc.stop()
             for t in tasks:
                 t.cancel()
@@ -1033,7 +1179,7 @@ class App:
 
     async def _wait_end(self, finished: asyncio.Event) -> None:
         await finished.wait()
-        # 最後の文が認識され、訳され、送られるまでの余裕
+        # Room for the last sentence to be recognized, translated and sent
         await asyncio.sleep(12)
         for cut in self.segmenter.flush():
             print(f"[{now()}] 文字起こし  {cut.text}")
@@ -1057,10 +1203,12 @@ class App:
                 )
 
     def report(self, capture=None) -> None:
-        """終了時の要約。Ctrl+C のあとでも呼べるように同期で書く。"""
+        """The summary printed at the end. Written synchronously, so it can
+        be called after Ctrl+C."""
         print("-" * 70)
         print(f"確定した文: {self.stats['sentences']}")
-        # 確定の理由ごとの内訳。**無音待ちの割合が、遅延の調整の出発点である。**
+        # A breakdown by the reason a sentence became final. **The share of
+        # the silence wait is where you start when tuning the delay.**
         breakdown = [
             (label, self.stats.get(f"cut_{key}", 0))
             for key, label in (
@@ -1075,7 +1223,8 @@ class App:
         fired = self.stats.get("spec_fired", 0)
         if fired:
             used = self.stats.get("spec_used", 0)
-            # **投げ捨てた分がそのまま余分な料金である。** 割に合うかはここで見る。
+            # **What we threw away is money spent for nothing.** This is
+            # where you see whether it pays off.
             print(f"先回りの翻訳: {fired} 回投げて {used} 回当たった"
                   f"（捨てた {fired - used}）")
         print(f"Zoomへ送った行: {self.sender.sent}（失敗 {self.sender.failed}）")
@@ -1087,7 +1236,8 @@ class App:
         if self.segmenter.buffer.strip():
             print(f"未送信の文字列: {self.segmenter.buffer.strip()[:80]}")
         if self.transcript is not None:
-            # **`.md` はここで初めて書かれる。** `.jsonl` は途中まで残っている。
+            # **This is where the `.md` is written for the first time.** The
+            # `.jsonl` has been on disk all along.
             md = self.transcript.close()
             if md is not None:
                 print(f"記録: {self.transcript.path}")

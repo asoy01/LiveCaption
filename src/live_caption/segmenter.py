@@ -1,19 +1,21 @@
-"""文の切り出し。
+"""Sentence splitting.
 
-gpt-live-transcribe は区切りを返さない。`delta` を連続で流すだけである
-（local/HANDOFF.md の「実測結果: ストリーミング」）。したがって、
-どこで1文を確定させるかは自前で決める。
+gpt-live-transcribe does not return boundaries. It only streams `delta`
+continuously (measured on real meeting audio). So we decide on our own where a
+sentence ends.
 
-切る条件は3つ:
+There are three conditions for a cut:
 
-1. 文末の記号が来た（。！？ / . ! ?）
-2. 記号が来ないまま長くなりすぎた
-3. 一定時間、新しい文字が来なくなった（発話が途切れた）
+1. an end-of-sentence mark arrived (。！？ / . ! ?)
+2. it grew too long without any such mark
+3. no new characters arrived for a while (the speech paused)
 
-3 は呼び出し側が定期的に `flush_if_idle()` を呼ぶことで働く。
+Condition 3 works because the caller calls `flush_if_idle()` at intervals.
 
-**記号だけの断片は捨てる。** 認識は「。」だけを delta として流してくることがある。
-そのまま確定させると「.」だけの字幕が1行を占める。字幕の窓は最小4行しかない。
+**Throw away fragments that are punctuation only.** Speech recognition
+sometimes streams a delta that is nothing but "。". Settling that as a sentence
+gives a caption line holding only ".". The caption window is only four lines
+tall at minimum.
 """
 
 from __future__ import annotations
@@ -23,31 +25,37 @@ from typing import NamedTuple
 
 from . import config
 
-# 日本語の文末。英語は「. 」のように後ろに空白が続く場合だけ文末とみなす
-# （OMMT2. のような略語の途中で切らないため）。
+# Japanese end-of-sentence marks. In English, a mark counts as the end of a
+# sentence only when a space follows it, as in ". " (so that we do not cut in
+# the middle of an abbreviation such as OMMT2.).
 JA_ENDINGS = "。！？"
 EN_ENDINGS = ".!?"
 
 
 class Cut(NamedTuple):
-    """確定した1文と、確定した理由。
+    """One settled sentence, and the reason it was settled.
 
-    **理由は遅延の調整に要る。** 3つの切り方のうち、待ち時間を払っているのは
-    `idle` だけである。それが全体の何割かは、記録に残さないと分からない。
+    **The reason is needed to tune the latency.** Of the three ways of cutting,
+    only `idle` pays a waiting time. You cannot tell what share of the total it
+    is unless it is recorded.
 
-    `waited` は `idle` のときだけ意味を持つ。実際に待った秒数で、
-    `IDLE_FLUSH_SEC` を触った効果を後から確かめるために残す。
+    `waited` is meaningful for `idle` only. It is the number of seconds
+    actually waited, kept so that the effect of changing `IDLE_FLUSH_SEC` can
+    be checked afterwards.
     """
 
     text: str
-    reason: str          # punct（文末記号）/ force（長さ）/ idle（無音）/ flush（終了時）
+    # punct (end mark) / force (length) / idle (silence) / flush (at shutdown)
+    reason: str
     waited: float = 0.0
 
 
 def has_content(text: str) -> bool:
-    """字幕として送る価値があるか。文字か数字が1つも無ければ捨てる。
+    """Whether this is worth sending as a caption. Drop it when it holds no
+    letter and no digit.
 
-    「。」「...」のような記号だけの断片を弾く。日本語の仮名・漢字は isalnum() が真。
+    This rejects fragments made only of punctuation, such as "。" or "...".
+    isalnum() is true for Japanese kana and kanji.
     """
     return any(ch.isalnum() for ch in text)
 
@@ -59,15 +67,16 @@ class Segmenter:
         idle_sec: float | None = None,
     ) -> None:
         self.buffer = ""
-        # **既定値引数で config の値を捕まえてはいけない。** 既定値引数は import の
-        # ときに1回だけ評価されるので、`.env` による差し替え（`load_env()` が行う）が
-        # 効かなくなる。ここで、作られるたびに読む。
+        # **Do not capture config values in default arguments.** A default
+        # argument is evaluated once at import time, so the replacement from
+        # `.env` (done by `load_env()`) would stop working. Read them here,
+        # each time an instance is created.
         self.force_cut = config.FORCE_CUT_CHARS if force_cut is None else force_cut
         self.idle_sec = config.IDLE_FLUSH_SEC if idle_sec is None else idle_sec
         self.last_delta_at = time.monotonic()
 
     def feed(self, delta: str) -> list[Cut]:
-        """認識の delta を足して、確定した文のリストを返す。"""
+        """Add a recognition delta and return the list of settled sentences."""
         if not delta:
             return []
         self.buffer += delta
@@ -85,13 +94,17 @@ class Segmenter:
         return out
 
     def silent_for(self) -> float:
-        """最後の delta から何秒たったか。中身が無ければ 0。"""
+        """How many seconds since the last delta. 0 when there is nothing
+        buffered.
+        """
         if not self.buffer.strip():
             return 0.0
         return time.monotonic() - self.last_delta_at
 
     def flush_if_idle(self) -> list[Cut]:
-        """発話が途切れたら、文末記号が無くても確定させる。"""
+        """When the speech pauses, settle the sentence even without an
+        end-of-sentence mark.
+        """
         if not self.buffer.strip():
             return []
         waited = time.monotonic() - self.last_delta_at
@@ -101,16 +114,18 @@ class Segmenter:
         return [Cut(sentence, "idle", waited)] if has_content(sentence) else []
 
     def reset(self) -> None:
-        """途中まで溜まっている文字を捨てる。字幕の生成を止めたときに呼ぶ。
+        """Throw away the characters buffered so far. Called when caption
+        generation is stopped.
 
-        **出さずに捨てる。** 止めた後に字幕が1行出てくると、読み手は
-        何が起きたのか分からない。再開したときに古い断片が混ざるのも避ける。
+        **Throw them away instead of emitting them.** A caption line appearing
+        after the stop leaves the readers wondering what happened. It also
+        keeps an old fragment from being mixed in when generation restarts.
         """
         self.buffer = ""
         self.last_delta_at = time.monotonic()
 
     def flush(self) -> list[Cut]:
-        """残りを全部出す。終了時に使う。"""
+        """Emit everything that is left. Used at shutdown."""
         sentence, self.buffer = self.buffer.strip(), ""
         return [Cut(sentence, "flush")] if has_content(sentence) else []
 
@@ -119,7 +134,7 @@ class Segmenter:
             if ch in JA_ENDINGS:
                 return i + 1, "punct"
             if ch in EN_ENDINGS:
-                # 後ろに空白が続くときだけ文末とみなす。
+                # Count it as the end of a sentence only when a space follows.
                 nxt = self.buffer[i + 1: i + 2]
                 if nxt in (" ", "\n"):
                     return i + 2, "punct"
@@ -128,11 +143,14 @@ class Segmenter:
         return None
 
     def _soft_cut(self) -> int:
-        """文末記号が来ないまま伸びたときに、読点や空白で切る。"""
+        """When the text grows without an end-of-sentence mark, cut at a comma
+        or a space.
+        """
         window = self.buffer[: self.force_cut]
         for mark in ("、", "，", ", ", " "):
             pos = window.rfind(mark)
-            # あまり手前で切ると細切れになるので、後半にある区切りだけ使う。
+            # Cutting too early gives tiny pieces, so use only separators that
+            # sit in the second half.
             if pos > self.force_cut // 2:
                 return pos + len(mark)
         return self.force_cut

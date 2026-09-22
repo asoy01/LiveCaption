@@ -8,7 +8,8 @@ license-file = "LICENSE"
 
 [tasks]
 caption = "python run.py"
-# 会議で使う既定の形。ブラウザ字幕を出し、Zoomのトークンは後から画面で入れる。
+# The default shape for a meeting. It shows captions in the browser, and you
+# enter the Zoom token later, from the page.
 web = "python run.py --web"
 devices = "python run.py --list-devices"
 

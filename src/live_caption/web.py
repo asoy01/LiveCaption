@@ -1,45 +1,51 @@
-"""ブラウザに字幕を出す。閲覧画面と操作画面、それぞれ別のポートで出す。
+"""Show captions in a browser. The viewer page and the control page use
+separate ports.
 
-Zoom字幕APIはホスト権限（トークンのコピー）が要る。自分がホストでない会議では
-使えない。そこで、ローカルのHTTPサーバでブラウザに字幕を出す道を用意してある。
-見せ方は2つある。
+The Zoom caption API needs host rights (you copy a token). You cannot use it
+in a meeting you do not host. So this module also serves the captions from a
+local HTTP server. There are two ways to show them.
 
-1. **画面共有する。** 閲覧画面を全画面にして共有する。外には出ない
-2. **閲覧URLを配る。** 参加者が自分の端末で開く。一時トンネルが要る（`tunnel.py`）
+1. **Share your screen.** Put the viewer page in full screen and share it.
+   Nothing leaves the machine
+2. **Hand out the viewer URL.** Each participant opens it on their own device.
+   This needs a temporary tunnel (`tunnel.py`)
 
-## 画面は2つ。ポートも分ける
+## Two pages, two ports
 
-    127.0.0.1:8081  操作画面  トークン・送信の開始停止・トンネル・記録・終了
-    <bind>:8080     閲覧画面  字幕を見るだけ
+    127.0.0.1:8081  control page  token, start/stop, tunnel, records, quit
+    <bind>:8080     viewer page   captions only
 
-**パスではなくポートで分けてある。** トンネルもリバースプロキシもオリジンごと
-通すので、経路の書き間違い1つで、URLを知った人が字幕アプリを止められるようになる。
-サーバを2つ立てておけばその事故は起きない。
+**They are split by port, not by path.** Tunnels and reverse proxies pass a
+whole origin, so one wrong path would let anyone who knows the URL stop the
+caption app. Two servers make that accident impossible.
 
-**操作画面は常に `127.0.0.1` である。** `--web-bind` は閲覧画面にしか効かない。
+**The control page always listens on `127.0.0.1`.** `--web-bind` only affects
+the viewer page.
 
-閲覧画面には**推測できない経路**が付く（`/v/<ランダム>`）。閲覧ポートの `/` は
-404を返すので、トンネルのURLだけでは何も見えない。
+The viewer page sits behind an **unguessable path** (`/v/<random>`). The `/`
+path on the viewer port returns 404, so the tunnel URL alone shows nothing.
 
-## 転送は長ポーリング。SSEは使えない
+## Transport is long polling. SSE does not work
 
     GET /v/<secret>/lines?since=N  →  {"next": 42, "lines": [...]}
 
-新しい行が出るまで最大25秒待ってから返す。**応答が毎回完結するので、途中で
-溜め込む中継でも通る。**
+The server waits up to 25 seconds for a new line, then answers. **Each answer
+is complete on its own, so it also passes through relays that buffer.**
 
-**SSEは使えない。** 一時トンネル（TryCloudflare）は `text/event-stream` を端で
-溜め込み、接続が閉じるまでブラウザに届かない。実測でも15秒間1バイトも来なかった。
-長ポーリングは同じ経路で 0.4〜1.0秒だった。根拠は local/HANDOFF.md の
-「実測結果: 一時トンネル」。
+**SSE does not work.** A temporary tunnel (TryCloudflare) buffers
+`text/event-stream` at its edge, and nothing reaches the browser until the
+connection closes. When measured, no byte arrived for 15 seconds. Long polling
+over the same path took 0.4 to 1.0 seconds.
 
-体感の遅延はSSEと変わらない。再接続はただのHTTP要求なので、むしろ単純である。
+The delay feels the same as SSE. Reconnecting is just another HTTP request, so
+it is in fact simpler.
 
-## 日本語の認識結果と文字の大きさ
+## Source-language lines and text size
 
-どちらも**ブラウザ側で決める。** サーバは常に両方の行を送り、表示するかは
-ブラウザが決める。参加者が自分の端末で読むので、文字の大きさも本人が変えられる。
-選択は `localStorage` に残る。会議中に何度触ってもサーバとはやり取りしない。
+**The browser decides both.** The server always sends both kinds of line, and
+the browser decides what to show. Each participant reads on their own device,
+so each one can also change the text size. The choice is kept in
+`localStorage`. Changing it during a meeting never talks to the server.
 """
 
 from __future__ import annotations
@@ -61,39 +67,41 @@ from . import config, glossary as glossary_mod, i18n, meetings, tunnel as tunnel
 from . import meetings_page
 from . import transcript as transcript_mod
 
-# 画面に残す履歴の数。これを超えた分は古いほうから捨てる。
-# 途中から開いた参加者に、直前の流れが見えるだけあればよい。
+# How many lines of history to keep on the page. Older lines are dropped.
+# A participant who joins late only needs to see what came just before.
 HISTORY = 200
-# 受け取るリクエストの上限。トークンURLは長いが、数KBあれば足りる。
+# Maximum request size. A token URL is long, but a few KB is enough.
 MAX_BODY = 64 * 1024
 
 
-# --- 見た目（閲覧と操作で共通） ---------------------------------------------
+# --- Look and feel (shared by the viewer and the control page) --------------
 
 STYLE = """
-  /* --- 配色 ---------------------------------------------------------------
-     **明るい地に濃い字にする。** 暗い配色は見にくい（2026-09-20、麻生の指摘）。
+  /* --- Colors -------------------------------------------------------------
+     **Dark text on a light background.** A dark color scheme is hard to read
+     (reported 2026-09-20).
 
-     **色はここにしか書かない。** 以前は各所に直接書いていたので、配色を変えるには
-     50か所を追いかける必要があった。暗い配色に戻すなら、この block だけを
-     入れ替えればよい。 */
+     **Colors are written only here.** They used to be written in many places,
+     so changing the scheme meant chasing 50 spots. To go back to a dark
+     scheme, replace only this block. */
   :root {
-    /* **これを書かないと、選択欄・日付の窓・スクロールバーだけが暗いままになる。**
-       OSが暗い配色の機体で、そこだけ黒く残る。 */
+    /* **Without this line, only the select boxes, the date popup and the
+       scrollbars stay dark.** On a machine whose OS uses a dark scheme, those
+       parts alone remain black. */
     color-scheme: light;
-    --bg:      #ffffff;   /* 地 */
-    --panel:   #f6f8fa;   /* 右の欄の地 */
-    --field:   #ffffff;   /* 入力欄・URL欄の地 */
-    --btn:     #f6f8fa;   /* ボタンの地 */
-    --hover:   #eaeef2;   /* 触れたときの地 */
-    --fg:      #1f2328;   /* 本文 */
-    --ja:      #59636e;   /* 元の言語の行 */
-    --muted:   #59636e;   /* 見出しと注記 */
-    --dim:     #848d97;   /* さらに薄い印 */
-    --line:    #d8dee4;   /* 細い罫 */
-    --line2:   #c2cad2;   /* 部品の枠 */
+    --bg:      #ffffff;   /* page background */
+    --panel:   #f6f8fa;   /* background of the right-hand panel */
+    --field:   #ffffff;   /* background of input fields and URL boxes */
+    --btn:     #f6f8fa;   /* button background */
+    --hover:   #eaeef2;   /* background on hover */
+    --fg:      #1f2328;   /* body text */
+    --ja:      #59636e;   /* source-language lines */
+    --muted:   #59636e;   /* headings and notes */
+    --dim:     #848d97;   /* even fainter marks */
+    --line:    #d8dee4;   /* thin rules */
+    --line2:   #c2cad2;   /* borders of controls */
     --accent:  #0969da; --accent-h: #0a58ca; --on-accent: #ffffff;
-    --knob:    #ffffff;   /* トグルのつまみ */
+    --knob:    #ffffff;   /* the knob of a toggle */
     --ok:      #1a7f37; --ng: #cf222e;
     --warn:    #9a6700; --warn-line: #d4a72c;
     --ng-fg:   #a40e26; --ng-bg: #fff5f5; --ng-line: #f3c2c2;
@@ -161,7 +169,8 @@ STYLE = """
     display: flex; flex-direction: column;
     padding: 18px 32px 28px; scrollbar-width: thin;
   }
-  /* 字幕は下から積む。新しい行が下に出て、古い行が上へ押し上げられる。 */
+  /* Captions stack from the bottom. A new line appears at the bottom and
+     pushes the older lines up. */
   #lines {
     display: flex; flex-direction: column; justify-content: flex-end;
     margin-top: auto; min-height: calc(var(--lines) * var(--size) * 1.35);
@@ -170,14 +179,15 @@ STYLE = """
   .row.en { color: var(--fg); }
   .row.ja { color: var(--ja); font-size: calc(var(--size) * .62); }
   body.hide-ja .row.ja { display: none; }
-  /* 書きかけの文字起こし。**薄くしない。** 文字起こしの行はもともと小さく、色も
-     落としてある。そのうえ透かすと読めない。まだ伸びている途中であることは、
-     末尾の … で分かる。文字起こしのトグルに従う。 */
+  /* A transcript line that is still growing. **Do not fade it.** Transcript
+     lines are already small and already dimmed. Fading them on top of that
+     makes them unreadable. The trailing … shows that the line is still
+     growing. It follows the transcript toggle. */
   .row.partial::after { content: "…"; margin-left: .15em; }
   .row.enter { animation: in .18s ease-out; }
   @keyframes in { from { opacity: 0; } to { opacity: 1; } }
   #empty { color: var(--ja); font-size: 18px; }
-  /* 入力の音量。**音が来ているかを目で見るためのもの。** */
+  /* Input level. **It lets you see that sound is arriving.** */
   .meter {
     width: 110px; height: 9px; border-radius: 5px; background: var(--hover);
     border: 1px solid var(--line2); overflow: hidden; flex: 0 0 auto;
@@ -192,9 +202,10 @@ STYLE = """
   .netstate { color: var(--ng); font-size: 13px; }
 """
 
-# --- 字幕の受信（閲覧と操作で共通） -----------------------------------------
+# --- Receiving captions (shared by the viewer and the control page) ---------
 #
-# 長ポーリング。取得 → 描画 → すぐ再取得。失敗したら1秒待って再試行する。
+# Long polling. Fetch, draw, fetch again at once. On failure, wait one second
+# and retry.
 
 FEED_JS = """
   const $ = (id) => document.getElementById(id);
@@ -206,9 +217,11 @@ FEED_JS = """
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   function scrollDown() { main.scrollTop = main.scrollHeight; }
 
-  // --- 日本語トグル。localStorage に残す --------------------------------
-  // **閲覧画面は既定でオンにする。** 配ったURLを開いた人は、字幕が翻訳だけだと
-  // 話者が何と言ったのか確かめられない。操作画面は麻生が見るものなので既定で切る。
+  // --- Source-language toggle. Kept in localStorage ----------------------
+  // **The viewer page turns it on by default.** Someone who opens the URL you
+  // handed out cannot check what the speaker actually said if the page shows
+  // only the translation. The control page is for the operator, so it starts
+  // with the toggle off.
   const showJaStored = localStorage.getItem("showJa");
   ja.checked = showJaStored === null ? SOURCE_DEFAULT : showJaStored === "1";
   applyJa();
@@ -218,7 +231,7 @@ FEED_JS = """
   });
   function applyJa() { document.body.classList.toggle("hide-ja", !ja.checked); }
 
-  // --- 文字の大きさ。読む本人が決める -----------------------------------
+  // --- Text size. The reader decides ------------------------------------
   let zoom = parseFloat(localStorage.getItem("zoom") || "1") || 1;
   applyZoom();
   $("bigger").addEventListener("click", () => { zoom = Math.min(zoom * 1.15, 3); applyZoom(); });
@@ -240,12 +253,14 @@ FEED_JS = """
     scrollDown();
   }
 
-  // --- 書きかけの文字起こし ---------------------------------------------
-  // **文が確定するまで数秒、画面には何も出ない。** 話している人の言葉は溜まって
-  // いるだけで、読む側からは止まって見える。届いた分をそのまま薄く出しておき、
-  // 確定したら普通の行に置き換わる。
+  // --- Transcript line that is still growing ----------------------------
+  // **Nothing appears for a few seconds until a sentence is final.** The
+  // speaker's words are only piling up, and to the reader the page looks
+  // frozen. Show what has arrived so far, and replace it with a normal line
+  // once the sentence is final.
   //
-  // 行は常に最後尾に置く。確定した行はこの手前に挿す（`add` を見ること）。
+  // This row always stays last. Final lines are inserted before it (see
+  // `add`).
   const partialRow = document.createElement("div");
   partialRow.className = "row ja partial";
   partialRow.hidden = true;
@@ -254,7 +269,8 @@ FEED_JS = """
   function showPartial(text) {
     if (partialRow.textContent === text) { return; }
     partialRow.textContent = text;
-    // **空のときは行ごと消す。** 高さが残ると、字幕が1行ぶん上にずれて見える。
+    // **Remove the whole row when it is empty.** If its height stays, the
+    // captions look shifted up by one line.
     partialRow.hidden = !text;
     if (text && !removedEmpty && empty0) { empty0.remove(); removedEmpty = true; }
     scrollDown();
@@ -268,16 +284,18 @@ FEED_JS = """
         const d = await r.json();
         since = d.next;
         for (const ev of d.lines) { add(ev); }
-        // **確定した行を入れてから書きかけを更新する。** 逆にすると、確定した文が
-        // 書きかけとして一瞬もう一度出る。
+        // **Insert the final lines first, then update the growing line.**
+        // The other order shows a final sentence once more, for a moment, as
+        // a growing line.
         if (typeof d.pv === "number") { pv = d.pv; showPartial(d.partial || ""); }
         dot.classList.add("on");
         fails = 0;
         netstate.textContent = "";
       } catch (e) {
         dot.classList.remove("on");
-        // **黙って止まらない。** 参加者の端末も回線もばらばらなので、
-        // 何が起きているか画面に出さないと、誰も原因を追えない。
+        // **Do not fail silently.** Participants use different devices and
+        // different networks, so nobody can find the cause unless the page
+        // says what is happening.
         fails += 1;
         netstate.textContent = "接続できません（" + e.message + "）。再試行 " + fails + "回目…";
         await sleep(1000);
@@ -289,16 +307,19 @@ FEED_JS = """
 
 
 def check_zoom_token(url: str) -> None:
-    """外から受け取るトークンを、`captions.parse_token` より厳しく見る。
+    """Check a token that arrives from outside, more strictly than
+    `captions.parse_token`.
 
-    **`parse_token` を厳しくしてはいけない。** あちらは手元の操作画面と
-    `--token` も通る道で、そこは既に信用してよい相手である。
-    厳しくするのは、外から届くこの口だけにする。
+    **Do not make `parse_token` stricter.** That function also handles the
+    local control page and `--token`, and those callers are already trusted.
+    Only this entry point, which is reachable from outside, needs the strict
+    check.
 
-    `parse_token` が見るのは「http か https」「経路に closedcaption がある」
-    「`id=` がある」の3つだけである。**宛先を見ていない。**
-    ここを塞がないと、**この口のURLを得た人が自分のサーバのURLを貼って、
-    会議の翻訳文をまるごと受け取れる。** ここでいちばん重い穴である。
+    `parse_token` checks only three things: the scheme is http or https, the
+    path contains closedcaption, and there is an `id=`. **It does not check
+    the destination.** Without the check below, **anyone who gets this entry
+    point's URL could paste the URL of their own server and receive the whole
+    translated meeting.** This is the most serious hole in the design.
     """
     text = str(url or "").strip()
     if not text:
@@ -310,10 +331,11 @@ def check_zoom_token(url: str) -> None:
 
     parsed = urlparse(text)
     if parsed.scheme != "https":
-        # http だと字幕の中身が平文で流れる。
+        # With http, the captions travel in the clear.
         raise captions_mod.TokenError("https のトークンだけを受け付ける。")
     host = (parsed.hostname or "").lower()
-    # **部分一致で見ない。** `evil.com/zoom.us/closedcaption` が通ってしまう。
+    # **Do not match on a substring.** `evil.com/zoom.us/closedcaption` would
+    # pass.
     if host != "zoom.us" and not host.endswith(".zoom.us"):
         raise captions_mod.TokenError(
             f"Zoom のトークンではない（宛先が {host or '不明'}）。")
@@ -321,27 +343,32 @@ def check_zoom_token(url: str) -> None:
     meeting = (query.get("id") or [""])[0]
     if not re.fullmatch(r"\d{9,12}", meeting or ""):
         raise captions_mod.TokenError("会議IDの形がおかしい。")
-    # 最後に、本体と同じ検査も通す。
+    # Finally, run the same check the rest of the app uses.
     captions_mod.parse_token(text)
 
 
-# URLのコピー。**操作画面と会議の管理画面で、同じものを使う。**
+# Copying a URL. **The control page and the meeting management page use the
+# same code.**
 #
-# 別々に書いていたら、管理画面のほうに `document.execCommand` の段が抜けていて、
-# **tailnet 越しだと操作画面ではコピーできるのに管理画面ではできない**という
-# 食い違いが出た（2026-09-19、麻生の指摘）。直したら両方に効くよう、1か所に置く。
+# They used to be written separately, and the management page was missing the
+# `document.execCommand` step. **Over a tailnet, copying worked on the control
+# page but not on the management page** (reported 2026-09-19). Keeping the code
+# in one place means a fix reaches both.
 #
-# 3段になっている。**上から順に試す。**
-#   1. navigator.clipboard   安全なオリジン（https か localhost）でしか使えない
-#   2. document.execCommand  古いやり方。**tailnet 越しの http でも通る**
-#   3. 選んで Ctrl+C を促す   最後の手段
-COPY_JS = """  // --- URLのコピー --------------------------------------------------------
-  // **配るURLは、手で選ばせない。** トンネルのURLはチャットに貼ることがある。
-  // `user-select: all` だけだと、クリックで全選択されることが画面から分からない。
+# There are three steps. **Try them in order.**
+#   1. navigator.clipboard   works only in a secure origin (https or localhost)
+#   2. document.execCommand  the old way. **It also works over http on a
+#                            tailnet**
+#   3. select the text and ask for Ctrl+C   the last resort
+COPY_JS = """  // --- Copying a URL ------------------------------------------------------
+  // **Do not make the user select the URL by hand.** A tunnel URL is often
+  // pasted into a chat. With `user-select: all` alone, nothing on the page
+  // tells the user that a click selects the whole text.
   //
-  // `navigator.clipboard` は安全なオリジンでしか使えない。操作画面は
-  // http だが localhost / 127.0.0.1 は安全なオリジンとして扱われるので通る。
-  // それでも使えない場合（古いブラウザ、権限を切っている）に備えて保険を置く。
+  // `navigator.clipboard` works only in a secure origin. The control page is
+  // served over http, but localhost and 127.0.0.1 count as secure origins, so
+  // it works there. The fallbacks cover the cases where it still fails (an old
+  // browser, or the permission turned off).
   function selectAll(el) {
     const range = document.createRange();
     range.selectNodeContents(el);
@@ -357,7 +384,7 @@ COPY_JS = """  // --- URLのコピー ------------------------------------------
     try {
       await navigator.clipboard.writeText(text);
     } catch (e) {
-      // 古いやり方。書き込みが許されていない環境ではこれも失敗する。
+      // The old way. It also fails where writing is not allowed.
       const ta = document.createElement("textarea");
       ta.value = text;
       ta.style.position = "fixed";
@@ -368,13 +395,15 @@ COPY_JS = """  // --- URLのコピー ------------------------------------------
       ta.remove();
     }
     if (!ok) {
-      // **書けないなら、せめて選んでおく。** Ctrl+C を押すだけで済む。
-      // 「自分で選べ」と言って放り出さないこと。会議中に手間を増やさない。
+      // **If we cannot write, at least select the text.** Then Ctrl+C is
+      // enough. Do not just tell the user to select it themselves. Do not add
+      // work during a meeting.
       selectAll(el);
       say("クリップボードに書けない。選んであるので Ctrl+C を押すこと。", false);
       return;
     }
-    // **押したことが分かるようにする。** 何も変わらないと、押せたのか分からない。
+    // **Show that the button was pressed.** If nothing changes, the user
+    // cannot tell whether the click worked.
     const before = btn.textContent;
     btn.textContent = "コピーした";
     setTimeout(() => { btn.textContent = before; }, 1400);
@@ -388,13 +417,16 @@ COPY_JS = """  // --- URLのコピー ------------------------------------------
 
 
 def _qr_filename(name: str) -> str:
-    """保存するQRのファイル名。会議の名前を入れる。
+    """File name for a saved QR code. It contains the meeting name.
 
-    **会議ごとに別のファイルになるようにする。** 先の会議ぶんを何枚か作って
-    置いておく使い方なので、全部が `livecaption-qr.png` では区別が付かない。
+    **Each meeting must get a different file.** The usual way to work is to
+    make QR codes for several future meetings and keep them, and that does not
+    work if every file is called `livecaption-qr.png`.
 
-    ファイル名に使えない文字と、ヘッダを壊す文字（引用符・改行・非ASCII）は
-    落とす。日本語の名前は丸ごと消えるので、そのときは既定の名前に戻す。
+    Characters that a file name cannot contain, and characters that would
+    break the header (quotes, newlines, non-ASCII), are dropped. A name
+    written only in non-ASCII characters disappears completely, and then the
+    default name is used.
     """
     safe = "".join(c for c in name if c.isascii() and (c.isalnum() or c in "-_ ")).strip()
     safe = "-".join(safe.split())[:40]
@@ -402,13 +434,14 @@ def _qr_filename(name: str) -> str:
 
 
 def _attachment(name: str) -> str:
-    """`Content-Disposition` の中身。**日本語のファイル名を保つ。**
+    """The value of `Content-Disposition`. **It keeps non-ASCII file names.**
 
-    記録のファイル名には会議の名前が入る（`transcript.safe_filename`）。
-    ヘッダは ASCII しか運べないので、素の `filename=` に日本語を入れると、
-    ブラウザによって文字化けするか、名前が落ちる。RFC 5987 の `filename*` なら
-    UTF-8 で渡せる。**古いブラウザのために `filename=` も併せて置く**（そちらは
-    非ASCIIを落とした形）。両方あるとき、今のブラウザは `filename*` を採る。
+    A record file name contains the meeting name (`transcript.safe_filename`).
+    A header can carry only ASCII, so a non-ASCII name in a plain `filename=`
+    either turns into garbage or is dropped, depending on the browser. RFC 5987
+    `filename*` carries UTF-8. **A plain `filename=` is also sent, for old
+    browsers** (with the non-ASCII characters dropped). When both are present,
+    current browsers use `filename*`.
     """
     plain = "".join(c for c in name if c.isascii() and c not in '"\\\r\n') or "record"
     return f"attachment; filename=\"{plain}\"; filename*=UTF-8''{quote(name)}"
@@ -423,14 +456,15 @@ def _head(title: str, lines_: int) -> str:
     )
 
 
-# --- 閲覧画面 ---------------------------------------------------------------
+# --- Viewer page ------------------------------------------------------------
 #
-# **操作のマークアップもJSも入れない。** ここは外に出る。
+# **No control markup and no control JS here.** This page goes outside.
 
 VIEWER_BODY = """</style>
 </head>
-<!-- 文字起こしは既定で見せる。切っている人の画面で一瞬出るのを避けるため、
-     hide-ja は付けない（`applyJa()` が読み込み直後に付け直す）。 -->
+<!-- The transcript is shown by default. To avoid a flash on the screen of
+     someone who turned it off, hide-ja is not set here (`applyJa()` sets it
+     again right after load). -->
 <body>
 <header>
   <span class="dot" id="dot"></span>
@@ -443,8 +477,9 @@ VIEWER_BODY = """</style>
   <label class="toggle">
     <input type="checkbox" id="ja">
     <span class="track"></span>
-    <!-- **「Japanese」とは書けない。** 向きが en2ja なら、ここに出るのは英語である。
-         このトグルが出すのは「訳す前の言葉」であって、特定の言語ではない。 -->
+    <!-- **This cannot say "Japanese".** When the direction is en2ja, what
+         appears here is English. This toggle shows the language before
+         translation, not one fixed language. -->
     <span>Original language</span>
   </label>
 </header>
@@ -458,23 +493,26 @@ __FEED_JS__
 </html>
 """
 
-# --- 操作画面 ---------------------------------------------------------------
+# --- Control page -----------------------------------------------------------
 
-# **raw 文字列にしてある。** 中身は JavaScript なので、`\n` と書いたら
-# JS のエスケープとして届いてほしい。素の文字列だと Python が先に食べて
-# 本物の改行になり、**JS の文字列が行をまたいで、画面全体が動かなくなる。**
-# 一度これで操作画面が丸ごと死んだ（2026-09-21）。
+# **This is a raw string.** The content is JavaScript, so a `\n` written here
+# must reach the browser as a JS escape. In a normal string, Python would
+# consume it first and turn it into a real newline, and then **a JS string
+# would span two lines and the whole page would stop working.** That killed
+# the entire control page once (2026-09-21).
 CONTROL_BODY = r"""
-  /* --- 設定の欄の文字の大きさ ---------------------------------------------
-     **1か所で決める。** 以前は 11px〜13px を各所に直接書いていて、全体として
-     小さすぎた。会議中に読むものなので、読めることを優先する。
-     大きくするときは、この1行だけ変えればよい。 */
+  /* --- Text size in the settings panel ------------------------------------
+     **Decided in one place.** Sizes of 11px to 13px used to be written all
+     over, and the result was too small overall. People read this during a
+     meeting, so readability comes first. To make it bigger, change this one
+     line. */
   :root { --ui: 15px; }
 
-  /* --- 左右分割 -----------------------------------------------------------
-     **字幕を主にする。** 設定を上に積むと、字幕が下へ押し込められて読めない。
-     左に字幕、右に設定を置き、境目をドラッグで動かせるようにする。
-     幅は localStorage に残す。 */
+  /* --- Left/right split ---------------------------------------------------
+     **The captions come first.** Stacking the settings on top pushes the
+     captions down until they cannot be read. Captions go on the left,
+     settings on the right, and the divider can be dragged. The width is kept
+     in localStorage. */
   #split {
     flex: 1 1 auto; min-height: 0;
     display: grid;
@@ -484,35 +522,39 @@ CONTROL_BODY = r"""
     background: var(--line); cursor: col-resize; position: relative;
     touch-action: none;
   }
-  /* 線そのものは細くしたい。掴む範囲だけ左右に広げる。 */
+  /* The line itself should stay thin. Only the grab area is widened. */
   #sep::after { content: ""; position: absolute; top: 0; bottom: 0; left: -5px; right: -5px; }
   #sep:hover, #sep.drag { background: var(--accent); }
 
-  /* 字幕の大きさは、窓ではなく**左の欄の幅**で決める。境目を動かすと追従する。
-     cqw を解さないブラウザではこの1行ごと無視され、:root の vw 基準が残る。 */
+  /* The caption size follows **the width of the left column**, not the
+     window. It changes as you drag the divider. A browser that does not
+     understand cqw ignores this whole line and keeps the vw-based size from
+     :root. */
   #main { container-type: inline-size; }
   #main { --size: calc(clamp(18px, 3.4cqw, 42px) * var(--zoom, 1)); }
 
-  /* 窓が狭いときは上下に積む。境目は動かせない。 */
+  /* In a narrow window, stack the two parts. The divider cannot be dragged. */
   @media (max-width: 760px) {
     #split { display: flex; flex-direction: column; }
     #sep { display: none; }
     #panel { max-height: 45vh; border-left: 0; border-top: 1px solid var(--line); }
   }
 
-  /* --- 設定の欄 ----------------------------------------------------------- */
+  /* --- The settings panel ------------------------------------------------ */
   #panel {
     overflow-y: auto; scrollbar-width: thin;
     padding: 14px 16px 20px;
     border-left: 1px solid var(--line); background: var(--panel);
     font-size: var(--ui); color: var(--ja);
   }
-  /* 部品も欄と同じ大きさにする。**共通の指定（14px / 13px）のままだと、
-     まわりの文字より小さくなって、押すものだけ読みにくくなる。**
-     閲覧画面には `--ui` が無いので、#panel の中だけに効かせる。 */
+  /* Controls use the same size as the panel. **With the shared sizes (14px /
+     13px) they end up smaller than the text around them, so the things you
+     click are the hardest to read.** The viewer page has no `--ui`, so this
+     applies only inside #panel. */
   #panel button, #panel select { font-size: var(--ui); }
-  /* パネルの上のタブ。**当日触るものと、据え付けたら触らないものを分ける。**
-     選んだ側は localStorage に残す。次の起動も同じ側で開く。 */
+  /* The tabs at the top of the panel. **They separate what you touch on the
+     day from what you set up once and leave alone.** The selected tab is kept
+     in localStorage, so the next start opens the same one. */
   .tabs { display: flex; gap: 6px; margin: 0 0 14px; }
   .tabs > .tab {
     flex: 1 1 0; padding: 7px 10px; color: var(--muted); background: transparent;
@@ -520,45 +562,53 @@ CONTROL_BODY = r"""
   .tabs > .tab:hover { background: var(--hover); }
   .tabs > .tab.on { color: var(--fg); background: var(--bg);
                     border-color: var(--accent); font-weight: 600; }
-  /* **隠した側で起きた失敗を見落とさないようにする。** 設定を開いたまま
-     会議が始まって、そちらで失敗していても気づけない。 */
+  /* **Do not let a failure on the hidden tab go unnoticed.** If a meeting
+     starts while the settings tab is open, a failure on the other tab would
+     never be seen. */
   .tabs > .tab.alert::after { content: " ●"; color: var(--ng); }
 
-  /* --- 会議の管理のタブ ----------------------------------------------------
-     **ここだけ窓いっぱいに広げる。** 日時・Zoomのリンク・3つの数値・印を並べると、
-     440px の欄には1行に1つしか入らない。それが辛いから別の窓に出したのであって
-     （2026-09-19）、そのまま欄の中に戻すと元の木阿弥になる。
-     タブにするなら、幅も一緒に連れてくること。 */
+  /* --- The meeting management tab -----------------------------------------
+     **This tab alone uses the full width.** With the date and time, the Zoom
+     link, three numbers and the checkboxes side by side, a 440px column fits
+     only one of them per row. That is why this page was moved to a separate
+     window in the first place (2026-09-19), so putting it back into the
+     column as it was would undo the fix. If it becomes a tab, it has to bring
+     its width along. */
   #meetFrame { display: block; width: 100%; height: 100%; border: 0; }
-  /* **字幕は消さない。幅も動かさない。** 以前は左の欄ごと畳み、次はタブごとに
-     幅を覚えていたが、どちらも麻生に止められた（2026-09-20）。会議の最中に字幕が
-     見えなくなるのも、押すたびに欄が伸び縮みするのも困る。
-     **中身が、本人の決めた欄の幅に合わせて伸びる**（`meetings_page.py`）。 */
+  /* **Do not hide the captions, and do not change the width.** An earlier
+     version collapsed the whole left column, and the next one remembered a
+     width per tab. Both were rejected (2026-09-20). Losing the captions in
+     the middle of a meeting is bad, and so is a column that grows and shrinks
+     on every click. **The content stretches to the width the user chose**
+     (`meetings_page.py`). */
   body.manage #panel {
     display: flex; flex-direction: column; padding: 0; overflow: hidden;
   }
   body.manage .tabs { flex: 0 0 auto; margin: 12px 16px 0; }
   body.manage #paneMeet { flex: 1 1 auto; min-height: 0; }
 
-  /* 記録の一覧。**高さを止めて、中だけを送る。** 無人で回すと1日に何本も
-     溜まるので、伸び放題にすると下の欄が押し出される。 */
-  /* 記録を落とすボタン。**リンクだが、他のボタンと同じに見せる。**
-     落とす先は見る人の端末なので、`<a download>` でないと渡せない。 */
+  /* The list of records. **Its height is fixed, and it scrolls inside.**
+     Running unattended piles up several records a day, so an unbounded list
+     would push the sections below it off the screen. */
+  /* The buttons that download a record. **They are links, but they look like
+     the other buttons.** The file goes to the device of whoever is looking,
+     so only `<a download>` can deliver it. */
   a.dl {
     color: var(--fg); background: var(--btn); border: 1px solid var(--line2);
     border-radius: 6px; padding: 5px 10px; font-size: var(--ui);
     text-decoration: none; cursor: pointer;
   }
   a.dl:hover { background: var(--hover); }
-  /* 落とすものが無いときは、押しても何も起きないことを見た目で示す。 */
+  /* When there is nothing to download, show that clicking does nothing. */
   a.dl.off { color: var(--dim); background: var(--field); cursor: default; }
   a.dl.off:hover { background: var(--field); }
 
-  /* 見せ方の3つ。畳んだ見出しを縦に積む。 */
+  /* The three ways to show captions. Collapsed headings, stacked. */
   .grp > .fold { margin-bottom: 7px; }
   .grp > .fold:last-child { margin-bottom: 0; }
 
-  /* まとまりごとに区切る。全部が地続きだと、どこが何の設定か分からない。 */
+  /* Separate the groups. Without breaks, it is impossible to tell which
+     setting belongs to what. */
   .grp { padding: 12px 0; border-bottom: 1px solid var(--line); }
   .grp:first-child { padding-top: 0; }
   .grp:last-child { border-bottom: 0; }
@@ -568,16 +618,21 @@ CONTROL_BODY = r"""
   }
   .row2 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 9px; }
   .row2:last-child { margin-bottom: 0; }
-  /* 説明の行は地の文である。**flex にしない。** `<b>` が別の項目として
-     切り出され、前後に隙間が空いて、1つの文に見えなくなる。 */
+  /* An explanation row is running text. **Do not make it flex.** A `<b>`
+     would become a separate item with gaps around it, and the row would no
+     longer read as one sentence. */
   .row2.hint { display: block; }
-  /* 見出しは行を独り占めする。狭い欄で、ラベルと部品を横に並べると折り返しが汚い。 */
+  /* A label takes a whole row. In a narrow column, putting the label and the
+     control side by side wraps badly. */
   .lbl { flex: 1 0 100%; color: var(--fg); font-size: var(--ui); }
-  /* 用語集は畳んでおく。**表は増えていく。** 全部を並べると、右の欄が伸びて
-     「アプリの終了」が画面の外へ出る。開いた時も高さを切って中で送らせる。 */
-  /* **赤字は #msg にしか効いていなかった。** 「音が来ていない」も
-     「上限で切り捨てられた」も class="ng" で書かれているのに、色が付いて
-     いなかった。一番見てほしい警告なので、どこでも効くようにする。 */
+  /* The glossary list stays collapsed. **The number of tables keeps growing.**
+     Listing them all makes the right column taller until "Quit the app" falls
+     off the screen. Even when open, its height is capped and it scrolls
+     inside. */
+  /* **The red color used to apply only to #msg.** Both "no sound is arriving"
+     and "dropped at the limit" are written with class="ng", but neither was
+     colored. These are the warnings that matter most, so make the rule apply
+     everywhere. */
   .ok { color: var(--ok); }
   .ng { color: var(--ng); }
   .fold { border: 1px solid var(--line2); border-radius: 6px; background: var(--field); }
@@ -585,14 +640,16 @@ CONTROL_BODY = r"""
     cursor: pointer; padding: 8px 10px; font-size: var(--ui); color: var(--fg);
     list-style: none; display: flex; align-items: center; gap: 6px;
   }
-  /* **既定の印は3通りの消し方が要る。** どれか1つでも残ると、こちらの三角と
-     二重に出る。Chrome は ::marker、古い WebKit は ::-webkit-details-marker、
-     Safari は list-style を見る。 */
+  /* **The default marker needs three ways of hiding it.** If even one remains,
+     it appears next to our own triangle. Chrome reads ::marker, old WebKit
+     reads ::-webkit-details-marker, and Safari reads list-style. */
   .fold > summary::marker { content: ""; }
   .fold > summary::-webkit-details-marker { display: none; }
-  /* 開いているかどうかを三角で示す。畳んだままだと気づかれない。
-     **文字ではなく罫線で描く。** 「▸」はフォントによって大きさも位置もばらつき、
-     絵文字のフォントに落ちることもある。罫線なら、どの環境でも同じ形になる。 */
+  /* A triangle shows whether the section is open. While collapsed, nobody
+     notices it otherwise.
+     **It is drawn with borders, not with a character.** The size and position
+     of "▸" vary with the font, and it can fall back to an emoji font. Borders
+     give the same shape everywhere. */
   .fold > summary::before {
     content: ""; flex: 0 0 auto; width: 0; height: 0; margin-right: 2px;
     border-left: 5px solid var(--dim);
@@ -603,21 +660,27 @@ CONTROL_BODY = r"""
   .fold[open] > summary::before { transform: rotate(90deg); }
   .fold > summary:hover { background: var(--hover); }
   .fold .body { padding: 0 10px 8px; }
-  /* 高さの上限。**画面の高さで決める。** 行数で決めると、低い画面で溢れる。 */
+  /* Maximum height. **It follows the screen height.** A limit in rows would
+     overflow on a short screen. */
   .fold .list { max-height: min(38vh, 300px); overflow-y: auto; }
-  /* 用語集のチェックは1行に1つ。名前と語数を並べると横に入りきらない。 */
+  /* One glossary checkbox per row. The name and the term count do not fit
+     side by side. */
   .gloss { display: flex; align-items: center; gap: 6px;
            cursor: pointer; font-size: var(--ui); padding: 4px 0; }
   .gloss input { cursor: pointer; flex: 0 0 auto; }
-  /* 名前と語数は summary の中でも使う。.gloss ではなく .fold に付ける。 */
+  /* The name and the term count are also used inside the summary, so these
+     rules hang off .fold rather than .gloss. */
   .fold .n { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;
              white-space: nowrap; }
   .fold .c { flex: 0 0 auto; color: var(--muted); font-size: calc(var(--ui) - 2px); }
-  /* 選んでいる表を目立たせる。畳む前に、何にチェックが入っているかを見る。 */
+  /* Highlight the selected tables. Before collapsing the list, you check what
+     is ticked. */
   .gloss .n { color: var(--ja); }
   .gloss.on .n { color: var(--fg); font-weight: 600; }
-  /* 遅延の調整。1行に「名前 / 入力欄」を置き、説明はその下に小さく敷く。
-     **説明を横に置くと、名前が潰れて何の設定か分からなくなる。** */
+  /* Latency tuning. Each row holds the name and the input field, with the
+     explanation in small text underneath.
+     **Putting the explanation beside the name squeezes the name until you
+     cannot tell which setting it is.** */
   .tune { padding: 6px 0; border-top: 1px solid var(--line); }
   .tune:first-child { border-top: 0; }
   .tune .top { display: flex; align-items: center; gap: 8px; }
@@ -628,7 +691,8 @@ CONTROL_BODY = r"""
     background: var(--field); border: 1px solid var(--line2); border-radius: 6px;
     padding: 5px 8px; text-align: right;
   }
-  /* 既定と違う値は目立たせる。畳んだ後でも「触ってある」と分かるようにする。 */
+  /* Highlight a value that differs from the default, so that "this was
+     changed" is visible even after the section is collapsed. */
   .tune.changed input[type=number] { border-color: var(--accent); }
   .tune .d { flex: 0 0 auto; font-size: calc(var(--ui) - 2px); color: var(--muted); width: 74px; }
   .tune .h { font-size: calc(var(--ui) - 2px); color: var(--ja); line-height: 1.5; margin: 4px 0 0; }
@@ -652,32 +716,39 @@ CONTROL_BODY = r"""
     background: var(--field); border: 1px solid var(--line2); border-radius: 6px;
     padding: 6px 8px; word-break: break-all; user-select: all; flex: 1 1 100%;
   }
-  /* **URLはボタンでコピーできるようにする。** `user-select: all` はクリックで
-     全選択されるが、画面にその手がかりが出ない。会議中に「コピーできない」と
-     悩ませないこと。トンネルのURLは、チャットに貼って配ることがある。 */
+  /* **A URL must be copyable with a button.** `user-select: all` does select
+     everything on a click, but nothing on the page hints at that. Do not leave
+     someone puzzling over "I cannot copy this" during a meeting. A tunnel URL
+     is often pasted into a chat. */
   .copybtn, .savebtn { padding: 6px 12px; }
-  /* 言語の選択。ヘッダに置くので、幅は内容ぶんだけにする。 */
+  /* The language selector. It sits in the header, so it is only as wide as
+     its content. */
   .langsel {
     font: inherit; font-size: 13px; color: var(--ja);
     background: transparent; border: 1px solid var(--line2); border-radius: 6px;
     padding: 4px 6px; flex: 0 0 auto; width: auto; min-width: 0;
   }
-  /* 会議の一覧。1行に「選ぶ / 名前 / URL / ボタン」を積む。
-     **URLは折り返して全部見せる。** 途中で切ると、目で確かめられない。
+  /* The meeting list. Each row stacks the radio button, the name, the URL and
+     the buttons.
+     **The URL wraps and is shown in full.** Cutting it short makes it
+     impossible to check by eye.
 
-     **高さを切って、中で送らせる。** 会議は増えていく一方なので、そのまま並べると
-     「Zoom字幕」から下が画面の外へ押し出される。用語集と同じ作りにしてある。 */
+     **The height is capped and the list scrolls inside.** The number of
+     meetings only grows, so an unbounded list would push everything from
+     "Zoom captions" down off the screen. This works like the glossary list. */
   #meetList {
     display: flex; flex-direction: column; gap: 8px; margin: 6px 0 2px;
     max-height: min(38vh, 300px); overflow-y: auto; scrollbar-width: thin;
-    /* 中の行の `offsetTop` をこの枠からの距離にする。選んである行を枠の中へ
-       送るのに使う。 */
+    /* This makes the `offsetTop` of the rows inside relative to this box,
+       which is how the selected row is scrolled into view. */
     position: relative;
   }
-  /* 送れる状態のときだけ、上下に切れ目を見せる。無いと、続きがあると気づけない。 */
+  /* Show the top and bottom rules only when the list can scroll. Without
+     them, nobody notices that there is more. */
   #meetList.more { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
                    padding: 6px 4px 6px 0; }
-  /* 何件あるかを見出しの横に出す。畳まれていても数が分かる。 */
+  /* Show the count next to the heading, so the number is visible even while
+     the list is collapsed. */
   .grp > h2 .c { font-weight: 400; letter-spacing: 0; color: var(--dim); }
   .meet { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
           display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
@@ -689,11 +760,11 @@ CONTROL_BODY = r"""
   .meet .when { flex: 0 0 auto; font-size: calc(var(--ui) - 3px); color: var(--muted); }
   .meet .url { flex: 1 1 100%; }
   .meet .none { flex: 1 1 100%; font-size: calc(var(--ui) - 2px); color: var(--muted); }
-  /* 予定の要約。行の中で、名前の下に小さく敷く。 */
+  /* A summary of the schedule, in small text under the name inside the row. */
   .meet .when2 { flex: 1 1 100%; font-size: calc(var(--ui) - 3px); color: var(--muted); }
   .meet.armed .when2 { color: var(--ok); }
-  /* 予定の入力欄。**行の中に開く。** この画面に重ねる窓は1つも無いので、
-     ここだけ別の作りにしない。 */
+  /* The schedule input fields. **They open inside the row.** This page has no
+     overlay windows at all, so do not make this one place different. */
   .sched { flex: 1 1 100%; border-top: 1px solid var(--line); margin-top: 4px;
            padding-top: 8px; display: flex; flex-wrap: wrap; gap: 6px 8px; }
   .sched label { font-size: calc(var(--ui) - 2px); color: var(--ja);
@@ -709,16 +780,18 @@ CONTROL_BODY = r"""
     padding: 5px 6px; text-align: right;
   }
   .sched .wide { flex: 1 1 100%; }
-  /* **自動で開始する印は目立たせる。** これを押すと、無人で外に配信が始まる。 */
+  /* **Make the auto-start checkbox stand out.** Ticking it starts an
+     unattended delivery to the outside. */
   .sched .auto { flex: 1 1 100%; color: var(--fg); font-size: var(--ui); }
   .sched .auto input { cursor: pointer; }
-  /* ホスト用URLは畳んでおく。**参加者用と取り違えて配るのがいちばん怖い。** */
+  /* The host URL stays collapsed. **The worst mistake is handing it out by
+     mistake instead of the participant URL.** */
   .hostrow { flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 6px 8px;
              align-items: center; border-top: 1px solid var(--line);
              margin-top: 6px; padding-top: 8px; }
   .hostrow .warn2 { flex: 1 1 100%; font-size: calc(var(--ui) - 3px); color: var(--ng); }
   .hostrow .url { border-color: var(--ng-line); }
-  /* 次の予定の一覧。 */
+  /* The list of upcoming meetings. */
   #schedNext { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 8px; }
   #schedNext .row { font-size: calc(var(--ui) - 2px); color: var(--ja);
                     display: flex; gap: 8px; }
@@ -726,7 +799,8 @@ CONTROL_BODY = r"""
   #schedNext .row .n { flex: 1 1 auto; overflow: hidden;
                        text-overflow: ellipsis; white-space: nowrap; }
   #schedFailRow { align-items: flex-start; }
-  /* QRは白地でないと読めない端末がある。余白ごと白くする。 */
+  /* Some devices cannot read a QR code unless the background is white. Make
+     the padding white as well. */
   #qrbox { display: none; }
   #qrbox.on { display: flex; }
   #qr { background: #fff; padding: 8px; border-radius: 8px; width: 150px; height: 150px; }
@@ -749,13 +823,15 @@ CONTROL_BODY = r"""
   <span class="pill off" id="zoomPill">Zoom: —</span>
   <button id="smaller" class="zoombtn" title="文字を小さく">A&minus;</button>
   <button id="bigger" class="zoombtn" title="文字を大きく">A+</button>
-  <!-- 言語の名前は訳さない。**自分の言語は、自分の言語で書いてあるほうが探せる。** -->
+  <!-- Language names are not translated. **People find their own language
+       faster when it is written in that language.** -->
   <select id="uiLang" class="langsel" title="Language">
     <option value="ja">日本語</option>
     <option value="en">English</option>
   </select>
-  <!-- **「日本語」とは書けない。** 向きが en2ja なら、ここに出るのは英語である。
-       このトグルが出すのは「訳す前の言葉」であって、特定の言語ではない。 -->
+  <!-- **This cannot say "Japanese".** When the direction is en2ja, what
+       appears here is English. This toggle shows the language before
+       translation, not one fixed language. -->
   <label class="toggle" title="訳す前の言葉を、訳文の上に小さく出す">
     <input type="checkbox" id="ja">
     <span class="track"></span>
@@ -773,9 +849,9 @@ CONTROL_BODY = r"""
 
 <aside id="panel">
 
-  <!-- **当日触るものと、据え付けたら触らないものを分ける。** 見出しを12個
-       一列に並べていたら、どれが会議中に要るものか見分けが付かなかった
-       （2026-09-20 の麻生の指摘）。 -->
+  <!-- **Separate what you touch on the day from what you set up once and
+       leave alone.** With twelve headings in one column, it was impossible to
+       tell which ones are needed during a meeting (reported 2026-09-20). -->
   <div class="tabs">
     <button class="tab on" id="tabRun">この会議</button>
     <button class="tab" id="tabMeet">会議の管理</button>
@@ -795,8 +871,9 @@ CONTROL_BODY = r"""
       <button id="gstop" class="danger" title="配信とZoom字幕も一緒に止まる">停止</button>
       <span id="genState"></span>
     </div>
-    <!-- **音量メーターは、入力デバイスの欄ではなくここに置く。** 会議中に見る
-         ものなので、設定の側に隠してはいけない。 -->
+    <!-- **The level meter belongs here, not in the input device section.**
+         People watch it during a meeting, so it must not be hidden away on
+         the settings tab. -->
     <div class="row2">
       <span class="meter" id="meter"><i id="meterBar"></i></span>
       <span id="audioState"></span>
@@ -822,9 +899,10 @@ CONTROL_BODY = r"""
       <select id="meetPick"></select>
     </div>
     <div class="row2 hint" id="meetWhen"></div>
-    <!-- **予定を待たずに、この会議を1本回す。** 走る順序は予定の回と同じで
-         ある（配信 → Zoom参加 → 生成 → チャット）。「開始」には載せない。
-         あちらは音の取り込みと認識だけで、出口は開けない（2026-09-20）。 -->
+    <!-- **Run this meeting once, without waiting for its schedule.** The
+         steps are the same as for a scheduled run (delivery, join Zoom,
+         generation, chat). Do not fold this into "Start". That button only
+         captures audio and recognizes it; it opens no output (2026-09-20). -->
     <div class="row2">
       <button id="meetStart" class="primary">この会議をいま始める</button>
       <span class="hint" id="meetStartWhat"></span>
@@ -848,8 +926,9 @@ CONTROL_BODY = r"""
     </div>
   </div>
 
-  <!-- **3つの出口を1つの枠に入れる。** 離して置いていたので、同時に使える
-       ことが読み取れなかった。畳んだ見出しの右に、動いているかどうかを出す。 -->
+  <!-- **Put the three outputs in one group.** They used to be far apart, and
+       nothing showed that they can all run at once. The state of each one
+       appears to the right of its collapsed heading. -->
   <div class="grp">
     <h2>見せ方</h2>
     <div class="row2 hint">3つとも同時に使える。</div>
@@ -943,10 +1022,11 @@ CONTROL_BODY = r"""
     <div class="row2">
       <span id="logState"></span>
     </div>
-    <!-- **字幕PCに溜めて、ここから落とす。** 字幕PCは常時起動で、操作は
-         tailnet 越しである。記録を読むためだけに RustDesk を起こさなくてよい
-         ようにする（2026-09-20 の麻生の指示）。
-         **落とせるのは最新の1本だけである。** 古い記録が要ることは、まず無い。 -->
+    <!-- **Records pile up on the caption PC and are downloaded from here.**
+         The caption PC runs all the time and is operated over a tailnet.
+         Nobody should have to start RustDesk just to read a record.
+         **Only the latest record can be downloaded.** An older record is
+         almost never needed. -->
     <div class="row2">
       <a class="dl" id="recMd" download>読める形 (.md)</a>
       <a class="dl" id="recJsonl" download>原本 (.jsonl)</a>
@@ -960,8 +1040,9 @@ CONTROL_BODY = r"""
 
 </div>
 
-<!-- **中身は `/meetings` をそのまま入れる。** 作りを2つに分けない。
-     直に埋めると、`$` も `#msg` も `#list` も操作画面とぶつかる。 -->
+<!-- **The content is `/meetings`, embedded as it is.** Do not build it twice.
+     Inlining it would make `$`, `#msg` and `#list` collide with the control
+     page. -->
 <div id="paneMeet" hidden>
   <iframe id="meetFrame" title="会議の管理"></iframe>
 </div>
@@ -1065,7 +1146,8 @@ __FEED_JS__
   const tuneFold = $("tuneFold"), tuneSummary = $("tuneSummary");
   const tuneSave = $("tuneSave"), tuneReset = $("tuneReset");
   let tuneLoaded = false;
-  // 表がこれより多いときだけ絞り込みを出す。少ないうちは邪魔なだけである。
+  // Show the filter box only when there are more tables than this. With a few
+  // tables it only gets in the way.
   const GLOSS_FILTER_FROM = 8;
   const gstart = $("gstart"), gstop = $("gstop");
   const gpill = $("genPill"), genState = $("genState");
@@ -1089,7 +1171,8 @@ __FEED_JS__
   const schedState = $("schedState"), schedNext = $("schedNext");
   const schedFail = $("schedFail"), schedFailRow = $("schedFailRow");
   const schedAck = $("schedAck"), schedStop = $("schedStop"), schedSkip = $("schedSkip");
-  // 一覧を組み直すと、打ちかけの名前や押した場所が飛ぶ。中身が変わったときだけ描く。
+  // Rebuilding the list loses a half-typed name and the click position. Draw
+  // it only when the content changed.
   let meetSeen = "";
   const publicUrlRow = $("publicUrlRow"), tunnelHint = $("tunnelHint");
   const split = $("split"), sep = $("sep");
@@ -1100,22 +1183,28 @@ __FEED_JS__
 
   function say(text, ok) { msg.textContent = text; msg.className = ok ? "ok" : "ng"; }
 
-  // --- 左右の境目 ---------------------------------------------------------
-  // **字幕が主で、設定は従である。** 幅は本人が決める。localStorage に残す。
-  // 文字を大きくしたぶん、既定の幅も広げてある（CSS の --right と同じ値にすること）。
+  // --- The divider between left and right ---------------------------------
+  // **The captions are the main thing; the settings come second.** The user
+  // sets the width, and it is kept in localStorage. The default width grew
+  // along with the text size (keep it equal to --right in the CSS).
   const PANEL_MIN = 280, MAIN_MIN = 280, PANEL_DEFAULT = 440;
-  // **幅はタブを変えても動かさない**（2026-09-20 の麻生の指示）。
-  // 一時はタブごとに覚えていたが、押すたびに欄が伸び縮みするのは落ち着かない。
-  // 会議の管理で幅が要るときは、境目を引いて広げる。中身はその幅に合わせて伸びる。
-  // **本人が決めた幅と、いま出せる幅を分けて持つ。** 窓が一時的に狭くなったときに
-  // 縮めた値で上書きすると、窓を広げても元の幅に戻らなくなる。
+  // **The width does not change when you switch tabs** (as requested
+  // 2026-09-20). For a while it was remembered per tab, but a column that
+  // grows and shrinks on every click is unsettling. When the meeting
+  // management tab needs more room, drag the divider; its content stretches
+  // to fit.
+  // **Keep the width the user chose separate from the width we can show now.**
+  // Overwriting the chosen width with a shrunken one, while the window is
+  // temporarily narrow, would stop it from returning when the window grows
+  // again.
   let wantW = parseInt(localStorage.getItem("panelW") || "", 10) || PANEL_DEFAULT;
 
   function fits(w) {
     const vw = window.innerWidth;
-    // **窓の幅が分からないうちは切り詰めない。** 描画前に呼ばれると 0 が返ることが
-    // あり、そこで詰めると最小幅に張り付いたまま戻らなくなる。
-    // 760px 以下は上下に積む見た目になるので、そこでも切り詰めない。
+    // **Do not clamp while the window width is unknown.** Called before the
+    // first paint, this can return 0, and clamping then leaves the panel
+    // stuck at its minimum width. At 760px or less the layout stacks, so do
+    // not clamp there either.
     if (!vw || vw <= 760) { return Math.max(w, PANEL_MIN); }
     const room = Math.max(PANEL_MIN, vw - MAIN_MIN);
     return Math.min(Math.max(w, PANEL_MIN), room);
@@ -1126,7 +1215,8 @@ __FEED_JS__
   }
   applySplit();
   window.addEventListener("resize", applySplit);
-  // 表示されたときに幅が決まることがある（隠れたタブ、開いた直後）。
+  // The width can become known only once the page is shown (a hidden tab, or
+  // right after opening).
   if (window.ResizeObserver) { new ResizeObserver(applySplit).observe(document.body); }
 
   sep.addEventListener("pointerdown", (e) => {
@@ -1134,7 +1224,8 @@ __FEED_JS__
     sep.setPointerCapture(e.pointerId);
     sep.classList.add("drag");
     const move = (ev) => {
-      // 境目の右端から窓の右端までが設定欄の幅になる。
+      // The panel width is the distance from the right edge of the divider to
+      // the right edge of the window.
       wantW = fits(window.innerWidth - ev.clientX - 4);
       applySplit();
     };
@@ -1149,16 +1240,17 @@ __FEED_JS__
     sep.addEventListener("pointerup", up);
     sep.addEventListener("pointercancel", up);
   });
-  // 素早く元に戻したいとき。
+  // A quick way back to the default.
   sep.addEventListener("dblclick", () => {
     wantW = PANEL_DEFAULT;
     applySplit();
     localStorage.setItem("panelW", String(wantW));
   });
 
-  // --- パネルのタブ -------------------------------------------------------
-  // **隠すのは設定の側だけにする。** 会議中に見るもの（状態・音量・次の予定）は
-  // どちらを開いていても見えていないと困るので、会議の側に集めてある。
+  // --- Panel tabs ---------------------------------------------------------
+  // **Only the settings side may be hidden.** What you watch during a meeting
+  // (state, level, upcoming meetings) has to stay visible whichever tab is
+  // open, so all of it lives on the meeting tab.
   const TABS = {
     run:  [$("tabRun"),  $("paneRun")],
     meet: [$("tabMeet"), $("paneMeet")],
@@ -1172,10 +1264,12 @@ __FEED_JS__
       pane.hidden = (k !== which);
       btn.classList.toggle("on", k === which);
     });
-    // 管理の中身は欄いっぱいに伸びる。**幅そのものには触らない。**
+    // The management content stretches to fill the column. **The width itself
+    // is left alone.**
     document.body.classList.toggle("manage", which === "meet");
-    // **開かれるまで読み込まない。** 使わない人の画面で、3秒ごとの問い合わせを
-    // もう1本増やさない。一度読んだら、そのままにしておく。
+    // **Do not load it until it is opened.** Do not add another poll every
+    // three seconds on the screen of someone who never uses this tab. Once
+    // loaded, leave it loaded.
     if (which === "meet" && !meetFrame.src) { meetFrame.src = "/meetings"; }
     localStorage.setItem("panelTab", which);
   }
@@ -1196,12 +1290,13 @@ __FEED_JS__
   }
 
   function showStatus(s) {
-    // --- VNC。会議中でも起動・停止できる ---
+    // --- VNC. It can be started and stopped during a meeting ---
     showVnc(s.vnc);
 
-    // --- 「終了」は、戻ってくる仕掛けの有無で意味が変わる ---
-    // Docker では compose が入れ直すので、押しても十数秒で戻る。
-    // **勝手に戻ってくるのに「終了」と書いてあると、押した人は壊れたと思う。**
+    // --- "Quit" means something different when the app comes back ---
+    // Under Docker, compose starts it again, so it returns in a dozen seconds.
+    // **If it comes back on its own while the button says "Quit", whoever
+    // pressed it thinks something is broken.**
     if (s.restarts && !restartsShown) {
       restartsShown = true;
       quitTitle.textContent = "アプリの再起動";
@@ -1210,7 +1305,7 @@ __FEED_JS__
         "止まったあと、十数秒で戻ってくる。様子がおかしいときに使う";
     }
 
-    // --- 字幕の生成。**これが親の関門である。** ---
+    // --- Caption generation. **This is the master switch.** ---
     gpill.textContent = s.generating ? "生成: 中" : "生成: 停止中";
     gpill.className = "pill " + (s.generating ? "on" : "off");
     genState.textContent = s.generating
@@ -1218,12 +1313,13 @@ __FEED_JS__
       : "止まっている。音は取り込んでいない";
     gstart.disabled = !!s.generating;
     gstop.disabled = !s.generating;
-    // 動き出したら、始め方の説明は畳む。画面を混ませない。
+    // Once it runs, hide the note about how to start. Keep the page clear.
     $("genHint").style.display = s.generating ? "none" : "";
 
-    // --- 音声の入力 ---
+    // --- Audio input ---
     const a = s.audio || {};
-    // メーターが振れるのは生成中だけである。止まっていればデバイスは閉じている。
+    // The meter moves only while generating. When stopped, the device is
+    // closed.
     const lv = Math.min(Number(a.level || 0), 1);
     meterBar.style.width = (lv * 100).toFixed(0) + "%";
     meter.classList.toggle("hot", lv > 0.95);
@@ -1233,7 +1329,7 @@ __FEED_JS__
     } else if (!s.generating) {
       audioState.textContent = "停止中（音量は生成中に出る）";
     } else if (lv < 0.005) {
-      // 無音のまま気づかないのが一番困る。はっきり出す。
+      // The worst case is silence that nobody notices. Say it plainly.
       audioState.innerHTML = '<span class="ng">音が来ていない</span>';
     } else {
       audioState.textContent = "音が来ている（peak " + lv.toFixed(2) + "）"
@@ -1241,8 +1337,10 @@ __FEED_JS__
     }
     if (a.error) { aerr.textContent = a.error; aerrBox.style.display = ""; }
     else { aerrBox.style.display = "none"; }
-    // 一覧は最初の1回だけ取る。開いている選択肢を勝手に差し替えない。
-    // **選べないときも取りに行く。** 取らないと「読み込み中…」が残ってしまう。
+    // Fetch each list only once. Do not replace the options while a select
+    // box is open.
+    // **Fetch it even when the device cannot be chosen.** Otherwise the
+    // "loading" text stays on the screen.
     if (!devLoaded) { loadDevices(); }
     if (!dirLoaded) { loadDirection(); }
     if (!glossLoaded) { loadGlossary(); }
@@ -1254,11 +1352,12 @@ __FEED_JS__
     else if (s.active)    { label = "Zoom: 送信中";    cls = "on";  }
     else if (s.has_token) { label = "Zoom: 停止中";    cls = "off"; }
     else                  { label = "Zoom: 未登録";    cls = "off"; }
-    // 失敗は隠さない。トークンが切れていても200以外で返るだけなので、
-    // ここに出ていないと、字幕が届いていないことに気づけない。
+    // Do not hide failures. An expired token only gives a non-200 answer, so
+    // unless it appears here, nobody notices that the captions are not
+    // arriving.
     if (s.failed > 0) { label += "（失敗 " + s.failed + "）"; cls = "bad"; }
     pill.textContent = label; pill.className = "pill " + cls;
-    // 畳んだままでも、動いているかどうかが読めるようにする。
+    // Make the running state readable even while the section is collapsed.
     wayZoomState.textContent = s.dry_run ? "--dry-run"
                              : s.active ? "送信中"
                              : s.has_token ? "登録済み" : "";
@@ -1266,7 +1365,8 @@ __FEED_JS__
     const parts = [];
     parts.push(s.has_token ? ("登録済み（会議 " + s.meeting + "）") : "トークン未登録");
     if (s.has_token) { parts.push("seq " + s.seq); parts.push("送信 " + s.sent + " / 失敗 " + s.failed); }
-    // 生成が止まっていれば、Zoomを送信中にしても字幕は1行も出ない。黙っていない。
+    // If generation is stopped, turning Zoom sending on produces no caption
+    // at all. Say so.
     if (s.active && !s.generating) { parts.push("**生成が止まっているので何も流れない**"); }
     zoomState.textContent = parts.join("　");
 
@@ -1274,7 +1374,7 @@ __FEED_JS__
     stop.disabled = !s.active;
     save.disabled = s.dry_run;
 
-    // --- 配信 ---
+    // --- Delivery ---
     const t = s.tunnel || {};
     const st = t.state || "off";
     const ts = (t.kind === "tailscale");
@@ -1285,8 +1385,8 @@ __FEED_JS__
     wayNetState.textContent = st === "on" ? "配信中"
                             : st === "starting" ? "起動中"
                             : st === "error" ? "配信の失敗" : "";
-    // 経路を触れるのは止まっている間だけ。張ったまま持ち替えると、消せない
-    // トンネルが残る。
+    // The route can be changed only while delivery is stopped. Switching it
+    // while a tunnel is up leaves a tunnel that cannot be closed.
     if (document.activeElement !== tkind && t.kind) { tkind.value = t.kind; }
     tkind.disabled = (st === "on" || st === "starting");
     tkindHint.innerHTML = ts
@@ -1310,25 +1410,27 @@ __FEED_JS__
     if (t.error) { terr.textContent = t.error; terrBox.style.display = ""; }
     else { terrBox.style.display = "none"; }
 
-    // 会議の側で何か失敗していたら、タブに印を付ける。設定を開いたままでも
-    // 気づけるようにするためである。
+    // If anything failed on the meeting tab, mark the tab, so that it is
+    // noticed even while the settings tab is open.
     const bad = !!(a.error || t.error || s.failed > 0 || (s.schedule || {}).failure);
     tabRun.classList.toggle("alert", bad);
 
-    // --- 予定 ---
+    // --- Schedule ---
     drawSchedule(s.schedule || {});
 
-    // --- 会議 ---
+    // --- Meetings ---
     drawMeetings(s.meetings || {}, t, s.schedule || {});
 
     viewerUrl.textContent = s.viewer_url || "";
 
-    // --- 記録 ---
-    // **読める形（.md）が書かれるのは終了時である。** 途中で見たいことがあるので、
-    // そのときはここから読む。書き込みが失敗していたら、それを隠さない。
+    // --- Records ---
+    // **The readable form (.md) is written when the app stops.** Sometimes
+    // you want to read it while the meeting runs, and then you get it from
+    // here. If writing failed, do not hide that.
     //
-    // **字幕PCの中のパスは出さない**（2026-09-20 の麻生の指示）。記録は下の
-    // 一覧から落とすので、どこに置いてあるかは読み手に関係が無い。
+    // **Do not show the path inside the caption PC** (as requested
+    // 2026-09-20). The record is downloaded from the links below, so where it
+    // sits on disk does not concern the reader.
     const g = s.transcript || {};
     if (!g.on) {
       logState.textContent = "残さない（--no-save）";
@@ -1337,18 +1439,21 @@ __FEED_JS__
     } else if (g.count > 0) {
       logState.textContent = g.count + " 文を記録した（終了時に読める形も書く）";
     } else {
-      // **「0 文を記録した」とは書かない。** 下に「最新の記録」が出ているので、
-      // 落とせる記録が別にあるのに、0 と並べると取り違える。
+      // **Do not write "0 sentences recorded".** The latest record is shown
+      // just below, so a 0 next to it would be mistaken for that record being
+      // empty.
       logState.textContent = "";
     }
-    // **最初の1文が入った時と、記録が入れ替わった時に問い合わせ直す。**
-    // どちらも「最新の1本」が変わる瞬間である。
+    // **Ask again when the first sentence arrives, and when the record file
+    // changes.** Both are moments where "the latest one" becomes something
+    // else.
     const key = (g.path || "") + (g.count > 0 ? ":1" : ":0");
     if (key !== recKey) { recKey = key; loadLatest(); }
   }
-  // --- Zoomのチャットに投げる -------------------------------------------
-  // **画面操作で投げている。** Zoom に会議中のチャットへ投稿する API は無い。
-  // 押した結果は、その場に出す。届いたかどうかは、こちらからは見えない。
+  // --- Post to the Zoom chat ---------------------------------------------
+  // **This works by driving the Zoom window.** Zoom has no API for posting
+  // into the chat of a running meeting. The result of the click is shown on
+  // the spot. Whether it arrived cannot be seen from here.
   const chatPost = $("chatPost"), chatState = $("chatState");
   chatPost.addEventListener("click", async () => {
     chatPost.disabled = true;
@@ -1368,15 +1473,16 @@ __FEED_JS__
     chatPost.disabled = false;
   });
 
-  // --- 最新の記録のダウンロード -------------------------------------------
-  // **記録は字幕PCの中にある。** 遠隔で操作しているので、ここから落とせないと
-  // ファイルを取りに RustDesk を起こすことになる（2026-09-20 の麻生の指示）。
+  // --- Downloading the latest record --------------------------------------
+  // **The records live on the caption PC.** It is operated remotely, so
+  // without a download here, getting a file would mean starting RustDesk.
   //
-  // **落とせるのは最新の1本だけである。** どれを落とすかはサーバが決めるので、
-  // 画面からファイルを指す文字列は送らない。
+  // **Only the latest record can be downloaded.** The server decides which
+  // one, so the page never sends a string that names a file.
   //
-  // 問い合わせるのは、開いたときと、記録が入れ替わったときだけである。
-  // **2秒ごとの状態には載せない。** そのたびにディスクを読む理由が無い。
+  // This asks the server only on load and when the record file changes.
+  // **It is not part of the two-second status.** There is no reason to read
+  // the disk that often.
   const recMd = $("recMd"), recJsonl = $("recJsonl"), recLatest = $("recLatest");
   let recKey = null;
 
@@ -1408,7 +1514,8 @@ __FEED_JS__
     }
   }
 
-  // 押せない間は落としに行かない。**空のファイルを渡さない。**
+  // Do not download while the link is disabled. **Never hand over an empty
+  // file.**
   [recMd, recJsonl].forEach((a) => a.addEventListener("click", (e) => {
     if (a.classList.contains("off")) { e.preventDefault(); }
   }));
@@ -1417,14 +1524,15 @@ __FEED_JS__
   recReady(false);
   loadLatest();
 
-  // --- 字幕の生成 ---------------------------------------------------------
+  // --- Caption generation -------------------------------------------------
   async function setGen(on) {
     const b = on ? gstart : gstop;
     b.disabled = true;
     try {
       const st = await post("/api/engine", { on: on });
       showStatus(st);
-      // **何を止めたかを、そのつど書く。** 停止は生成だけでなく出口も閉じる。
+      // **Say what was actually stopped, every time.** Stopping closes the
+      // outputs as well as generation.
       const al = st.also || {};
       say(on ? "字幕の生成を開始した。"
              : (al.tunnel && al.zoom) ? "字幕の生成・配信・Zoom字幕を止めた。"
@@ -1436,7 +1544,7 @@ __FEED_JS__
   gstart.addEventListener("click", () => setGen(true));
   gstop.addEventListener("click", () => setGen(false));
 
-  // --- 音声の入力 ---------------------------------------------------------
+  // --- Audio input --------------------------------------------------------
   async function loadDevices() {
     devLoaded = true;
     try {
@@ -1449,7 +1557,8 @@ __FEED_JS__
         return;
       }
       devices.innerHTML = "";
-      // 同じ名前が MME・DirectSound・WASAPI に出るので、ホストAPIまで見せる。
+      // The same name appears under MME, DirectSound and WASAPI, so show the
+      // host API as well.
       for (const dev of d.devices) {
         const label = dev.index + ": " + dev.name + "（" + dev.api + "、" + dev.channels + " ch）";
         devices.appendChild(new Option(label, String(dev.index)));
@@ -1464,8 +1573,9 @@ __FEED_JS__
 
   devReload.addEventListener("click", () => { loadDevices(); say("一覧を取り直した。", true); });
 
-  // 選んだ時点で切り替える。「適用」は押させない。会議中に押し忘れると、
-  // 選んだつもりのデバイスから音が来ていないことに気づけない。
+  // Switch as soon as the choice is made. There is no "Apply" button. If
+  // someone forgot to press it during a meeting, they would not notice that
+  // no sound is coming from the device they thought they had chosen.
   devices.addEventListener("change", async () => {
     devices.disabled = true;
     try {
@@ -1474,17 +1584,19 @@ __FEED_JS__
       say("入力を " + (s.audio ? s.audio.name : "") + " にした。", true);
     } catch (e) {
       say(String(e.message), false);
-      // 切り替えに失敗したら、選択欄を実際に使っているデバイスへ戻す。
-      // 選択欄だけが変わったままだと、どれで録っているのか分からなくなる。
+      // If the switch failed, put the select box back to the device actually
+      // in use. If only the select box changed, nobody can tell which device
+      // is recording.
       await loadDevices();
       return;
     }
     devices.disabled = false;
   });
 
-  // --- 用語集 -------------------------------------------------------------
-  // **会議によって語彙が違う。** 必要な表だけを重ねる。1つの大きな表を
-  // 全部の会議で使うと、関係の無い語が認識の keywords を食う。
+  // --- Glossary -----------------------------------------------------------
+  // **Each meeting has its own vocabulary.** Stack only the tables you need.
+  // One big table used for every meeting fills the recognizer's keyword
+  // budget with unrelated terms.
   function showGlossary(g) {
     const sel = new Set(g.selected || []);
     const sets = g.sets || [];
@@ -1498,22 +1610,24 @@ __FEED_JS__
         lab.dataset.name = s.name.toLowerCase();
         const cb = document.createElement("input");
         cb.type = "checkbox"; cb.value = s.name; cb.checked = sel.has(s.name);
-        // 選んだ時点で切り替える。「適用」は押させない。
+        // Switch as soon as the choice is made. There is no "Apply" button.
         cb.addEventListener("change", applyGlossary);
         const n = document.createElement("span");
         n.className = "n"; n.textContent = s.name;
         const c = document.createElement("span");
         c.className = "c"; c.textContent = s.terms + " 語";
-        // **持ち出す口と、消す口を1行に置く。** 字幕PCに入らないと表を
-        // 触れない、という状態を作らない。
+        // **The download link and the delete control sit in the same row.**
+        // Never let the tables be editable only by logging into the caption
+        // PC.
         const dl = document.createElement("a");
         dl.className = "c"; dl.textContent = "ダウンロード";
         dl.href = "/api/glossary/file?name=" + encodeURIComponent(s.name);
         dl.setAttribute("download", s.name + ".tsv");
         dl.addEventListener("click", e => e.stopPropagation());
-        // **`<button>` にはできない。** この行は `<label>` なので、中の
-        // ボタンを押すとチェックボックスまで動く。`<span>` に役割だけ持たせて、
-        // キーボードからも届くようにする。**消す操作が届かないのは困る。**
+        // **This cannot be a `<button>`.** The row is a `<label>`, so
+        // pressing a button inside it would also toggle the checkbox. Give a
+        // `<span>` the button role instead, and make it reachable from the
+        // keyboard. **Delete must stay reachable.**
         const rm = document.createElement("span");
         rm.className = "c"; rm.textContent = "削除";
         rm.style.cursor = "pointer";
@@ -1524,10 +1638,12 @@ __FEED_JS__
         });
         rm.addEventListener("click", async e => {
           e.preventDefault(); e.stopPropagation();
-          // **消すのは戻せない。** 落としてからでないと取り返せないので確かめる。
-          // **JS の文字列に `「」` を書かないこと。** 訳表で `"` に化けて
-          // リテラルがそこで閉じ、**画面のスクリプト全体が死ぬ。**
-          // 日本語では何ともないので、英語にした人にだけ起きる。
+          // **Deleting cannot be undone.** The table is gone unless it was
+          // downloaded first, so ask for confirmation.
+          // **Never write the Japanese quote marks 「」 inside a JS string.**
+          // The translation table turns them into `"`, the literal ends
+          // there, and **the whole script on the page dies.** Nothing happens
+          // in Japanese, so only people who switch to English see it.
           if (!confirm("用語集 " + s.name + " を削除する。戻せない。\n"
                        + "取っておくなら、先にダウンロードすること。")) { return; }
           try {
@@ -1539,13 +1655,15 @@ __FEED_JS__
         glossBox.appendChild(lab);
       }
     }
-    // **絞り込みは、表が増えてから出す。** 数個のうちは邪魔なだけである。
+    // **Show the filter only once there are many tables.** With a few, it
+    // only gets in the way.
     glossFilterRow.style.display = sets.length >= GLOSS_FILTER_FROM ? "" : "none";
     if (sets.length < GLOSS_FILTER_FROM) { glossFilter.value = ""; }
     applyGlossFilter();
 
-    // **畳んでいる間も、何を使っているかは見えていないといけない。**
-    // 開かないと分からない作りにすると、前回のままなことに気づけない。
+    // **What is in use must stay visible while the section is collapsed.**
+    // If you had to open it to find out, you would not notice that the
+    // selection is still the one from last time.
     const names = sets.filter(s => sel.has(s.name)).map(s => s.name);
     if (!names.length) {
       glossSummary.innerHTML = '<span class="n ng">選ばれていない</span>';
@@ -1559,8 +1677,9 @@ __FEED_JS__
 
     const parts = ["文字起こしに渡す語 " + g.keywords + " / " + g.limit];
     glossState.textContent = parts.join("　");
-    // **上限で切れた語は認識に届かない。** 黙って落とすと、表に足したのに
-    // 効かない、という分かりにくい失敗になる。
+    // **Terms cut off at the limit never reach the recognizer.** Dropping
+    // them silently produces a confusing failure: a term was added to the
+    // table but has no effect.
     if (g.dropped > 0) {
       glossState.innerHTML = parts.join("　")
         + '<br><span class="ng">' + g.dropped
@@ -1573,8 +1692,9 @@ __FEED_JS__
     let shown = 0;
     for (const lab of glossBox.querySelectorAll(".gloss")) {
       const hit = !q || lab.dataset.name.includes(q);
-      // **選んでいる表は、絞り込んでも隠さない。** 見えていない物のチェックを
-      // 外せてしまうと、何を外したのか分からなくなる。
+      // **A selected table is never hidden by the filter.** If you could
+      // untick something you cannot see, you would not know what you
+      // unticked.
       const on = lab.querySelector("input").checked;
       lab.style.display = (hit || on) ? "" : "none";
       if (hit || on) { shown++; }
@@ -1590,8 +1710,9 @@ __FEED_JS__
   }
 
   glossFilter.addEventListener("input", applyGlossFilter);
-  // **どちらも、絞り込みで隠れている表にも効く。** 「全部」と書いてあるのに
-  // 見えている物だけが変わると、何が選ばれているのか分からなくなる。
+  // **Both buttons also act on tables hidden by the filter.** If a button
+  // says "all" but changes only what is visible, nobody can tell what is
+  // selected.
   function setAllGloss(on) {
     let changed = false;
     for (const c of glossBox.querySelectorAll("input")) {
@@ -1622,22 +1743,23 @@ __FEED_JS__
       say("用語集を " + (names.join(", ") || "(なし)") + " にした。", true);
     } catch (e) {
       say(String(e.message), false);
-      await loadGlossary();   // 失敗したら実際の選択へ戻す
+      await loadGlossary();   // on failure, go back to the real selection
       return;
     }
     for (const c of glossBox.querySelectorAll("input")) { c.disabled = false; }
   }
 
-  // **表はアップロードで足す。** 字幕PCはコンテナの中にあり、遠隔から
-  // ファイルを置く手段が他に無い。置き場はボリュームなので、コンテナを
-  // 作り直しても残る。
+  // **Tables are added by upload.** The caption PC runs inside a container,
+  // and there is no other way to put a file there remotely. The tables live
+  // on a volume, so they survive rebuilding the container.
   glossUp.addEventListener("click", async () => {
     const f = glossFile.files && glossFile.files[0];
     if (!f) { say("ファイルを選ぶこと。", false); return; }
     glossUp.disabled = true;
     try {
       const text = await f.text();
-      // 拡張子を落としたファイル名が表の名前になる。名前を別に打たせない。
+      // The file name without its extension becomes the table name. Do not
+      // ask the user to type a name as well.
       const name = f.name.replace(/[.]tsv$/i, "");
       showGlossary(await post("/api/glossary/upload", { name, text }));
       glossFile.value = "";
@@ -1649,22 +1771,26 @@ __FEED_JS__
   });
 
   // --- VNC ----------------------------------------------------------------
-  // **会議中でも起動・停止できる。** 会議ソフトへのサインインと、自動参加が
-  // 詰まったときの様子見に使う。認証が無いので、既定では動かさない。
+  // **It can be started and stopped during a meeting.** Use it to sign in to
+  // the meeting software, and to look at the screen when auto-join gets
+  // stuck. It has no authentication, so it does not run by default.
   function showVnc(v) {
     if (!v) { return; }
-    // 使えない環境（Windows には画面が無い）では、欄ごと出さない。
+    // Where it cannot work (Windows has no X display here), hide the whole
+    // section.
     vncGrp.style.display = (v.available || v.on) ? "" : "none";
     vncOn.disabled = v.on || !v.available;
     vncOff.disabled = !v.on;
     if (v.on) {
-      // **繋ぎ先は、いま開いている操作画面と同じ相手である。**
-      // サーバ側で名前を組み立てると、tailnet 名・IP・localhost のどれで
-      // 開いているかで食い違う。
+      // **Connect to the same host as the control page you have open.**
+      // Building the name on the server would disagree with the page,
+      // depending on whether it was opened by tailnet name, by IP or by
+      // localhost.
       //
-      // **scheme も合わせる。** https で開いているなら https の口を出す。
-      // http のページから https の口へ送ると、証明書の名前が合わずに
-      // 繋がらないことがある（証明書は完全名に対して出る）。
+      // **Match the scheme too.** If the page is https, offer the https port.
+      // Sending a user from an http page to an https port can fail, because
+      // the certificate name does not match (a certificate is issued for the
+      // full name).
       const https = location.protocol === "https:";
       const port = https ? v.https_port : v.web_port;
       const u = location.protocol + "//" + location.hostname + ":" + port
@@ -1696,9 +1822,10 @@ __FEED_JS__
   vncOn.addEventListener("click", () => setVnc(true));
   vncOff.addEventListener("click", () => setVnc(false));
 
-  // --- 操作画面の言語 -----------------------------------------------------
-  // **サーバ側で差し替える。** 選んだらサーバに覚えさせて、読み込み直す。
-  // 画面の文字列はページを組み立てるときに置き換わるので、ここでは何も訳さない。
+  // --- Language of the control page ---------------------------------------
+  // **The server does the substitution.** On a change, tell the server and
+  // reload. The page text is replaced while the page is being built, so
+  // nothing is translated here.
   const uiLang = $("uiLang");
   uiLang.value = "__UI_LANG__";
   uiLang.addEventListener("change", async () => {
@@ -1712,9 +1839,10 @@ __FEED_JS__
     }
   });
 
-  // --- 字幕の向き ---------------------------------------------------------
-  // **会議ごとに選ぶ。** 選んだ時点で切り替わる。適用ボタンは無い。
-  // 認識は繋ぎ直さないので、生成を回したまま変えてよい。
+  // --- Caption direction --------------------------------------------------
+  // **Chosen per meeting.** It switches as soon as it is chosen. There is no
+  // apply button. Speech recognition is not reconnected, so it can be changed
+  // while generation runs.
   function showDirection(d) {
     const items = d.items || [];
     dirSel.innerHTML = "";
@@ -1746,19 +1874,22 @@ __FEED_JS__
       const d = await post("/api/direction", { name: dirSel.value });
       showDirection(d);
       say("字幕の向きを変えた。", true);
-      // **強制分割の長さが向きで変わる。** 「遅延の調整」の数字を取り直さないと、
-      // 畳んだ中に古い値が残る。
+      // **The forced split length depends on the direction.** Unless the
+      // numbers under "Latency tuning" are fetched again, old values stay
+      // inside the collapsed section.
       if (tuneLoaded) { await loadTuning(); }
     } catch (e) {
       say(String(e.message), false);
-      await loadDirection();   // 失敗したら実際の向きへ戻す
+      await loadDirection();   // on failure, go back to the real direction
     }
     dirSel.disabled = false;
   });
 
-  // --- 遅延の調整 ---------------------------------------------------------
-  // **よく変えるものではない。** 既定値は実測で決めてある。だから畳んである。
-  // 触った値はすぐ効く。次の起動にも残したいときだけ「.env に保存」を押す。
+  // --- Latency tuning -----------------------------------------------------
+  // **These are not changed often.** The defaults were measured on real
+  // meeting audio, which is why this section is collapsed. A changed value
+  // takes effect at once. Press "Save to .env" only to keep it for the next
+  // start.
   function showTuning(t) {
     const items = t.items || [];
     tuneBox.innerHTML = "";
@@ -1776,7 +1907,7 @@ __FEED_JS__
       inp.type = "number"; inp.value = it.value;
       inp.min = it.min; inp.step = it.step;
       inp.dataset.name = it.name;
-      // 打っている途中で送らない。欄から離れたときと Enter で送る。
+      // Do not send while the user is typing. Send on blur and on Enter.
       inp.addEventListener("change", applyTuning);
       const d = document.createElement("span");
       d.className = "d"; d.textContent = "既定 " + it.default;
@@ -1790,7 +1921,8 @@ __FEED_JS__
       ? changed + " 個を既定から変えている"
       : "よく変えるものではない";
     tuneEnv.textContent = t.env_path ? "保存先: " + t.env_path : "";
-    // 組み合わせがおかしいときだけ出す（先回りが確定待ち以上、など）。
+    // Shown only when the combination makes no sense (for example, the
+    // look-ahead is larger than the wait for a final result).
     if (t.warning) {
       tuneState.innerHTML = '<span class="ng"></span>';
       tuneState.querySelector(".ng").textContent = t.warning;
@@ -1819,7 +1951,7 @@ __FEED_JS__
       say(inp.dataset.name + " を " + inp.value + " にした。", true);
     } catch (e) {
       say(String(e.message), false);
-      await loadTuning();          // 失敗したら実際の値へ戻す
+      await loadTuning();          // on failure, go back to the real values
       return;
     }
     inp.disabled = false;
@@ -1854,7 +1986,7 @@ __FEED_JS__
     save.disabled = true;
     try {
       const s = await post("/api/token", { token: value });
-      token.value = "";                 // 画面に残さない
+      token.value = "";                 // do not leave it on the screen
       say("登録した。会議 " + s.meeting + "。「開始」で送信を始める。", true);
       showStatus(s);
     } catch (e) { say(String(e.message), false); save.disabled = false; }
@@ -1870,7 +2002,7 @@ __FEED_JS__
     catch (e) { say(String(e.message), false); }
   });
 
-  // --- 配信 ---------------------------------------------------------------
+  // --- Delivery -----------------------------------------------------------
   tstart.addEventListener("click", async () => {
     tstart.disabled = true;
     try {
@@ -1882,7 +2014,8 @@ __FEED_JS__
     try { showStatus(await post("/api/tunnel", { on: false })); say("配信を止めた。閲覧URLは死んだ。", true); }
     catch (e) { say(String(e.message), false); }
   });
-  // **選ぶだけでは外に出ない。** 経路を持ち替えても、開始は別に押す。
+  // **Choosing alone does not put anything outside.** After switching the
+  // route, you still press Start separately.
   tkind.addEventListener("change", async () => {
     try {
       showStatus(await post("/api/tunnel", { kind: tkind.value }));
@@ -1890,8 +2023,9 @@ __FEED_JS__
     } catch (e) { say(String(e.message), false); }
   });
 
-  // --- 予定 ---------------------------------------------------------------
-  // **無人で回すものは、次に何が起きるかが先に読めないと怖い。**
+  // --- Schedule -----------------------------------------------------------
+  // **Something that runs unattended is frightening unless you can see what
+  // it will do next.**
   function mmss(sec) {
     if (sec < 0) { return ""; }
     const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
@@ -1924,7 +2058,8 @@ __FEED_JS__
     }
     schedState.textContent = parts.join("　");
 
-    // **失敗は押して消すまで残す。** 無人の機体では、流れた失敗は誰も見ない。
+    // **A failure stays until it is acknowledged.** On an unattended machine,
+    // a failure that scrolls away is seen by nobody.
     if (sc.failure) {
       schedFail.textContent = (sc.failure_at || "") + "　" + sc.failure;
       schedFailRow.style.display = "";
@@ -1971,10 +2106,12 @@ __FEED_JS__
     } catch (e) { say(String(e.message), false); }
   });
 
-  // --- 会議 ---------------------------------------------------------------
-  // **予定の入力はここに置かない。** 右の欄は狭すぎて、日時・Zoomのリンク・
-  // 3つの数値・印を並べられない。別の画面（/meetings）に出す。
-  // ここに残すのは、当日に使うものだけである。どれを配信するかと、そのURL。
+  // --- Meetings -----------------------------------------------------------
+  // **Schedule editing does not belong here.** The right column is too narrow
+  // for the date and time, the Zoom link, three numbers and the checkboxes.
+  // That lives on a separate page (/meetings).
+  // What stays here is only what you use on the day: which meeting to deliver,
+  // and its URL.
   function drawMeetings(m, t, sc) {
     const items = m.items || [];
     const key = JSON.stringify([m.active, items]);
@@ -2006,14 +2143,15 @@ __FEED_JS__
       meetUrlRow.style.display = "none";
     }
 
-    // **押すと何が起きるかを、そのつど書く。** 会議ごとに違う（Zoomに入るか、
-    // チャットに投げるか）ので、ボタンの名前だけでは分からない。
+    // **Say what the button will do, every time.** It differs per meeting
+    // (whether it joins Zoom, whether it posts to the chat), so the button
+    // label alone does not tell you.
     const what = ["配信"];
     if (live && live.zoom) { what.push("Zoomに入る"); }
     what.push("字幕の生成");
     if (live && live.chat) { what.push("チャットに投げる"); }
     meetStartWhat.textContent = live ? what.join(" → ") : "";
-    // 回している間は押させない。止めるのは「いま止める」である。
+    // Disabled while a meeting runs. Stopping is done with "Stop now".
     meetStart.disabled = !live || ((sc || {}).state || "idle") !== "idle";
   }
 
@@ -2030,8 +2168,9 @@ __FEED_JS__
     try {
       showStatus(await post("/api/schedule",
                             { action: "start", id: meetPick.value }));
-      // **始まるまで数十秒かかる。** Zoomの起動と配信の立ち上げを含む。
-      // 進み具合は「いまの状態」に出る。
+      // **It takes tens of seconds to start.** That includes launching Zoom
+      // and bringing the delivery up. The progress appears under "Current
+      // state".
       say("この会議を始める。進み具合は上に出る。", true);
     } catch (e) { say(String(e.message), false); meetStart.disabled = false; }
   });
@@ -2045,15 +2184,17 @@ __FEED_JS__
     document.body.appendChild(a); a.click(); a.remove();
   });
 
-  // **別のタブで開く。** 操作画面は会議中に見ているので、置き換えない。
+  // **Open it in another tab.** The control page is watched during the
+  // meeting, so do not replace it.
 
   openViewer.addEventListener("click", () => { window.open(viewerUrl.textContent, "_blank"); });
 
 __COPY_JS__
 
-  // --- QRコードの保存 -------------------------------------------------------
-  // **画面のQRは貼り付けられない。** スライドや案内のメールに載せるには、
-  // ファイルになったPNGが要る。サーバに大きく描き直させて、それを落とす。
+  // --- Saving the QR code ---------------------------------------------------
+  // **The QR code on the page cannot be pasted anywhere.** Putting it on a
+  // slide or into an announcement email needs a PNG file. Ask the server to
+  // draw a larger one and download that.
   qrsave.addEventListener("click", () => {
     const a = document.createElement("a");
     a.href = "/api/qr?dl=1&t=" + encodeURIComponent(publicUrl.textContent);
@@ -2063,20 +2204,22 @@ __COPY_JS__
     a.remove();
   });
 
-  // --- 記録 ---------------------------------------------------------------
-  // 別のタブに出す。**この画面は共有しないので、記録もここから出さない。**
+  // --- Records ------------------------------------------------------------
+  // Shown in another tab. **This page is never shared, so the records are not
+  // shown from here either.**
 
-  // --- 終了 ---------------------------------------------------------------
-  // 本体が終わればサーバも消える。**返事が来なくても成功でありうる。**
-  // 通信の失敗を失敗として出さないこと。
+  // --- Quitting -----------------------------------------------------------
+  // When the app stops, the server goes with it. **No answer can still mean
+  // success.** Do not report a network failure as a failure here.
   quit.addEventListener("click", async () => {
-    // **戻ってくる仕掛けがあるなら、そう言う。** 押した人が「終わった」と
-    // 思って帰ってしまうと、動いているのに誰も見ていない状態になる。
+    // **If the app comes back, say so.** Someone who presses the button,
+    // thinks it is over and leaves would leave it running with nobody
+    // watching.
     const back = restartsShown;
     if (!confirm(back ? "字幕アプリを再起動する。十数秒で戻ってくる。"
                       : "字幕アプリを終了する。よろしいですか。")) { return; }
     quit.disabled = true;
-    try { await post("/api/shutdown", {}); } catch (e) { /* 上の通り */ }
+    try { await post("/api/shutdown", {}); } catch (e) { /* see above */ }
     ended = true;
     clearInterval(timer);
     dot.classList.remove("on");
@@ -2092,11 +2235,13 @@ __COPY_JS__
     say(back ? "再起動している。十数秒したら、この画面を開き直すこと。"
              : "終了した。この画面を閉じる。", true);
 
-    // このタブを閉じる。**閉じられないことがある。**
-    // ブラウザは「スクリプトが開いた窓」しか閉じさせない。この画面はアプリが
-    // webbrowser.open() で開いたものなので、閉じる要求が黙って無視される場合がある。
-    // そのときのために、閉じられなかったと分かる画面を出す。
-    // **戻ってくるなら、タブを閉じない。** 開き直す先がこの画面である。
+    // Close this tab. **Sometimes it cannot be closed.**
+    // A browser only lets a script close a window that a script opened. This
+    // page was opened by the app with webbrowser.open(), so the close request
+    // may be ignored silently. For that case, show a page that makes the
+    // failure to close obvious.
+    // **If the app comes back, do not close the tab.** This page is where you
+    // would reopen it.
     if (!back) {
       window.close();
       setTimeout(() => {
@@ -2108,8 +2253,9 @@ __COPY_JS__
   });
 
   function showClosed() {
-    // ここに来たのは、ブラウザがタブを閉じさせなかったときである。
-    // 操作の並びをそのまま残すと、まだ使えるように見える。全部消す。
+    // We get here when the browser refused to close the tab.
+    // Leaving the controls in place would make the page look usable. Remove
+    // them all.
     document.getElementById("panel").remove();
     sep.remove();
     split.style.setProperty("--right", "0px");
@@ -2120,9 +2266,10 @@ __COPY_JS__
       + "（ブラウザがタブを自動で閉じない設定になっている）</div></div>";
   }
 
-  // --- 状態の取り直し ------------------------------------------------------
-  // 送信数・失敗数・トンネルの起動は、こちらが操作しなくても変わる。
-  // 相手は自分の機体なので、定期的に取り直してよい。
+  // --- Refreshing the status ----------------------------------------------
+  // The number sent, the number failed and the tunnel state change without
+  // anyone touching this page. The server is our own machine, so polling it
+  // regularly is fine.
   function refresh() {
     if (ended) { return; }
     fetch("/api/status").then((r) => r.json()).then(showStatus).catch(() => {});
@@ -2136,13 +2283,16 @@ __COPY_JS__
 
 
 class WebCaptions:
-    """字幕の履歴を持ち、閲覧と操作の2つのHTTPサーバを動かす。
+    """Holds the caption history and runs two HTTP servers: viewer and
+    control.
 
-    `caption()` と `asr()` は本体のイベントループから呼ばれる。どちらも待たない
-    （履歴に足して起こすだけ）ので、字幕の送信を遅らせない。
+    `caption()` and `asr()` are called from the main event loop. Neither
+    waits (they only append to the history and wake the waiters), so they do
+    not delay caption delivery.
 
-    `control` には `app.ZoomControl`、`on_shutdown` には `app.App.request_stop`、
-    `tunnel` には `tunnel.Tunnel` が入る。**操作はHTTPサーバのスレッドから来る。**
+    `control` holds an `app.ZoomControl`, `on_shutdown` holds
+    `app.App.request_stop`, and `tunnel` holds a `tunnel.Tunnel`.
+    **Operations arrive on the HTTP server threads.**
     """
 
     def __init__(
@@ -2154,57 +2304,69 @@ class WebCaptions:
     ) -> None:
         self.port = port
         self.control_port = control_port
-        # 操作画面を、127.0.0.1 に加えて待ち受けるアドレス（tailnet のIP）。
-        # **必ず Tailscale の範囲だけにする**（run.py が確かめてから渡す）。
+        # Extra addresses (tailnet IPs) where the control page listens, in
+        # addition to 127.0.0.1.
+        # **These must stay inside the Tailscale range** (run.py checks them
+        # before passing them in).
         self.control_extra: tuple[str, ...] = ()
-        # tailnet のアドレスを、取れるまで背景で待つかどうか。
+        # Whether to keep waiting in the background for a tailnet address.
         self.control_retry = False
         self._stopping = False
         self.lines = lines
         self.bind = bind
         self.control = None
-        # 字幕の生成（録音・認識・翻訳）の開始と停止（app.EngineControl）。
+        # Start and stop of caption generation: recording, recognition,
+        # translation (app.EngineControl).
         self.engine = None
-        # 入力デバイスの一覧と差し替え（app.AudioControl）。
+        # Listing and switching the input device (app.AudioControl).
         self.audio = None
-        # 用語集の一覧と選び直し（app.GlossaryControl）。
+        # Listing and selecting glossaries (app.GlossaryControl).
         self.glossary = None
-        # 遅延の調整つまみ（app.TuningControl）。
+        # The latency tuning knobs (app.TuningControl).
         self.tuning = None
-        # 字幕の向き（app.DirectionControl）。
+        # The caption direction (app.DirectionControl).
         self.direction = None
-        # 予定された会議を回すスケジューラ（schedule.Scheduler）。
+        # The scheduler that runs scheduled meetings (schedule.Scheduler).
         self.scheduler = None
-        # VNC（vnc.Vnc）。**会議中でも起動・停止できる。**
+        # VNC (vnc.Vnc). **It can be started and stopped during a meeting.**
         self.vnc = None
         self.on_shutdown = None
-        # 配信の経路（Cloudflare / Tailscale）。`tunnel.Delivery` が両方を持つ。
+        # The delivery route (Cloudflare / Tailscale). `tunnel.Delivery` holds
+        # both.
         self.tunnel: tunnel_mod.Delivery | None = None
-        # 会議の記録（transcript.Transcript）。--no-save のときは None のまま。
-        # **操作画面からしか見えない。** 閲覧側には出さない。
+        # The meeting record (transcript.Transcript). It stays None with
+        # --no-save.
+        # **Only the control page can see it.** It is not exposed on the
+        # viewer side.
         self.transcript = None
-        # 記録の置き場の選び直し（app.RecordControl）。
+        # Choosing where records are stored (app.RecordControl).
         self.records = None
-        # 閲覧画面の経路。**会議ごとに変える**（meetings.py）。参加者が会議ごとに
-        # 違うので、先週の会議のURLで今日の字幕が見えてはいけない。
-        # 配信するのは選んである1つだけで、他の会議のURLは404になる。
+        # The path of the viewer page. **It changes per meeting**
+        # (meetings.py). Participants differ per meeting, so last week's URL
+        # must not show today's captions.
+        # Only the selected meeting is delivered; the URLs of the others
+        # return 404.
         self.meetings = meetings.Store()
         self.meetings.on_change = self._meeting_changed
-        # ホストの受け口。会議ごとに、失敗の数と「もう受け取った」印を持つ。
+        # The host token entry point. Per meeting, it keeps a failure count
+        # and an "already received" flag.
         self._host_attempts: dict[str, int] = {}
         self._host_done: set[str] = set()
         self._host_last_try = 0.0
-        # 受け口に何があったか。操作画面に出す。**トークンそのものは入れない。**
+        # What happened at that entry point, shown on the control page.
+        # **The token itself is never put in here.**
         self.host_log: list[str] = []
 
-        # 字幕の履歴と、長ポーリングの待ち合わせ。
+        # The caption history, and the wait used by long polling.
         self._events: list[dict] = []
-        self._first = 0  # _events[0] の通し番号
+        self._first = 0  # sequence number of _events[0]
         self._cond = threading.Condition()
         self._waiting = 0
-        # **書きかけの文字起こし。** 履歴には入れない。中身が置き換わるものなので、
-        # 追記していく `_events` に混ぜると、同じ文が何行も残ってしまう。
-        # 版番号を別に持ち、ブラウザは最後に見た版と違うときだけ描き直す。
+        # **The transcript line that is still growing.** It is not part of the
+        # history. Its content is replaced, so mixing it into `_events`, which
+        # only grows, would leave many copies of the same sentence.
+        # It carries its own version number, and the browser redraws only when
+        # that differs from the last version it saw.
         self._partial = ""
         self._partial_v = 0
         self._servers: list[ThreadingHTTPServer] = []
@@ -2213,19 +2375,22 @@ class WebCaptions:
 
     @property
     def viewer_path(self) -> str:
-        """いま配信している会議の経路。閲覧サーバはここしか開けない。"""
+        """The path of the meeting being delivered now. The viewer server
+        serves nothing else."""
         return self.meetings.viewer_path
 
     def viewer_url(self) -> str:
-        """**外に出さずに開く閲覧URL。** 配信（Funnel）を張らずに字幕を見る道。
+        """**The viewer URL that stays inside.** A way to watch the captions
+        without opening a delivery (Funnel).
 
-        **届くアドレスを返すこと。** `0.0.0.0` で待ち受けているとき、以前は
-        `localhost` を返していた。**コンテナで動かすと、それは箱の中を指す。**
-        誰も開けない URL を「これで見られる」と出していた（麻生の指摘、
-        2026-09-21）。
+        **Return an address that actually works.** While listening on
+        `0.0.0.0`, this used to return `localhost`. **Inside a container, that
+        points at the container itself.** The page presented a URL nobody
+        could open as the way to watch (reported 2026-09-21).
 
-        `0.0.0.0` なら tailnet の名前を優先する。実際にそこで待ち受けている。
-        名前が取れないときだけ `localhost` に落ちる（機体の前で使う場合）。
+        With `0.0.0.0`, prefer the tailnet name, because the server really
+        does listen there. It falls back to `localhost` only when no name is
+        available (when working at the machine itself).
         """
         host = self.bind
         if host in ("127.0.0.1", ""):
@@ -2239,56 +2404,63 @@ class WebCaptions:
         return f"http://localhost:{self.control_port}"
 
     def public_url(self) -> str:
-        """トンネル越しの閲覧URL。張っていなければ空。"""
+        """The viewer URL through the tunnel. Empty when no tunnel is up."""
         url = self.tunnel.url if self.tunnel is not None else ""
         return f"{url}{self.viewer_path}" if url else ""
 
     def _upcoming(self) -> list[dict]:
-        """これから来る回。**予定の表示がスケジューラに依存しないようにする。**"""
+        """The upcoming occurrences. **This keeps the schedule display
+        independent of the scheduler.**"""
         try:
             return self.meetings.upcoming(datetime.now(), limit=3)
         except Exception:  # noqa: BLE001
             return []
 
     def meetings_status(self) -> dict:
-        """会議の一覧に、いまの経路で組み立てたURLを添える。"""
+        """The meeting list, with URLs built from the current route."""
         st = self.meetings.status()
         for item in st["items"]:
             item["url"] = self.meeting_url(item["id"])
-            # **ホスト用URLは、Tailscale のときだけ出る。** 出ないときは空。
+            # **The host URL exists only with Tailscale.** Otherwise it is
+            # empty.
             item["host_url"] = self.host_url(item["id"])
             item["host_taken"] = item["id"] in self._host_done
         return st
 
     def meeting_url(self, meeting_id: str) -> str:
-        """その会議の閲覧URL。土台が分からなければ空。
+        """The viewer URL of that meeting. Empty when the base URL is unknown.
 
-        **Tailscale では、配信していなくても返る。** 会議の前日にURLを確定して
-        案内に載せるための道である。Cloudflare はホスト名が毎回変わるので、
-        張っている間しか返らない。
+        **With Tailscale it works even when nothing is being delivered.** That
+        is how you fix the URL the day before a meeting and put it in the
+        announcement. With Cloudflare the host name changes every time, so the
+        URL exists only while the tunnel is up.
         """
         base = self.tunnel.base_url() if self.tunnel is not None else ""
         return f"{base}{self.meetings.path_of(meeting_id)}" if base else ""
 
-    # --- 本体から呼ぶ -------------------------------------------------------
+    # --- Called from the main app -------------------------------------------
 
     def caption(self, text: str) -> None:
-        """英語の字幕を1行流す。"""
+        """Send one translated caption line."""
         self._emit({"type": "caption", "text": text, "time": time.strftime("%H:%M:%S")})
 
     def asr(self, text: str) -> None:
-        """確定した文字起こしを1行流す。表示するかはブラウザ側のトグルが決める。"""
+        """Send one final transcript line. The toggle in the browser decides
+        whether it is shown."""
         self._emit({"type": "asr", "text": text, "time": time.strftime("%H:%M:%S")})
 
     def partial(self, text: str) -> None:
-        """**書きかけの文字起こし。** 確定を待たずに、声とほぼ同時に見せる。
+        """**A transcript line that is still growing.** It is shown almost
+        with the voice, without waiting for the sentence to be final.
 
-        文が確定するまでの数秒、画面には何も出ない。話している人の言葉が
-        溜まっているだけで、読む側からは止まって見える。ここを埋める。
+        For the few seconds until a sentence is final, nothing appears on the
+        page. The speaker's words are only piling up, and to the reader the
+        page looks frozen. This fills that gap.
 
-        **翻訳とZoom字幕には流さない。** どちらも一度出した行を置き換えられないので、
-        書きかけを送ると、訂正した完成版と二重に残る。置き換えられるのは、
-        自分でDOMを持っているブラウザの画面だけである。
+        **It is not sent to translation or to the Zoom captions.** Neither can
+        replace a line it already showed, so a growing line would stay next to
+        the corrected final one. Only the browser page, which owns its own
+        DOM, can replace a line.
         """
         text = text.strip()
         with self._cond:
@@ -2299,22 +2471,27 @@ class WebCaptions:
             self._cond.notify_all()
 
     def _meeting_changed(self) -> None:
-        """配信する会議が変わったときに呼ばれる（`meetings.Store.on_change`）。
+        """Called when the delivered meeting changes
+        (`meetings.Store.on_change`).
 
-        **前の会議の字幕を捨てる。** 履歴は200行あり、新しく開いた画面には
-        `since=0` で全部渡る。捨てないと、**次の会議の参加者に、前の会議の
-        中身がそのまま見える。** 会議ごとにURLを分けている意味が無くなる。
+        **Throw away the captions of the previous meeting.** The history holds
+        200 lines, and a newly opened page receives all of them with
+        `since=0`. Without this, **the participants of the next meeting would
+        see the content of the previous one.** That would defeat the point of
+        a separate URL per meeting.
 
-        書きかけの文字起こしも同じ理由で捨てる。版番号を進めるので、待っている
-        長ポーリングもここで起きる（古い経路はこの瞬間から404になるので、
-        待たせたままにしても意味が無い）。
+        The growing transcript line is dropped for the same reason. The
+        version number advances, so any waiting long poll wakes up here (the
+        old path returns 404 from this moment on, so there is no point in
+        keeping it waiting).
 
-        ページそのものは要求のたびに組み立てるので（`_viewer_page`）、
-        ここで作り直すものは無い。
+        The page itself is built on every request (`_viewer_page`), so there
+        is nothing to rebuild here.
         """
         with self._cond:
-            # 通し番号は戻さない。戻すと、開いたままの画面が「新しい行が来た」と
-            # 誤認して、消したはずの行を取りに来る。
+            # Do not rewind the sequence number. Rewinding would make an open
+            # page think new lines arrived and fetch the lines we just
+            # deleted.
             self._first += len(self._events)
             self._events.clear()
             self._partial = ""
@@ -2330,16 +2507,19 @@ class WebCaptions:
                 self._first += drop
             self._cond.notify_all()
 
-    # --- 長ポーリング -------------------------------------------------------
+    # --- Long polling -------------------------------------------------------
 
     def poll(self, since: int, wait: float, pv: int = -1) -> tuple[int, list[dict], str, int]:
-        """`since` 以降の行を返す。無ければ最大 `wait` 秒待つ。
+        """Return the lines after `since`. If there are none, wait up to
+        `wait` seconds.
 
-        `since` が履歴から落ちるほど古ければ、残っている最古から返す。
-        途中から開いた画面には `since=0` で全履歴が渡る。
+        If `since` is so old that those lines already fell out of the history,
+        return from the oldest line still kept. A page opened in the middle
+        sends `since=0` and receives the whole history.
 
-        **書きかけの文字起こしが変わったときも返す。** `pv` はブラウザが最後に
-        受け取った版番号で、`-1` なら版を問わず今の中身を返す。
+        **This also returns when the growing transcript line changed.** `pv`
+        is the version number the browser last received; with `-1` it returns
+        the current content whatever the version.
         """
         deadline = time.monotonic() + wait
         with self._cond:
@@ -2361,14 +2541,16 @@ class WebCaptions:
 
     @property
     def viewers(self) -> int:
-        """いま字幕を待っている画面の数。1画面が1本の要求を占める。"""
+        """How many pages are waiting for captions now. Each page holds one
+        request."""
         with self._cond:
             return self._waiting
 
-    # --- 状態 ---------------------------------------------------------------
+    # --- Status -------------------------------------------------------------
 
     def status(self) -> dict:
-        """操作画面に返す状態。Zoomとトンネルの両方を1つにまとめる。"""
+        """The status returned to the control page. It merges the Zoom state
+        and the tunnel state into one object."""
         if self.control is not None:
             st = dict(self.control.status())
         else:
@@ -2381,16 +2563,19 @@ class WebCaptions:
                             "kind": config.tunnel_kind_selection(),
                             "kinds": list(config.TUNNEL_KINDS), "preannounce": False,
                             "available": tunnel_mod.find_cloudflared() is not None}
-        # **会議ごとの閲覧URLも一緒に返す。** 前もって配るURLは、配信していない
-        # あいだも見えていないと意味がない。
+        # **Return the per-meeting viewer URLs as well.** A URL handed out in
+        # advance is useless unless it is visible while nothing is being
+        # delivered.
         st["meetings"] = self.meetings_status()
-        # スケジューラの状態。**2秒ごとの状態取得に相乗りさせる。**
-        # 無人で回すものは、次に何が起きるかが先に読めないと怖い。
+        # The scheduler state. **It rides along with the two-second status
+        # poll.** Something that runs unattended is frightening unless you can
+        # see what it will do next.
         #
-        # **次の予定は、スケジューラが居なくても出す。** 起動直後、本体が組み上がるまでの
-        # 短い間は `scheduler` がまだ入っていない。そこで予定が空に見えると、
-        # 「予定が消えた」と誤解させる。予定は会議の一覧が持っているので、
-        # そちらから直に読む。
+        # **The upcoming meetings are shown even without a scheduler.** Right
+        # after start, for the short time until the app is assembled,
+        # `scheduler` is not set yet. An empty list there would suggest that
+        # the schedule was lost. The schedule belongs to the meeting list, so
+        # read it directly from there.
         st["schedule"] = self.scheduler.status() if self.scheduler else {
             "state": "idle", "meeting": "", "occurrence": "",
             "note": "本体を組み立てているところ", "failure": "", "failure_at": "",
@@ -2402,9 +2587,11 @@ class WebCaptions:
             "level": 0.0, "dropped": 0, "error": ""}
         st["viewer_url"] = self.viewer_url()
         st["public_url"] = self.public_url()
-        # 終わらせても戻ってくるか。**「終了」の文言が変わる。**
+        # Whether the app comes back after quitting. **It changes the wording
+        # of the Quit button.**
         st["restarts"] = config.restarts()
-        # VNC。**Windows では「使えない」で返る**（DISPLAY が無い）。
+        # VNC. **On Windows this reports "not available"** (there is no
+        # DISPLAY).
         st["vnc"] = self.vnc.status() if self.vnc else {
             "on": False, "available": False, "error": "",
             "web_port": config.VNC_WEB_PORT,
@@ -2419,21 +2606,24 @@ class WebCaptions:
             }
         else:
             st["transcript"] = {"on": False, "path": "", "count": 0, "error": ""}
-        # 記録の置き場。**--no-save でも返す。** どこに出ないのかが分かる。
+        # Where records are stored. **This is returned even with --no-save**,
+        # so it is clear where nothing is being written.
         st["records"] = self.records.status() if self.records else {
             "dir": str(config.TRANSCRIPT_DIR), "saving": False, "can_pick": False}
         return st
 
-    # --- 起動と停止 ---------------------------------------------------------
+    # --- Start and stop -----------------------------------------------------
 
     def start(self) -> None:
-        """閲覧と操作、2つのサーバを立てる。
+        """Bring up the two servers: viewer and control.
 
-        **操作画面は必ず 127.0.0.1 で待ち受ける。** `bind` は閲覧にしか効かない。
+        **The control page always listens on 127.0.0.1.** `bind` affects only
+        the viewer.
 
-        `control_extra` があれば、**それに加えて** tailnet のアドレスでも待ち受ける。
-        127.0.0.1 は必ず残す。**Tailscale が落ちていても、機体の前からは必ず
-        操作できるようにするためである。**
+        If `control_extra` is set, the control page also listens on those
+        tailnet addresses, **in addition** to 127.0.0.1. 127.0.0.1 always
+        stays. **That way the machine can always be operated from in front of
+        it, even when Tailscale is down.**
         """
         viewer = self._serve(self.bind, self.port, _viewer_handler(self))
         try:
@@ -2451,26 +2641,31 @@ class WebCaptions:
                     self._serve(addr, self.control_port, _control_handler(self)))
                 bound.append(addr)
             except OSError as exc:
-                # **ここで起動を止めない。** 再起動の直後は tailscaled が
-                # まだアドレスを配っていないことがある。操作画面が外に出ないだけで
-                # 字幕アプリが立ち上がらないのでは、本末転倒である。
+                # **Do not abort the start here.** Right after a reboot,
+                # tailscaled may not have handed out an address yet. Failing
+                # to start the caption app just because the control page is
+                # not reachable from outside would defeat the purpose.
                 print(f"  [操作] {addr} では待ち受けられない: {exc}")
-        # **実際に待ち受けられたものだけを覚える。** 起動時の画面に出すURLと、
-        # `Origin` の検査は、どちらもここから作る。開いていないURLを
-        # 「開ける」と出すと、繋がらない理由を探すことになる。
+        # **Remember only the addresses we really bound.** Both the URLs
+        # printed at start and the `Origin` check are built from this. Showing
+        # a URL that is not open as if it were would send someone hunting for
+        # why it does not connect.
         self.control_extra = tuple(bound)
         self.serve_control_https()
         if self.control_retry:
             threading.Thread(target=self._retry_control_bind, daemon=True).start()
 
     def serve_control_https(self) -> None:
-        """操作画面を tailnet の中だけに https でも出す（`tailscale serve`）。
+        """Also serve the control page over https, inside the tailnet only
+        (`tailscale serve`).
 
-        **tailnet に出していないときは何もしない。** `localhost` だけで使って
-        いるなら、ブラウザは既に secure context と見なす。
+        **This does nothing when the page is not on a tailnet.** If it is used
+        only over `localhost`, the browser already treats it as a secure
+        context.
 
-        失敗しても黙って続ける。**https は便利だが、無くても http で使える。**
-        会議の当日に、証明書の都合で操作画面が出ないのでは本末転倒である。
+        On failure it continues silently. **https is convenient, but the page
+        works over http without it.** Losing the control page on the day of a
+        meeting over a certificate problem would defeat the purpose.
         """
         if not self.control_extra:
             return
@@ -2485,12 +2680,14 @@ class WebCaptions:
             break
 
     def _retry_control_bind(self) -> None:
-        """tailnet のアドレスが取れるまで、背景で待ち受けを足し続ける。
+        """Keep adding listeners in the background until a tailnet address
+        appears.
 
-        **自動起動では、Tailscale がまだ上がっていないことがある。**
-        起動のときに1回試して諦めると、再起動のたびに「その回はもう
-        tailnet から操作画面が開けない」ことになる。字幕アプリの起動そのものは
-        待たせず（127.0.0.1 は先に開いている）、ここで繰り返す。
+        **When the app starts automatically, Tailscale may not be up yet.**
+        Trying once at start and giving up would mean that after every reboot,
+        the control page cannot be opened from the tailnet for that whole run.
+        The caption app itself is not made to wait (127.0.0.1 is already
+        open); the retry happens here.
         """
         while not self._stopping:
             time.sleep(config.CONTROL_BIND_RETRY_SEC)
@@ -2512,22 +2709,23 @@ class WebCaptions:
                 for url in self.control_urls_extra():
                     print(f"[{time.strftime('%H:%M:%S')}] 操作        "
                           f"tailnet からも開けるようになった: {url}")
-                # **ここでも張る。** 起動時は Tailscale がまだ上がっておらず、
-                # 名前もアドレスも取れないことがある。
+                # **Set it up here as well.** At start, Tailscale may not be
+                # up yet, and neither the name nor the address is available.
                 self.serve_control_https()
                 return
 
-    # --- ホストがトークンを貼る受け口 ---------------------------------------
-    # **トンネル越しに出る、唯一の書き込み口である。** 狭く作る。
+    # --- The entry point where a host pastes a token -------------------------
+    # **This is the only write endpoint exposed through the tunnel.** Keep it
+    # as narrow as possible.
 
     def host_path(self, meeting_id: str, host_id: str) -> str:
         return f"/h/{meeting_id}/{host_id}"
 
     def host_url(self, meeting_id: str) -> str:
-        """ホストに渡すURL。開いていなければ空。
+        """The URL handed to the host. Empty when the entry point is not open.
 
-        **Cloudflare では作らない。** TLS が Cloudflare の入口で終わるので、
-        Zoom の資格情報がそこを平文で通る。
+        **It is not created with Cloudflare.** TLS ends at the Cloudflare
+        edge, so the Zoom credential would pass through there in the clear.
         """
         if self.tunnel is None or self.tunnel.kind not in config.HOST_TOKEN_KINDS:
             return ""
@@ -2541,11 +2739,12 @@ class WebCaptions:
         return f"{base}{self.host_path(meeting_id, host_id)}"
 
     def host_window_open(self, meeting_id: str) -> bool:
-        """いまトークンを受け付けてよい時間かどうか。
+        """Whether a token may be accepted right now.
 
-        **恒久的な口にしない。** 開けておくのは、その会議を回している間と、
-        予定の前後 `HOST_TOKEN_WINDOW_MIN` 分だけにする。**これがこの設計で
-        いちばん効く歯止めである。** 会議1本あたり1時間ほどに絞られる。
+        **This must not be a permanent endpoint.** It is open only while that
+        meeting is running, and for `HOST_TOKEN_WINDOW_MIN` minutes around its
+        scheduled time. **This is the strongest limit in the design.** It
+        narrows the endpoint to about one hour per meeting.
         """
         sched = self.scheduler
         if sched is not None and sched.meeting_id == meeting_id and sched.state != "idle":
@@ -2562,10 +2761,11 @@ class WebCaptions:
 
     def host_take_token(self, meeting_id: str, host_id: str, token: str,
                         peer: str = "") -> tuple[int, str]:
-        """トークンを受け取る。`(HTTPの符号, 画面に出す文)` を返す。
+        """Receive a token. Returns `(HTTP status, message for the page)`.
 
-        **断るときは、経路違いと同じ404にする。** 「鍵は合っているが時間外」と
-        分かると、そこに口があることを教えることになる。
+        **A refusal returns the same 404 as a wrong path.** Revealing that
+        "the key is right but it is outside the window" would tell the caller
+        that an endpoint exists there.
         """
         now = time.monotonic()
         if now - self._host_last_try < config.HOST_MIN_INTERVAL_SEC:
@@ -2575,7 +2775,8 @@ class WebCaptions:
         active = self.meetings.active_id
         known = {m.id: m for m in self.meetings.items()}
         meeting = known.get(meeting_id)
-        # **いま配信している会議だけ。** 先週の鍵は通らない。
+        # **Only the meeting being delivered now.** Last week's key does not
+        # work.
         if meeting is None or meeting_id != active or not meeting.host_id:
             return 404, ""
         if not hmac.compare_digest(str(host_id), str(meeting.host_id)):
@@ -2588,7 +2789,8 @@ class WebCaptions:
             self._host_note(meeting_id, peer, "失敗が続いたので閉じた")
             return 404, ""
         if meeting_id in self._host_done:
-            # **1回だけ。** 2度目は、間違いか、そうでなければ誰かである。
+            # **Once only.** A second attempt is either a mistake or somebody
+            # else.
             return 409, "もう受け取っている。入れ直すなら操作画面から。"
 
         if self.control is None:
@@ -2606,15 +2808,16 @@ class WebCaptions:
         return 200, "受け取った。字幕をZoomに送り始める。"
 
     def host_rearm(self, meeting_id: str) -> None:
-        """操作画面から、受け口をもう一度開く。"""
+        """Open the entry point again, from the control page."""
         self._host_done.discard(meeting_id)
         self._host_attempts.pop(meeting_id, None)
 
     def _host_note(self, meeting_id: str, peer: str, what: str) -> None:
-        """**何があったかを必ず残す。** 無人の機体では、記録が唯一の痕跡である。
+        """**Always record what happened.** On an unattended machine, the log
+        is the only trace.
 
-        **トークンそのものは絶対に書かない。** 先頭だけでも、会議IDと合わせれば
-        ほとんど復元できる。
+        **Never write the token itself.** Even its first characters, combined
+        with the meeting ID, would be almost enough to reconstruct it.
         """
         line = (f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {what}"
                 f"（会議 {meeting_id[:6]}…, 相手 {peer or '不明'}）")
@@ -2623,9 +2826,10 @@ class WebCaptions:
         print(f"[{time.strftime('%H:%M:%S')}] ホスト      {what}（相手 {peer or '不明'}）")
 
     def control_urls_extra(self) -> list[str]:
-        """127.0.0.1 以外で操作画面が開けるURL。起動時の画面に出す。
+        """URLs, other than 127.0.0.1, where the control page can be opened.
+        They are printed at start.
 
-        **名前を先に出す。** 人が覚えて栞に入れるのは名前のほうである。
+        **Names come first.** A name is what people remember and bookmark.
         """
         names = [f"http://{n}:{self.control_port}" for n in self.control_names()]
         addrs = [f"http://{'[' + a + ']' if ':' in a else a}:{self.control_port}"
@@ -2633,11 +2837,12 @@ class WebCaptions:
         return names + addrs
 
     def allowed_origins(self) -> set[str]:
-        """この操作画面自身のURL。`Origin` の検査に使う。
+        """The URLs of this control page itself. Used for the `Origin` check.
 
-        **アドレスだけでは足りない。** tailnet には MagicDNS があるので、人は
-        `http://livecaption:8081` のように**名前で開く。** 名前を入れておかないと、
-        画面は見えるのにボタンが全部断られる（2026-09-19 に踏んだ）。
+        **Addresses alone are not enough.** A tailnet has MagicDNS, so people
+        **open the page by name**, for example `http://livecaption:8081`.
+        Without the names here, the page loads but every button is refused
+        (this happened on 2026-09-19).
         """
         out = {f"http://localhost:{self.control_port}",
                f"http://127.0.0.1:{self.control_port}"}
@@ -2646,19 +2851,21 @@ class WebCaptions:
             out.add(f"http://{host}:{self.control_port}")
         for name in self.control_names():
             out.add(f"http://{name}:{self.control_port}")
-            # **https の出口も入れる**（`tailscale serve`、tailnet の中だけ）。
-            # 入れないと、画面は開くのに `Origin` が合わず、ボタンが全部 403 に
-            # なる。**「全部許す」にしてはいけない。** それでは `Origin` を見る
-            # 意味が消える。ここに足すのは、この機体の名前と、こちらが張る
-            # ポートの組み合わせだけである。
+            # **Include the https endpoint too** (`tailscale serve`, inside
+            # the tailnet only). Without it, the page opens but the `Origin`
+            # does not match and every button returns 403. **Do not switch to
+            # "allow everything".** That would remove the point of checking
+            # `Origin` at all. What is added here is only the name of this
+            # machine combined with the port we serve.
             out.add(f"https://{name}:{config.CONTROL_HTTPS_PORT}")
         return out
 
     def control_names(self) -> list[str]:
-        """tailnet 上でこの機体を指す名前。MagicDNS の長short両方。
+        """The names that point at this machine on the tailnet: both the long
+        and the short MagicDNS form.
 
-        **tailnet に出していないときは空。** 名前で開けるのは、そこに
-        待ち受けているときだけである。
+        **Empty when the page is not on a tailnet.** A name works only while
+        the server listens there.
         """
         if not self.control_extra:
             return []
@@ -2669,19 +2876,22 @@ class WebCaptions:
         return [host, short] if short and short != host else [host]
 
     def _serve(self, host: str, port: int, handler) -> ThreadingHTTPServer:  # noqa: ANN001
-        # ThreadingHTTPServer にするのは、長ポーリングが1本ずつ居座るため。
+        # ThreadingHTTPServer is used because each long poll occupies one
+        # thread.
         cls = ThreadingHTTPServer
         if ":" in host:
-            # **IPv6 は族を変えないと開けない。** `ThreadingHTTPServer` の既定は
-            # IPv4 で、tailnet の IPv6 アドレスを渡すと getaddrinfo で落ちる。
+            # **IPv6 needs a different address family.** The default of
+            # `ThreadingHTTPServer` is IPv4, and passing it a tailnet IPv6
+            # address fails in getaddrinfo.
             class _V6(ThreadingHTTPServer):
                 address_family = socket.AF_INET6
 
             cls = _V6
-        # **同じポートを2つのプロセスが掴めないようにする。** Windows では
-        # `allow_reuse_address` が効いて、2つ目の LiveCaption も bind に成功する。
-        # そうなると、どちらが応答するか分からない。**常時起動の機体では、
-        # 二重起動に気づかないまま古いほうを操作することになる**（実際に踏んだ）。
+        # **Do not let two processes hold the same port.** On Windows,
+        # `allow_reuse_address` lets a second LiveCaption bind successfully,
+        # and then it is unclear which one answers. **On a machine that runs
+        # all the time, you end up operating the older instance without
+        # noticing the second one** (this really happened).
         cls.allow_reuse_address = False
         server = cls((host, port), handler)
         server.daemon_threads = True
@@ -2696,14 +2906,15 @@ class WebCaptions:
         self._servers = []
 
 
-# --- HTTPの受け口 -----------------------------------------------------------
+# --- HTTP request handlers --------------------------------------------------
 
 
 class _Base(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt, *args) -> None:  # noqa: ANN001
-        # 本体のログに混ざると読めなくなるので、アクセスログは出さない。
+        # Access logs are not printed. Mixed into the app log, they would make
+        # it unreadable.
         pass
 
     def _send_bytes(self, code: int, ctype: str, body: bytes,
@@ -2718,10 +2929,13 @@ class _Base(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _send_json(self, code: int, payload: dict, translate: bool = True) -> None:
-        """JSONを返す。**既定で操作画面の言語に合わせる。**
+        """Return JSON. **By default it follows the language of the control
+        page.**
 
-        状態や説明はここを通るので、1か所で訳せる。**字幕そのものには使わない。**
-        会議の中身を訳してはいけないので、`_send_lines` は `translate=False` で呼ぶ。
+        State and explanations all pass through here, so they can be
+        translated in one place. **This is never used for the captions
+        themselves.** The content of a meeting must not be translated here, so
+        `_send_lines` calls this with `translate=False`.
         """
         if translate:
             payload = i18n.apply_json(payload, config.UI_LANG)
@@ -2739,7 +2953,8 @@ class _Base(BaseHTTPRequestHandler):
             pv = -1
         nxt, lines, partial, partial_v = web.poll(
             max(since, 0), config.LONGPOLL_WAIT_SEC, pv)
-        # **字幕は訳さない。** ここを通るのは会議の中身そのものである。
+        # **Captions are not translated here.** What passes through is the
+        # content of the meeting itself.
         self._send_json(
             200, {"next": nxt, "lines": lines, "partial": partial, "pv": partial_v},
             translate=False)
@@ -2762,11 +2977,13 @@ class _Base(BaseHTTPRequestHandler):
 
 
 def _host_page(meeting_name: str) -> bytes:
-    """ホストがトークンを貼るページ。
+    """The page where a host pastes the token.
 
-    **操作画面とは別物にする。** 見るのは会議のホストで、麻生ではない。
-    操作画面の言語設定とも関係が無いので、日本語と英語を並べて出す。
-    **ここから他のことは何もできない。** 貼る欄と送るボタンだけである。
+    **It is a separate page from the control page.** The reader is the meeting
+    host, not the operator. It has nothing to do with the language setting of
+    the control page either, so it shows Japanese and English side by side.
+    **Nothing else can be done from here.** There is one input field and one
+    send button.
     """
     name = (meeting_name or "").replace("&", "&amp;").replace("<", "&lt;")
     return f"""<!doctype html>
@@ -2776,8 +2993,9 @@ def _host_page(meeting_name: str) -> bytes:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Zoom caption token</title>
 <style>
-  /* **このページは単独で立っている。** 操作画面の配色（`STYLE`）は読み込まれない
-     ので、色はここに直接書く。操作画面と同じ明るい配色に合わせてある。 */
+  /* **This page stands on its own.** The color scheme of the control page
+     (`STYLE`) is not loaded here, so the colors are written directly. They
+     match the light scheme of the control page. */
   :root {{ color-scheme: light; }}
   body {{ margin: 0; padding: 24px 18px; background: #ffffff; color: #1f2328;
          font-family: "Segoe UI", "Yu Gothic UI", system-ui, sans-serif;
@@ -2834,7 +3052,7 @@ def _host_page(meeting_name: str) -> bytes:
       if (r.ok) {{
         msg.textContent = d.ok || "受け取った。/ Received.";
         msg.className = "ok";
-        t.value = "";                      // 画面に残さない
+        t.value = "";                      // do not leave it on the screen
       }} else {{
         msg.textContent = d.error || ("送れない（" + r.status + "）");
         msg.className = "ng";
@@ -2855,12 +3073,14 @@ def _host_page(meeting_name: str) -> bytes:
 
 
 def _viewer_page(web: WebCaptions) -> bytes:
-    """閲覧画面を組み立てる。
+    """Build the viewer page.
 
-    **要求のたびに組み立てる。** 経路（`/v/<会議のID>`）はページの中のJSにも
-    焼き込まれる。作り置きにすると、**会議を切り替えたときに、新しい経路で
-    ページは出るのに、中のJSが古い経路を叩いて404になる。**
-    組み立ては文字列の置換だけで、費用は無視できる（`_control_page` と同じ）。
+    **It is built on every request.** The path (`/v/<meeting id>`) is also
+    baked into the JS inside the page. If the page were built once and kept,
+    then **after switching meetings the page would be served at the new path
+    while the JS inside it still called the old one and got a 404.**
+    Building is only string replacement, so the cost is negligible (the same
+    as `_control_page`).
     """
     return (
         _head("Live Captions", web.lines)
@@ -2874,18 +3094,19 @@ def _viewer_page(web: WebCaptions) -> bytes:
 
 
 def _viewer_handler(web: WebCaptions):
-    """閲覧画面。**ここが外に出る。**
+    """The viewer server. **This is what goes outside.**
 
-    出す経路は次の4つだけである。**増やさないこと。**
+    It serves exactly these four paths. **Do not add more.**
 
-        GET  /v/<会議>          字幕のページ
-        GET  /v/<会議>/lines    字幕の中身
-        GET  /h/<会議>/<鍵>     ホストがトークンを貼るページ
-        POST /h/<会議>/<鍵>     トークンを受け取る
+        GET  /v/<meeting>        the caption page
+        GET  /v/<meeting>/lines  the captions themselves
+        GET  /h/<meeting>/<key>  the page where a host pastes the token
+        POST /h/<meeting>/<key>  receive the token
 
-    最後の1つが、**外から状態を変えられる唯一の口**である。ここに何かを足すと、
-    操作画面を 127.0.0.1 に縛ってある意味が薄れる。足す前に `web.py` の
-    冒頭の説明を読むこと。
+    The last one is **the only endpoint that can change state from outside.**
+    Adding anything here weakens the reason for keeping the control page on
+    127.0.0.1. Read the explanation at the top of `web.py` before adding
+    anything.
     """
 
     class Handler(_Base):
@@ -2914,14 +3135,15 @@ def _viewer_handler(web: WebCaptions):
                       and hmac.compare_digest(host_id, meeting.host_id)
                       and web.host_window_open(meeting_id))
                 if not ok:
-                    # **経路違いと同じ404にする。** 「鍵は合っているが時間外」と
-                    # 分かると、そこに口があることを教えることになる。
+                    # **Return the same 404 as a wrong path.** Revealing that
+                    # "the key is right but it is outside the window" would
+                    # tell the caller that an endpoint exists there.
                     self.send_error(404)
                     return
                 self._send_bytes(200, "text/html; charset=utf-8",
                                  _host_page(meeting.name))
                 return
-            # 経路を知らなければ何も見えない。`/` も404にする。
+            # Without the path, nothing is visible. `/` returns 404 as well.
             self.send_error(404)
 
         def do_POST(self) -> None:  # noqa: N802
@@ -2932,7 +3154,7 @@ def _viewer_handler(web: WebCaptions):
                 return
             meeting_id, host_id = found
             try:
-                # **上限を小さくする。** 来るのはURL1本だけである。
+                # **Use a small limit.** What arrives is a single URL.
                 body = self._read_json(limit=config.HOST_MAX_BODY)
             except ValueError as exc:
                 self._send_json(400, {"error": str(exc)}, translate=False)
@@ -2943,7 +3165,8 @@ def _viewer_handler(web: WebCaptions):
             if code == 404:
                 self.send_error(404)
                 return
-            # **訳さない。** この画面を見るのはホストで、操作画面の言語とは関係ない。
+            # **Do not translate.** This page is read by the host, and it has
+            # nothing to do with the language of the control page.
             self._send_json(code, {"error" if code >= 400 else "ok": message},
                             translate=False)
 
@@ -2951,17 +3174,19 @@ def _viewer_handler(web: WebCaptions):
 
 
 def _meetings_page(web: WebCaptions, lang: str) -> bytes:
-    """会議の管理画面。**要求のたびに組み立てる**（言語の切り替えのため）。"""
+    """The meeting management page. **Built on every request**, so that the
+    language can be switched."""
     page = (_head("Live Captions ・ 会議の管理", web.lines)
             + meetings_page.BODY.replace("__COPY_JS__", COPY_JS))
     return i18n.apply(page, lang).encode("utf-8")
 
 
 def _control_page(web: WebCaptions, lang: str) -> bytes:
-    """操作画面を組み立てる。
+    """Build the control page.
 
-    **要求のたびに組み立てる。** 言語を切り替えたら読み込み直すので、作り置きだと
-    古い言語のままになる。組み立ては文字列の置換だけで、費用は無視できる。
+    **It is built on every request.** Switching the language reloads the page,
+    so a page built once and kept would stay in the old language. Building is
+    only string replacement, so the cost is negligible.
     """
     page = _head("Live Captions ・ 操作", web.lines) + CONTROL_BODY.replace(
         "__FEED_JS__",
@@ -2969,39 +3194,44 @@ def _control_page(web: WebCaptions, lang: str) -> bytes:
         .replace("__HISTORY__", str(HISTORY))
         .replace("__SOURCE_DEFAULT__", "false"),
     ).replace("__COPY_JS__", COPY_JS)
-    # **言語の差し替えを先に済ませる。** `__UI_LANG__` は言語の名前そのものなので、
-    # 訳表に通してはいけない。
+    # **Do the language substitution first.** `__UI_LANG__` is the name of a
+    # language itself, so it must not pass through the translation table.
     return i18n.apply(page, lang).replace("__UI_LANG__", lang).encode("utf-8")
 
 
 def _control_handler(web: WebCaptions):
-    """操作画面。**既定では 127.0.0.1 からしか届かない。**
+    """The control server. **By default it is reachable only from
+    127.0.0.1.**
 
-    `--control-bind` を付けると、tailnet のアドレスでも待ち受ける。そのときは
-    「この機体の前に座っている人だけ」という前提が崩れるので、下の `_same_origin`
-    で、**別のページから押されるのを断る。**
+    With `--control-bind`, it also listens on tailnet addresses. That breaks
+    the assumption that only someone sitting at this machine can reach it, so
+    `_same_origin` below **refuses requests made from another page.**
     """
 
     class Handler(_Base):
         def _same_origin(self) -> bool:
-            """この画面から来た要求かどうかを見る。違えば断って False を返す。
+            """Check whether the request came from this page. If not, refuse
+            it and return False.
 
-            **ブラウザで開いたページは、裏で他のアドレスへ要求を送れる。**
-            答えは読めない（ブラウザが止める）が、要求は届く。つまり、
-            無関係なページが「終了」や「配信を開始」を押せてしまう。
+            **A page open in a browser can send requests to other addresses in
+            the background.** It cannot read the answers (the browser blocks
+            that), but the requests arrive. In other words, an unrelated page
+            could press "Quit" or "Start delivery".
 
-            要求には `Origin` という札が付く。**それを見ていなかった。**
-            自分の画面以外から来たものは断る。
+            A request carries an `Origin` header. **We were not looking at
+            it.** Anything that did not come from our own page is refused.
 
-            `Origin` が無いものは通す。`curl` や手元の道具は札を付けないし、
-            **ブラウザは POST に必ず付ける。** 札が無い＝ブラウザ以外である。
+            A request with no `Origin` is allowed. `curl` and local tools do
+            not send one, and **a browser always sends it on a POST.** No
+            header means the caller is not a browser.
             """
             origin = self.headers.get("Origin")
             if origin is None:
                 return True
             if origin in web.allowed_origins():
                 return True
-            # **理由を残す。** 無人で回す機体では、記録が唯一の痕跡になる。
+            # **Record the reason.** On a machine that runs unattended, the
+            # log is the only trace.
             print(f"[{time.strftime('%H:%M:%S')}] 操作        別のページからの操作を断った"
                   f"（Origin: {origin[:100]}）")
             self._send_json(403, {"error": "この画面以外からは操作できない。"})
@@ -3012,8 +3242,8 @@ def _control_handler(web: WebCaptions):
                 self._send_bytes(200, "text/html; charset=utf-8",
                                  _control_page(web, config.UI_LANG))
             elif u.path == "/meetings":
-                # 会議の管理。**操作ポートにしか無い。** 会議の名前もホスト用URLも
-                # 外に出してよいものではない。
+                # Meeting management. **It exists only on the control port.**
+                # Neither the meeting names nor the host URLs may go outside.
                 self._send_bytes(200, "text/html; charset=utf-8",
                                  _meetings_page(web, config.UI_LANG))
             elif u.path == "/api/lines":
@@ -3021,9 +3251,10 @@ def _control_handler(web: WebCaptions):
             elif u.path == "/api/status":
                 self._send_json(200, web.status())
             elif u.path == "/api/qr":
-                # **どの会議のQRでも出せる。** 来週の会議のQRを今日のうちに
-                # 保存して、案内に載せるための道である。`id` が無ければ
-                # いま配信している会議のもの。
+                # **A QR code can be produced for any meeting.** That is how
+                # you save the QR code of next week's meeting today and put it
+                # in the announcement. Without `id`, it is the meeting being
+                # delivered now.
                 q = parse_qs(u.query)
                 mid = q.get("id", [""])[0]
                 target = web.meeting_url(mid) if mid else web.public_url()
@@ -3044,7 +3275,7 @@ def _control_handler(web: WebCaptions):
                 else:
                     self._send_json(200, web.direction.status())
             elif u.path == "/api/records/latest":
-                # 落とせる記録が何か。**操作ポートにしか無い。**
+                # Which record can be downloaded. **Control port only.**
                 if web.records is None:
                     self._send_json(503, {"error": "記録の受け口が用意できていない。"})
                 else:
@@ -3052,7 +3283,8 @@ def _control_handler(web: WebCaptions):
             elif u.path == "/api/records/file":
                 self._send_record(parse_qs(u.query).get("fmt", ["md"])[0])
             elif u.path == "/api/glossary/file":
-                # 用語集を持ち出す。**字幕PCの中にしか無い、という状態を作らない。**
+                # Download a glossary. **Never let a table exist only inside
+                # the caption PC.**
                 if web.glossary is None:
                     self._send_json(503, {"error": "用語集の受け口が用意できていない。"})
                     return
@@ -3075,20 +3307,23 @@ def _control_handler(web: WebCaptions):
                 self.send_error(404)
 
         def _send_record(self, fmt: str) -> None:
-            """**最新の記録を1本**、ダウンロードとして返す。
+            """Return **the single latest record** as a download.
 
-            **操作ポートにしか無い。** 会議の中身そのものなので、閲覧側や
-            トンネルの向こうからは触れない。
+            **Control port only.** It is the content of the meeting itself, so
+            it is not reachable from the viewer side or through the tunnel.
 
-            **どれを返すかはサーバが決める。** 画面からファイルを指す文字列を
-            受け取らない。受け取れば、それを検算する口を作ることになる。
+            **The server decides which record to return.** It never accepts a
+            string from the page that names a file. Accepting one would mean
+            writing code to validate it.
 
-            **`.md` は要求のたびに組み立てる。** ファイルとしての `.md` が
-            書かれるのは終了時だけなので、会議の最中と、電源ごと落ちた後には
-            無い。組み立てれば、どちらでも同じように落とせる。
+            **The `.md` form is built on every request.** A `.md` file is
+            written only when the app stops, so it does not exist during a
+            meeting, nor after a power loss. Building it means both cases
+            download the same way.
 
-            **いま書いている記録には「まだ続いている」と書く**（`final`）。
-            終わった記録と同じ見出しにすると、途中のものを完成品と取り違える。
+            **A record that is still being written is marked as unfinished**
+            (`final`). Giving it the same heading as a finished record would
+            let someone mistake a partial record for a complete one.
             """
             if web.records is None:
                 self._send_json(503, {"error": "記録の受け口が用意できていない。"})
@@ -3116,11 +3351,11 @@ def _control_handler(web: WebCaptions):
                              {"Content-Disposition": _attachment(name)})
 
         def _send_qr(self, url: str, query: dict | None = None) -> None:
-            """閲覧URLのQRコードを返す。
+            """Return a QR code for the viewer URL.
 
-            画面に出すぶんは SVG で足りる。**`dl=1` を付けるとPNGを添付として
-            返す。** スライドやチャットに貼るには、画面の中のQRではなく、
-            ファイルになったQRが要る。
+            SVG is enough for showing it on the page. **With `dl=1` it returns
+            a PNG as an attachment.** Pasting it into a slide or a chat needs
+            a QR code as a file, not one inside the page.
             """
             if not url:
                 self.send_error(404)
@@ -3132,8 +3367,8 @@ def _control_handler(web: WebCaptions):
             name = q.get("name", [""])[0].strip()
             buf = io.BytesIO()
             if download:
-                # **保存するぶんは大きく作る。** 縮小は誰でもできるが、
-                # 粗いPNGを引き伸ばすと読めなくなる。
+                # **Make the saved one large.** Anyone can shrink an image,
+                # but stretching a coarse PNG makes it unreadable.
                 segno.make(url, error="m").save(
                     buf, kind="png", scale=16, border=4,
                     dark="#000000", light="#ffffff",
@@ -3144,7 +3379,8 @@ def _control_handler(web: WebCaptions):
                              f'attachment; filename="{_qr_filename(name)}"'},
                 )
                 return
-            # 白地・余白つき。画面共有の圧縮でも読めるように、粗い方が良い。
+            # White background, with a quiet zone. A coarser code survives the
+            # compression of screen sharing better.
             segno.make(url, error="m").save(
                 buf, kind="svg", scale=6, border=2, dark="#000000", light="#ffffff"
             )
@@ -3167,8 +3403,9 @@ def _control_handler(web: WebCaptions):
                 self.send_error(404)
                 return
             try:
-                # **アップロードだけは大きい。** 他の口は数KBで足りるので
-                # 広げない。用語表の上限に、JSON の飾りぶんを足しておく。
+                # **Only the upload endpoint is large.** The others need a few
+                # KB, so do not widen them. The limit is the glossary limit
+                # plus room for the JSON around it.
                 body = self._read_json(
                     glossary_mod.MAX_UPLOAD_BYTES + MAX_BODY
                     if path == "/api/glossary/upload" else None)
@@ -3222,10 +3459,12 @@ def _control_handler(web: WebCaptions):
                 return
 
             if path == "/api/vnc":
-                # **会議中に開け閉めできることが要点である。** x11vnc は既に
-                # 上がっている X 画面に貼り付くだけなので、会議も字幕も止まらない。
-                # ここを起動時の設定だけにすると、いちばん中を見たい
-                # 「会議中に様子がおかしい」ときに、作り直すしかなくなる。
+                # **The point is that it can be opened and closed during a
+                # meeting.** x11vnc only attaches to an X display that is
+                # already running, so neither the meeting nor the captions
+                # stop. If this were a start-up option only, then the moment
+                # you most want to look inside, "something looks wrong during
+                # a meeting", the only way in would be to rebuild.
                 if web.vnc is None:
                     self._send_json(503, {"error": "VNCの受け口が用意できていない。"})
                     return
@@ -3235,9 +3474,10 @@ def _control_handler(web: WebCaptions):
                 return
 
             if path in ("/api/glossary/upload", "/api/glossary/delete"):
-                # **用語集は会議のたびに育てるものである。** 字幕PCに入らないと
-                # 直せない状態にしない。置き場はボリュームなので、コンテナを
-                # 作り直しても残る（`LIVECAPTION_GLOSSARY_DIR`）。
+                # **A glossary grows with every meeting.** Never let it be
+                # editable only by logging into the caption PC. The tables
+                # live on a volume, so they survive rebuilding the container
+                # (`LIVECAPTION_GLOSSARY_DIR`).
                 if web.glossary is None:
                     self._send_json(503, {"error": "用語集の受け口が用意できていない。"})
                     return
@@ -3269,7 +3509,7 @@ def _control_handler(web: WebCaptions):
                 config.remember_ui_lang(lang)
                 print(f"[{time.strftime('%H:%M:%S')}] 言語        操作画面を "
                       f"{'日本語' if lang == 'ja' else 'English'} にした")
-                # **訳さずに返す。** 言語の名前そのものである。
+                # **Return it untranslated.** It is the name of a language.
                 self._send_json(200, {"lang": lang}, translate=False)
                 return
 
@@ -3302,7 +3542,8 @@ def _control_handler(web: WebCaptions):
                     self._send_json(400, {"error": str(exc)})
                     return
                 except OSError as exc:
-                    # .env が書けない（読み取り専用、同期中など）。会議は止めない。
+                    # .env cannot be written (read-only, being synced, and so
+                    # on). Do not stop the meeting over it.
                     self._send_json(500, {"error": f".env に書けなかった: {exc}"})
                     return
                 self._send_json(200, st)
@@ -3329,25 +3570,30 @@ def _control_handler(web: WebCaptions):
                 else:
                     web.control.set_enabled(bool(body.get("on")))
             except Exception as exc:  # noqa: BLE001
-                # トークンの書式違いなど、操作した人に伝えるべき失敗。
+                # A malformed token and similar failures: these must be told
+                # to the person who pressed the button.
                 self._send_json(400, {"error": str(exc)})
                 return
             self._send_json(200, web.status())
 
         def _chat(self) -> None:
-            """いま入っている会議のチャットに、字幕のURLとQRを投げる。
+            """Post the caption URL and its QR code into the chat of the
+            meeting we are currently in.
 
-            **押した人が見ていることが前提の口である。** 予定で自動に投げるのは
-            `schedule.py` のほうで、会議ごとの印が要る。
+            **This endpoint assumes that the person who pressed the button is
+            watching.** Posting automatically for a scheduled meeting is done
+            in `schedule.py`, and needs the per-meeting checkbox.
             """
             url = web.public_url() or web.viewer_url()
             if not url:
                 self._send_json(400, {"error": "投げる先のURLがまだ無い。"})
                 return
             try:
-                # **機体で実装が違う。** Windows は窓のクラスとクリップボードAPI、
-                # Linux（コンテナ）は Xvfb の上の窓と `xdotool` である。
-                # 口は同じ（`meeting_window` / `compose` / `qr_file` / `post`）。
+                # **The implementation differs per platform.** Windows uses
+                # window classes and the clipboard API; Linux (in the
+                # container) uses a window on Xvfb and `xdotool`. The
+                # interface is the same (`meeting_window` / `compose` /
+                # `qr_file` / `post`).
                 if os.name == "nt":
                     from . import zoom_chat
                 else:
@@ -3365,16 +3611,18 @@ def _control_handler(web: WebCaptions):
             self._send_json(200, dict(web.status(), chat=done))
 
         def _stop_outputs(self) -> dict:
-            """字幕の生成を止めるとき、出口も一緒に閉じる。
+            """When caption generation stops, close the outputs as well.
 
-            **止めたつもりで流れ続けるのが一番困る**（2026-09-20 の麻生の指摘）。
-            生成だけ止めても、トンネルは張られたままで、参加者のURLは開ける。
-            Zoom側も「送信中」のまま残る。次の会議の字幕が前のトークンへ流れる
-            入口にもなる。
+            **The worst case is that captions keep flowing after you believe
+            you stopped them** (reported 2026-09-20). Stopping generation
+            alone leaves the tunnel up and the participant URL open, and the
+            Zoom side still says "sending". It also becomes a way for the
+            captions of the next meeting to reach the previous token.
 
-            **どちらかが失敗しても、もう片方は必ず試す。** 生成はすでに
-            止まっているので、ここで例外を投げても得るものが無い。
-            何を実際に止めたかを返す。画面に出す一言をそれで決める。
+            **If one of the two fails, still try the other.** Generation has
+            already stopped, so raising an exception here would gain nothing.
+            This returns what was actually stopped, and the page uses that to
+            choose its message.
             """
             done = {"tunnel": False, "zoom": False}
             if web.tunnel is not None:
@@ -3394,10 +3642,11 @@ def _control_handler(web: WebCaptions):
             return done
 
         def _tunnel(self, body: dict) -> None:
-            """配信の開始・停止と、経路の選び直し。
+            """Start and stop delivery, and switch the route.
 
-            **経路を選ぶのは開始とは別の操作にする。** 選んだだけで外に出ては
-            いけない。`kind` だけが来たら、持ち替えて止まったままにする。
+            **Choosing a route is a separate action from starting.** Choosing
+            alone must not put anything outside. When only `kind` arrives,
+            switch the route and stay stopped.
             """
             if web.tunnel is None:
                 self._send_json(503, {"error": "配信の受け口が用意できていない。"})
@@ -3421,15 +3670,17 @@ def _control_handler(web: WebCaptions):
             self._send_json(200, web.status())
 
         def _schedule(self, body: dict) -> None:
-            """スケジューラへの指示。いま始める・止める・飛ばす・失敗を消す。"""
+            """Commands for the scheduler: start now, stop, skip, and clear a
+            failure."""
             if web.scheduler is None:
                 self._send_json(503, {"error": "予定の受け口が用意できていない。"})
                 return
             action = str(body.get("action", ""))
             try:
                 if action == "start":
-                    # **予定を待たずに、選んだ会議を1本回す。** 走る順序は
-                    # 予定の回と同じである（配信 → Zoom → 生成 → チャット）。
+                    # **Run the selected meeting once, without waiting for its
+                    # schedule.** The steps are the same as for a scheduled
+                    # run (delivery, Zoom, generation, chat).
                     web.scheduler.start_now(str(body.get("id", "")))
                 elif action == "stop":
                     web.scheduler.stop_now()
@@ -3441,16 +3692,18 @@ def _control_handler(web: WebCaptions):
                     self._send_json(400, {"error": f"知らない操作: 「{action}」。"})
                     return
             except ValueError as exc:
-                # 会議を選んでいない、もう回している、など。操作した人に返す。
+                # No meeting selected, one already running, and so on. Report
+                # it to the person who pressed the button.
                 self._send_json(400, {"error": str(exc)})
                 return
             self._send_json(200, web.status())
 
         def _meetings(self, body: dict) -> None:
-            """会議を作る・選ぶ・消す。
+            """Create, select and delete meetings.
 
-            **作るのと選ぶのは別の操作である。** 先の会議のURLを作っている最中に、
-            今日の配信が切り替わってはいけない。
+            **Creating and selecting are separate actions.** While you prepare
+            the URL of a future meeting, today's delivery must not switch to
+            it.
             """
             action = str(body.get("action", ""))
             try:
@@ -3477,10 +3730,11 @@ def _control_handler(web: WebCaptions):
             self._send_json(200, web.status())
 
         def _shutdown(self) -> None:
-            """字幕アプリそのものを終わらせる。
+            """Stop the caption app itself.
 
-            **先に返事を書いてから頼む。** 本体が終わればこのサーバも閉じるので、
-            順序を逆にするとブラウザが応答を受け取れないことがある。
+            **Write the answer first, then ask it to stop.** This server
+            closes together with the app, so in the other order the browser
+            may never receive the answer.
             """
             if web.on_shutdown is None:
                 self._send_json(503, {"error": "終了の受け口がまだ用意できていない。"})

@@ -1,27 +1,31 @@
-"""会議の管理画面。**幅いっぱいを使う。**
+"""The page for managing meetings. **It uses the full width.**
 
-操作画面の右の欄は狭い。日時・Zoomのリンク・3つの数値・印を並べると、1行に
-1つしか入らず、打つのも読むのも辛い。**幅を使える場所に移した。**
+The right column of the control page is narrow. Putting the date and time, the
+Zoom link, three numbers and the flags side by side leaves room for only one of
+them per line, which is hard both to type into and to read. **So it was moved to
+a place where the width can be used.**
 
-**いまは操作画面のタブの中に、この頁をそのまま入れて出している**（2026-09-20）。
-タブを選ぶと窓いっぱいに広がるので、幅は別の窓で開いたときと変わらない。
-`/meetings` を直に開く道も残してある。**作りは1つで、置き場所が2つある。**
+**Right now this page is embedded as it is inside a tab of the control page**
+(2026-09-20). Selecting the tab expands it to the whole window, so the width is
+the same as when it is opened in a separate window. The way to open `/meetings`
+directly is still there. **There is one implementation, in two places.**
 
-**操作ポートにしか無い。** 閲覧側には出さない。会議の名前も、ホスト用URLも、
-外に出してよいものではない。
+**It exists only on the control port.** It is not shown on the viewer side.
+Neither the names of the meetings nor the URL for the host may go outside.
 
-この画面が使う口は `/api/status` と `/api/meetings` だけである。どちらも
-操作ポートにしかない。
+The only endpoints this page uses are `/api/status` and `/api/meetings`. Both
+exist only on the control port.
 """
 
 from __future__ import annotations
 
 BODY = """</style>
 <style>
-  /* **`display: block` に戻すこと。** 共通の `STYLE` は body を縦並びの flex に
-     している（操作画面と閲覧画面のため）。そのままだと `.wrap` が flex の品目に
-     なって中身の幅まで縮み、**左右に 130px 以上の余白ができる**
-     （2026-09-20 の麻生の指摘）。 */
+  /* **Set this back to `display: block`.** The shared `STYLE` makes body a
+     vertical flex container (for the control page and the viewer page). Left as
+     it is, `.wrap` becomes a flex item and shrinks to the width of its content,
+     **leaving more than 130px of empty space on both sides** (reported by a
+     user, 2026-09-20). */
   body { display: block; margin: 0; background: var(--bg); color: var(--fg);
          font-family: "Segoe UI", "Yu Gothic UI", system-ui, sans-serif; }
   .wrap { max-width: 980px; margin: 0 auto; padding: 22px 26px 40px; }
@@ -29,7 +33,7 @@ BODY = """</style>
   .sub { font-size: 13px; color: var(--ja); margin: 0 0 18px; line-height: 1.7; }
   .add { display: flex; gap: 8px; margin: 0 0 18px; }
   .add input { flex: 1 1 auto; }
-  /* 1件ぶん。幅があるので、欄を横に並べられる。 */
+  /* One meeting. There is width, so the fields can be placed side by side. */
   .card { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px;
           margin-bottom: 14px; }
   .card.on { border-color: var(--accent); }
@@ -38,15 +42,16 @@ BODY = """</style>
   .head .nm { font-size: 17px; font-weight: 600; color: var(--fg); }
   .head .when { font-size: 13px; color: var(--ja); }
   .head .made { font-size: 12px; color: var(--muted); margin-left: auto; }
-  /* 開く・閉じるの札。**見出しの右端に置く。** */
+  /* The open / close button. **It sits at the right end of the heading.** */
   .head .editbtn { font-size: 13px; padding: 4px 12px; }
   .badge { font-size: 12px; padding: 2px 9px; border-radius: 999px;
            border: 1px solid var(--accent); color: var(--accent); }
   .grid { display: grid; grid-template-columns: auto 1fr; gap: 9px 12px;
           align-items: center; margin-bottom: 12px; }
-  /* 見出しは右に寄せて、入力欄の左端を揃える。
-     **`.opt` は除く。** 値の側に置く `<label>`（チェックの説明）まで右へ
-     飛んでしまい、入力欄の列から浮いて見える。 */
+  /* The labels are pushed to the right so that the left edges of the input
+     fields line up. **`.opt` is excluded.** Otherwise the `<label>` on the value
+     side (the text of a checkbox) also flies to the right and looks detached
+     from the column of input fields. */
   .grid > label:not(.opt) { font-size: 13px; color: var(--ja);
                             justify-self: end; white-space: nowrap; }
   .grid > label.opt { display: flex; align-items: center; gap: 7px;
@@ -104,27 +109,32 @@ BODY = """</style>
   const $ = (id) => document.getElementById(id);
   const msg = $("msg"), list = $("list"), newName = $("newName");
 
-  // 操作画面のタブの中に入れて開くことがある。そのときは、見出しと戻る道を
-  // 出さない。**タブの札が見出しになっているし、戻るのはタブを押せばよい。**
-  // 自分の窓で開いたときは、どちらも要る。
+  // This page is sometimes opened inside a tab of the control page. In that
+  // case the heading and the way back are not shown. **The tab label is the
+  // heading, and going back means pressing a tab.** When it is opened in its own
+  // window, both are needed.
   if (window.self !== window.top) {
     document.querySelectorAll("h1, .back").forEach((e) => { e.hidden = true; });
-    // **タブの中では幅いっぱいに使う。** 欄の幅は本人が境目で決めているので、
-    // そこから更に 980px で頭を打つと、決めた幅が使われない。余白も詰める。
+    // **Inside a tab, use the full width.** The width of the column is set by
+    // the user at the divider, so hitting another ceiling at 980px would waste
+    // the width they chose. The padding is tightened as well.
     const wrap = document.querySelector(".wrap");
     wrap.style.maxWidth = "none";
     wrap.style.padding = "6px 16px 28px";
   }
-  // **触っている欄があるうちは描き直さない。** 打ちかけの値が手の下で消える。
+  // **Do not redraw while a field is being edited.** A half-typed value would
+  // disappear under the user's hands.
   let seen = "";
   const touched = new Set();
-  // 入力欄を開いてある会議。**描き直しをまたいで覚える。**
-  // 覚えないと、30秒ごとの取り直しで手の下の欄が畳まれる。
+  // The meetings whose fields are open. **This is remembered across redraws.**
+  // Without it, the refresh every 30 seconds would fold up the fields the user
+  // is working in.
   const opened = new Set();
 
   function say(text, ok) { msg.textContent = text; msg.className = ok ? "ok" : "ng"; }
 
-  // datetime-local が受ける形。**UTCにしない。** toISOString は時差のぶんずれる。
+  // The format datetime-local accepts. **Do not use UTC.** toISOString is off by
+  // the time zone offset.
   function nowLocal() {
     const d = new Date();
     const p = (n) => String(n).padStart(2, "0");
@@ -160,7 +170,7 @@ BODY = """</style>
     box.className = "card" + (it.id === m.active ? " on" : "");
     const mark = () => touched.add(it.id);
 
-    // --- 見出し ---
+    // --- Heading ---
     const head = document.createElement("div");
     head.className = "head";
     const pick = document.createElement("input");
@@ -182,8 +192,9 @@ BODY = """</style>
       badge.className = "badge"; badge.textContent = "配信中";
       head.appendChild(badge);
     }
-    // **畳んでいる間も、いつの会議かは見えていないといけない。**
-    // 名前だけの一覧にすると、どれを開けばよいか分からなくなる。
+    // **Even while a card is folded, the time of the meeting has to be
+    // visible.** A list of names alone makes it impossible to tell which one to
+    // open.
     const when = document.createElement("span");
     when.className = "when";
     when.textContent = it.start
@@ -196,8 +207,9 @@ BODY = """</style>
     made.className = "made"; made.textContent = "作成 " + it.created;
     head.appendChild(made);
 
-    // **入力欄は畳んでおく。** 予定が増えると、全部を開いたままでは下の会議が
-    // 画面の外へ押し出される（麻生の指摘、2026-09-21）。編集するときだけ開く。
+    // **The input fields start folded.** As the number of meetings grows,
+    // keeping them all open pushes the meetings below off the screen (reported
+    // by a user, 2026-09-21). They open only when you edit.
     const edit = document.createElement("button");
     edit.className = "editbtn";
     head.appendChild(edit);
@@ -208,16 +220,16 @@ BODY = """</style>
     function setOpen(on) {
       if (on) { opened.add(it.id); } else { opened.delete(it.id); }
       body.style.display = on ? "" : "none";
-      // 畳んであるときは、見出しの下の余白も要らない。
+      // While it is folded, the space under the heading is not needed either.
       head.style.marginBottom = on ? "" : "0";
       edit.textContent = on ? "閉じる" : "編集";
     }
     edit.addEventListener("click", () => setOpen(body.style.display === "none"));
-    // **触ってある会議は開けておく。** 打ちかけの値が畳まれて見えなくなると、
-    // 保存し忘れる。
+    // **Keep a meeting that has been edited open.** If a half-typed value is
+    // folded away and no longer visible, it is easy to forget to save it.
     setOpen(opened.has(it.id) || touched.has(it.id));
 
-    // --- 予定 ---
+    // --- Schedule ---
     const grid = document.createElement("div");
     grid.className = "grid";
     function row(labelText, node) {
@@ -229,14 +241,16 @@ BODY = """</style>
     }
     const start = document.createElement("input");
     start.type = "datetime-local";
-    // **予定が無い会議には、いまの時刻を入れておく。** 空欄から打ち始めるより、
-    // 近い値を直すほうが速い。会議はたいてい「これから」のものである。
+    // **A meeting with no schedule gets the current time.** Correcting a nearby
+    // value is faster than typing from an empty field. A meeting is usually one
+    // that is still to come.
     start.value = it.start ? it.start.replace(" ", "T") : nowLocal();
     start.addEventListener("input", mark);
-    // **欄のどこを押しても暦と時計が開くようにする。** 既定では右端の小さな
-    // アイコンを狙わないと開かない。`showPicker` はブラウザによっては無い。
+    // **Open the calendar and clock wherever in the field you click.** By
+    // default they open only when you aim at the small icon at the right end.
+    // `showPicker` does not exist in some browsers.
     start.addEventListener("click", () => {
-      try { start.showPicker(); } catch (e) { /* 手入力に任せる */ }
+      try { start.showPicker(); } catch (e) { /* leave it to typing by hand */ }
     });
     row("開始", start);
 
@@ -278,9 +292,10 @@ BODY = """</style>
     const autorow = document.createElement("label");
     autorow.className = "autorow";
     const auto = document.createElement("input");
-    // **保存されている値をそのまま出す。** 印の既定は作るときに決まっていて、
-    // 自分で足した会議には最初から入っている（`meetings.py` の `create`）。
-    // ここで付け直すと、外したものが勝手に戻る。
+    // **Show the saved value as it is.** The default of the flag is decided
+    // when the meeting is created, and a meeting you added yourself has it on
+    // from the start (`create` in `meetings.py`). Setting it again here would
+    // silently bring back a flag that was turned off.
     auto.type = "checkbox"; auto.checked = !!it.auto;
     auto.addEventListener("change", mark);
     autorow.appendChild(auto);
@@ -294,8 +309,9 @@ BODY = """</style>
       + "外に出せない内容の会議では印を付けないこと。";
     body.appendChild(warn);
 
-    // **Zoomのチャットに投げる印。** 押すと、会議の参加者全員に字幕のURLが
-    // 見える。既定は `auto` と同じ扱いである。
+    // **The flag for posting to the Zoom chat.** With it on, every participant
+    // of the meeting sees the caption URL. Its default is handled the same way
+    // as `auto`.
     const chatrow = document.createElement("label");
     chatrow.className = "autorow";
     const chat = document.createElement("input");
@@ -312,7 +328,7 @@ BODY = """</style>
       + "ホストがファイル送信を切っている会議では、URLだけが届く。";
     body.appendChild(chatWarn);
 
-    // --- URL ---
+    // --- URLs ---
     const urls = document.createElement("div");
     urls.className = "urls";
 
@@ -375,7 +391,7 @@ BODY = """</style>
     urls.appendChild(hostLine);
     body.appendChild(urls);
 
-    // --- ボタン ---
+    // --- Buttons ---
     const acts = document.createElement("div");
     acts.className = "acts";
     const save = document.createElement("button");
@@ -393,8 +409,9 @@ BODY = """</style>
           auto: auto.checked,
           chat: chat.checked,
         }});
-        // **通ってから、触った印を消す。** 先に消すと、断られたときに描き直されて
-        // 「保存したのに戻った」ように見える。
+        // **Clear the "edited" mark only after the request goes through.**
+        // Clearing it first would redraw the card when the request is refused,
+        // and it would look as if the saved values had reverted.
         touched.delete(it.id);
         seen = "";
         draw(st);
@@ -447,7 +464,7 @@ __COPY_JS__
   async function refresh() {
     try {
       draw(await (await fetch("/api/status")).json());
-    } catch (e) { /* 本体が終わっただけ。次の周期で直る */ }
+    } catch (e) { /* the program just stopped; it recovers on the next tick */ }
   }
   refresh();
   setInterval(refresh, 3000);

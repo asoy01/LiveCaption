@@ -1,40 +1,49 @@
-"""会議の記録を残す。
+"""Keep a record of the meeting.
 
-**認識の出力と、それを訳した字幕を対にして書く。** 字幕だけでは、後から用語の
-誤りを追えない。誤認識は認識の側にしか現れないためである
-（`docs/test-procedure.md` の段階2で採取しているもの）。
+**Write the transcription output paired with the caption translated from
+it.** With the captions alone, term errors cannot be traced afterwards,
+because a misrecognition appears only on the transcription side (this is what
+stage 2 of `docs/test-procedure.md` collects).
 
-日本語の会議なら「日本語の認識文と英語の字幕」、英語の会議なら「英語の認識文と
-日本語の字幕」になる。**鍵の名前は向きによらず `ja`（認識）と `en`（字幕）である。**
-過去の記録と `scripts/transcript_to_md.py` がこの名前で読んでいるので変えない。
+For a Japanese meeting this is "the Japanese transcript and the English
+caption"; for an English meeting it is "the English transcript and the
+Japanese caption". **The key names are `ja` (transcript) and `en` (caption)
+regardless of the direction.** Past records and
+`scripts/transcript_to_md.py` read these names, so do not change them.
 
-## ファイルは2つできる
+## Two files are produced
 
-**置き場は既定で `local/transcripts/`**（`config.TRANSCRIPT_DIR`）。**字幕PCの
-中に溜めておいて、操作画面の「会議の記録」から落とす。** 変えるなら `.env` の
-`LIVECAPTION_SAVE_DIR` か `--save-dir`。
+**The directory is `local/transcripts/` by default**
+(`config.TRANSCRIPT_DIR`). **The files pile up inside the caption PC, and are
+downloaded from "Meeting records" on the control page.** To change it, use
+`LIVECAPTION_SAVE_DIR` in `.env` or `--save-dir`.
 
-    local/transcripts/live-caption_2026-09-08_143012.jsonl   1行 = 確定した1文。逐次追記する
-    local/transcripts/live-caption_2026-09-08_143012.md      読める形。終了時に書く
+    local/transcripts/live-caption_2026-09-08_143012.jsonl   1 line = 1 finalized sentence. Appended as it goes
+    local/transcripts/live-caption_2026-09-08_143012.md      Readable form. Written at the end
 
-**名前に `live-caption_` を付ける。** 置き場を他のフォルダに変えられるので、
-日付だけの名前では、何のファイルか分からなくなる。
+**Put `live-caption_` in the name.** The directory can be changed to another
+folder, and with a name made only of a date it is impossible to tell what the
+file is.
 
-**`.jsonl` が原本である。1文が確定するたびに書いて流す。** 最後にまとめて書くと、
-字幕アプリが落ちたときに会議1本ぶんが消える。1時間の会議でそこを賭けにしない。
+**The `.jsonl` is the original. It is written and flushed each time a
+sentence is finalized.** Writing everything at the end would lose a whole
+meeting if the caption app crashed. Do not gamble a one-hour meeting on that.
 
-`.md` は終了時に組み立てる。電源ごと落ちたときは残らないので、そのときは
-`scripts/transcript_to_md.py` で `.jsonl` から作り直す。
+The `.md` is assembled at the end. It is not left behind when the power is
+cut, so in that case rebuild it from the `.jsonl` with
+`scripts/transcript_to_md.py`.
 
-## 会議中に落とさない
+## Do not crash during a meeting
 
-書き込みが失敗しても字幕は止めない。字幕を出すことが本来の仕事で、記録はその
-副産物である。失敗したら画面に1度だけ出して、以後はメモリにだけ溜める。
+Captions are not stopped when a write fails. Showing captions is the real
+job, and the record is a by-product. On failure, print once to the screen and
+from then on keep the records in memory only.
 
-## 1文も出なかったときはファイルを残さない
+## Leave no file when not a single sentence came out
 
-配線の確認などで短く起動して止めることがある。空の記録が溜まると、本物の会議の
-記録が探しにくくなる。中身が無ければ、この実行で作ったファイルを消す。
+The app is sometimes started and stopped briefly, for example to check the
+cabling. If empty records pile up, the records of real meetings become hard
+to find. When there is no content, delete the file this run created.
 """
 
 from __future__ import annotations
@@ -50,36 +59,43 @@ def _clock(epoch: float) -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(epoch))
 
 
-# Windows のファイル名に使えない文字。制御文字は別に落とす。
+# Characters that cannot be used in a Windows file name. Control characters
+# are dropped separately.
 _BAD_NAME_CHARS = '\\/:*?"<>|'
-# ファイル名に入れる会議名の長さ。パス全体の上限に余裕を持たせる。
+# How much of the meeting name goes into the file name. This leaves room
+# under the limit on the whole path.
 NAME_IN_FILE_MAX = 40
 
 
 def safe_filename(name: str) -> str:
-    """会議の名前をファイル名の一部にする。
+    """Turn the meeting name into part of a file name.
 
-    **日本語は落とさない。** ファイル名に会議名が入るのは、後から探すためである。
-    「KAGRA朝礼」が消えて日付だけになったら意味が無い。Windows のパスは UTF-8 を
-    そのまま扱える。落とすのは、パスとして使えない文字と制御文字だけである。
+    **Do not drop Japanese.** The meeting name goes into the file name so
+    that the file can be found later. If a name such as "定例会議" were
+    dropped and only the date were left, the file name would be useless.
+    Windows paths handle UTF-8 as it is. The only things dropped are
+    characters that cannot be used in a path, and control characters.
 
-    `web._qr_filename` とは別物である。あちらは HTTP のヘッダに載せるので
-    ASCII に限る必要があり、日本語は消える。要求が違うので分けてある。
+    This is not the same as `web._qr_filename`. That one goes into an HTTP
+    header, so it has to be limited to ASCII and Japanese disappears. The
+    requirements differ, so the two are kept separate.
     """
     out = "".join(
         "_" if (c in _BAD_NAME_CHARS or ord(c) < 32) else c
         for c in str(name)
     )
-    # 空白をまとめ、前後の空白と点を落とす（Windowsは末尾の点を嫌う）。
+    # Collapse whitespace, and drop leading and trailing spaces and dots
+    # (Windows dislikes a trailing dot).
     out = "_".join(out.split()).strip("._")
     return out[:NAME_IN_FILE_MAX]
 
 
 class Transcript:
-    """1回の起動ぶんの記録。
+    """The record for one run of the app.
 
-    `add()` を呼ぶのは本体のイベントループだけである（`app.App._post`）。
-    書くのは数百バイトなので、そのまま同期で書いて流す。
+    `add()` is called only by the main event loop (`app.App._post`). What is
+    written is a few hundred bytes, so it is written and flushed
+    synchronously.
     """
 
     def __init__(self, directory: Path, meta: dict | None = None,
@@ -91,9 +107,11 @@ class Transcript:
         self.ended: float | None = None
         stem = config.TRANSCRIPT_PREFIX + time.strftime(
             "%Y-%m-%d_%H%M%S", time.localtime(self.started))
-        # **会議の名前をファイル名に入れる。** 無人で回すと1日に何本も落ちるので、
-        # 時刻だけでは後から探せない。名前は人が打つので、ファイル名に使えない
-        # 文字が入る。`safe_filename` で落とす。
+        # **Put the meeting name into the file name.** When the app runs
+        # unattended, several records land in a day, and the time alone is
+        # not enough to find one later. The name is typed by a person, so it
+        # contains characters that cannot be used in a file name.
+        # `safe_filename` drops them.
         if label:
             slug = safe_filename(label)
             if slug:
@@ -105,10 +123,11 @@ class Transcript:
         self.closed = False
         self._fh = None
 
-    # --- 本体から呼ぶ -------------------------------------------------------
+    # --- Called from the main app -------------------------------------------
 
     def open(self) -> None:
-        """ファイルを作る。失敗しても例外は出さない（記録のために会議を止めない）。"""
+        """Create the file. No exception is raised on failure (a meeting is
+        not stopped for the sake of the record)."""
         try:
             self.directory.mkdir(parents=True, exist_ok=True)
             self._fh = self.path.open("a", encoding="utf-8")
@@ -131,25 +150,33 @@ class Transcript:
         spec: bool = False,
         direction: str = "",
     ) -> None:
-        """確定した1文を記録する。
+        """Record one finalized sentence.
 
-        **鍵の名前は `ja` / `en` だが、意味は「認識の出力」と「字幕」である。**
-        `ja` は認識の出力そのもので、日本語とは限らない。会議の前半は英語なので、
-        そのときは英語がそのまま入る。字幕の向きが `en2ja` なら、`ja` に英語が入り
-        `en` に日本語が入る。**鍵の名前は変えない。** 過去の記録と
-        `scripts/transcript_to_md.py` がこの名前で読んでいる。
+        **The key names are `ja` / `en`, but their meaning is "the
+        transcription output" and "the caption".** `ja` is the transcription
+        output itself, and is not always Japanese. When the first half of a
+        meeting is in English, English goes in as it is. If the caption
+        direction is `en2ja`, English goes into `ja` and Japanese goes into
+        `en`. **Do not change the key names.** Past records and
+        `scripts/transcript_to_md.py` read these names.
 
-        `en` は字幕として出した行で、翻訳に失敗したときは空になる。
-        **空でも捨てない。** 後から誤認識を拾うのに要る。
+        `en` holds the lines shown as captions, and is empty when the
+        translation failed. **Do not throw it away even when it is empty.**
+        It is needed to pick up misrecognitions later.
 
-        `when` は**認識が確定した時刻**である。呼ばれるのは翻訳が終わった後なので、
-        ここで時計を読むと2〜3秒ずれる。記録に要るのは、訳せた時刻ではなく
-        話された時刻なので、呼ぶ側から渡す。
+        `when` is **the time the transcription was finalized**. This function
+        is called after the translation finishes, so reading the clock here
+        would be off by 2 to 3 seconds. What the record needs is the time the
+        words were spoken, not the time they were translated, so the caller
+        passes it in.
 
-        後ろの4つは遅延の調整用である。`cut` は確定の理由（punct / force / idle /
-        flush）、`waited` は無音で確定したときに実際に待った秒数、`took` は翻訳、
-        `total` は**確定から最初の字幕までの実測**。
-        **1文ごとの実測が無いと、どこを削ればよいか決められない。**
+        The last four are for tuning the delay. `cut` is the reason for
+        finalizing (punct / force / idle / flush), `waited` is the number of
+        seconds actually waited when the sentence was finalized on silence,
+        `took` is the translation, and `total` is **the measured time from
+        finalizing to the first caption.**
+        **Without a measurement per sentence, there is no way to decide where
+        to cut time.**
         """
         at = when if when is not None else time.time()
         record = {
@@ -162,29 +189,34 @@ class Transcript:
         }
         if cut:
             record["cut"] = cut
-        # 無音待ち以外は待っていないので、書いても意味が無い。
+        # Nothing waits except the silence wait, so writing this otherwise
+        # would be meaningless.
         if waited:
             record["waited"] = round(waited, 2)
         if took:
             record["took"] = round(took, 2)
         if total:
             record["total"] = round(total, 2)
-        # 先回りの翻訳が当たった文。当たると total が took より小さくなる。
+        # A sentence where the speculative translation was a hit. On a hit,
+        # total comes out smaller than took.
         if spec:
             record["spec"] = True
-        # 字幕の向き。**会議の途中で変えられるので、1文ごとに残す。**
-        # メタに1回だけ書くと、切り替えた後の記録が嘘になる。
+        # The caption direction. **It can be changed in the middle of a
+        # meeting, so it is kept per sentence.** Writing it once in the meta
+        # line would make the record after a switch a lie.
         if direction:
             record["dir"] = direction
         self.records.append(record)
         self._write(record)
 
     def close(self) -> Path | None:
-        """`.md` を書いて閉じる。書いたパスを返す。1文も無ければ何も残さない。
+        """Write the `.md` and close. Return the path written. If there is
+        not a single sentence, leave nothing behind.
 
-        **2回呼ばれても平気にしてある。** 会議の切れ目で閉じた後、終了時の
-        `App.report` がもう一度呼ぶ。印を付けておかないと、消したファイルを
-        消しに行ったり、書いた `.md` を書き直したりする。
+        **It is safe to call this twice.** After it is closed at the end of a
+        meeting, `App.report` calls it again on exit. Without a flag, it
+        would go and delete a file that is already deleted, or rewrite the
+        `.md` it already wrote.
         """
         if self.closed:
             return self.md_path if self.records else None
@@ -198,7 +230,8 @@ class Transcript:
             self._fh = None
 
         if not self.records:
-            # この実行で作ったファイルだけを消す。中身はメタ1行しかない。
+            # Delete only the file this run created. It holds nothing but the
+            # single meta line.
             try:
                 if self.path.exists():
                     self.path.unlink()
@@ -213,12 +246,14 @@ class Transcript:
             return None
         return self.md_path
 
-    # --- 読める形 -----------------------------------------------------------
+    # --- Readable form ------------------------------------------------------
 
     def markdown(self, final: bool = False) -> str:
-        """`final=False` は会議の途中で読むとき。**「終了」と書いてはいけない。**"""
-        # 閉じた後は、閉じた時刻を書く。`time.time()` のままだと、記録を後から
-        # 読み直すたびに終了時刻が伸びていく。
+        """`final=False` is for reading in the middle of a meeting. **It must
+        not say the meeting has ended.**"""
+        # After it is closed, write the time it was closed. With
+        # `time.time()`, the end time would grow every time the record is
+        # read again later.
         end = self.ended if self.ended is not None else time.time()
         return render(
             {"started": _clock(self.started), **self.meta},
@@ -227,20 +262,21 @@ class Transcript:
             final=final,
         )
 
-    # --- 内部 ---------------------------------------------------------------
+    # --- Internal -----------------------------------------------------------
 
     def _write(self, obj: dict) -> None:
         if self._fh is None:
             return
         try:
             self._fh.write(json.dumps(obj, ensure_ascii=False) + "\n")
-            # 落ちたときに、そこまでが残るようにする。
+            # So that everything up to this point survives a crash.
             self._fh.flush()
         except OSError as exc:
             self._failed(exc)
 
     def _failed(self, exc: Exception) -> None:
-        """1度だけ知らせて、以後は黙る。会議中に同じ行を出し続けない。"""
+        """Report once, then stay quiet. Do not keep printing the same line
+        during a meeting."""
         if not self.error:
             self.error = f"{type(exc).__name__}: {exc}"
             print(f"  [記録の失敗] {self.error}")
@@ -249,9 +285,10 @@ class Transcript:
 
 
 def render(meta: dict, records: list[dict], ended: str = "", final: bool = True) -> str:
-    """`.jsonl` の中身から、読める形を組み立てる。
+    """Build the readable form from the contents of the `.jsonl`.
 
-    `scripts/transcript_to_md.py` もこれを呼ぶ。**書式を2か所に持たない。**
+    `scripts/transcript_to_md.py` calls this too. **Do not keep the format in
+    two places.**
     """
     lines: list[str] = []
     started = str(meta.get("started", ""))
@@ -268,7 +305,8 @@ def render(meta: dict, records: list[dict], ended: str = "", final: bool = True)
         )
     if meta.get("translate"):
         lines.append(f"- 翻訳: {meta['translate']}")
-    # 向きは1文ごとに記録してある。会議の途中で切り替えられるためである。
+    # The direction is recorded per sentence, because it can be switched in
+    # the middle of a meeting.
     used = [d for d in dict.fromkeys(str(r.get("dir", "")) for r in records) if d]
     if not used and meta.get("direction"):
         used = [str(meta["direction"])]
@@ -293,7 +331,8 @@ def render(meta: dict, records: list[dict], ended: str = "", final: bool = True)
     for record in records:
         ja = str(record.get("ja", "")).strip()
         en = [str(x).strip() for x in record.get("en") or [] if str(x).strip()]
-        # 行末の空白2つは Markdown の改行。1つの塊として読ませる。
+        # The two trailing spaces are a Markdown line break. They make the
+        # pair read as one block.
         lines.append(f"**{record.get('at', '')}**　{ja}  ")
         lines.append("\n".join(en) if en else "*（翻訳に失敗した）*")
         lines.append("")
@@ -301,7 +340,8 @@ def render(meta: dict, records: list[dict], ended: str = "", final: bool = True)
 
 
 def load(path: Path) -> tuple[dict, list[dict]]:
-    """`.jsonl` を読んで (メタ, 記録) を返す。壊れた行は飛ばす。"""
+    """Read the `.jsonl` and return (meta, records). Broken lines are
+    skipped."""
     meta: dict = {}
     records: list[dict] = []
     for line in Path(path).read_text(encoding="utf-8").splitlines():
@@ -311,7 +351,8 @@ def load(path: Path) -> tuple[dict, list[dict]]:
         try:
             obj = json.loads(line)
         except json.JSONDecodeError:
-            # 電源が落ちると最後の1行が途中で切れる。そこだけ捨てる。
+            # When the power is cut, the last line is truncated. Throw away
+            # only that line.
             continue
         if obj.get("type") == "meta":
             meta = obj
@@ -320,17 +361,19 @@ def load(path: Path) -> tuple[dict, list[dict]]:
     return meta, records
 
 
-# --- 置き場にある記録を一覧する ---------------------------------------------
+# --- List the records in the directory ---------------------------------------
 #
-# **操作画面から落とすために要る**（2026-09-20）。字幕PCは常時起動で、操作は
-# tailnet 越しである。記録を読むためだけに遠隔操作を起こさなくて済むようにする。
+# **This is needed to download them from the control page** (2026-09-20). The
+# caption PC runs all the time, and it is operated over the tailnet. This
+# saves having to start a remote desktop session just to read a record.
 
 
 def _count_lines(path: Path) -> int:
-    """確定した文の数。**メタの1行を引く。**
+    """The number of finalized sentences. **Subtract the one meta line.**
 
-    全部読むが、数百KBなので一覧を出すたびに読んでも気にならない。
-    `load()` を使わないのは、JSONの解析まではしなくてよいからである。
+    This reads the whole file, but the file is a few hundred KB, so reading
+    it every time the list is shown does not matter. `load()` is not used
+    because the JSON does not have to be parsed.
     """
     total = 0
     try:
@@ -343,14 +386,16 @@ def _count_lines(path: Path) -> int:
 
 
 def scan(directory: Path) -> list[dict]:
-    """置き場にある記録を、**新しい順に**返す。
+    """Return the records in the directory, **newest first**.
 
-    `live-caption_2026-09-08_143012_KAGRA朝礼.jsonl` のような名前から、日時と
-    会議名を取り出す。**`.jsonl` だけを見る。** `.md` は同じ幹で組を成すので、
-    2つ並べると同じ会議が2行になる。
+    Take the date, the time and the meeting name out of a name such as
+    `live-caption_2026-09-08_143012_定例会議.jsonl`. **Look only at the
+    `.jsonl`.** The `.md` pairs with it on the same stem, so listing both
+    would show the same meeting on two lines.
 
-    接頭辞で絞るのは、置き場を他のフォルダに変えられるためである。無関係な
-    `.jsonl` を拾って、それを記録として見せてはいけない。
+    The prefix filter is there because the directory can be changed to
+    another folder. An unrelated `.jsonl` must not be picked up and shown as
+    a record.
     """
     out: list[dict] = []
     try:
@@ -364,7 +409,8 @@ def scan(directory: Path) -> list[dict]:
             continue
         stem = path.stem
         rest = stem[len(config.TRANSCRIPT_PREFIX):]
-        # 「2026-09-08_143012」までが日時で、その後ろがあれば会議名である。
+        # Up to "2026-09-08_143012" is the date and time; anything after that
+        # is the meeting name.
         when, _, label = rest.partition("_")
         clock, _, label2 = label.partition("_")
         if len(clock) == 6 and clock.isdigit():
@@ -377,7 +423,8 @@ def scan(directory: Path) -> list[dict]:
             "lines": _count_lines(path),
             "bytes": stat.st_size,
             "updated": _clock(stat.st_mtime),
-            # 読める形が既にあるか。無くても `.md` は組み立てて返せる。
+            # Whether the readable form already exists. Even without it, the
+            # `.md` can be assembled and returned.
             "md": path.with_suffix(".md").exists(),
         })
     out.sort(key=lambda r: r["stem"], reverse=True)
@@ -385,14 +432,16 @@ def scan(directory: Path) -> list[dict]:
 
 
 def markdown_of(path: Path, final: bool = True) -> str:
-    """`.jsonl` から読める形を組み立てる。
+    """Build the readable form from the `.jsonl`.
 
-    **`.md` があっても、こちらから作る。** `.md` が書かれるのは終了時だけなので、
-    会議の最中や、電源ごと落ちた後の記録では、無いか古い。組み立てる先は1つに
-    しておく（`scripts/transcript_to_md.py` と同じ `render()`）。
+    **Build it from here even when the `.md` exists.** The `.md` is written
+    only at the end, so for a meeting in progress, or for a record left after
+    the power was cut, it is missing or out of date. Keep one place that
+    builds it (the same `render()` that `scripts/transcript_to_md.py` uses).
 
-    終了時刻はファイルの更新時刻で代用する。`.jsonl` には終了の行が無い。
-    最後の1文を書いた時刻なので、実際の終了とは数秒ずれる。
+    The file's modification time stands in for the end time. The `.jsonl` has
+    no end line. That time is when the last sentence was written, so it is a
+    few seconds off from the real end.
     """
     path = Path(path)
     meta, records = load(path)

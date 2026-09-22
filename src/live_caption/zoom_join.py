@@ -1,25 +1,28 @@
-"""Zoomの会議に入る・出る。Windows専用。
+"""Join and leave a Zoom meeting. Windows only.
 
-Zoomは `zoommtg:` という経路を OS に登録する。そこへURLを投げると、
-Zoomクライアントが起きて会議に入る。
+Zoom registers a `zoommtg:` scheme with the OS. When a URL is sent there, the
+Zoom client starts and joins the meeting.
 
-    zoommtg://zoom.us/join?action=join&confno=1234567890&pwd=<ハッシュ>
+    zoommtg://zoom.us/join?action=join&confno=1234567890&pwd=<hash>
 
-**入れたかどうかは、こちらには分からない。** 投げるのは一方通行で、
-待機室・パスコード違い・更新のダイアログのどれに落ちても、返ってくるものが無い。
-**入れたことの確認は音でしか取れない**（`schedule.py` が、文字起こしが出たかで見る）。
+**We cannot tell whether the join succeeded.** Sending the URL is one-way, and
+nothing comes back whether it ends in the waiting room, a wrong passcode, or an
+update dialog. **The only confirmation of a join comes from the audio**
+(`schedule.py` checks whether a transcript appeared).
 
-**出るには終了させるしかない。** Zoomに「会議から出る」を外から頼む口は無い。
-字幕専用のPCなので許容できるが、**こちらが起こしたZoom以外は殺さない。**
-麻生が開いたままの会議を巻き添えにしてはいけない。
+**The only way to leave is to quit Zoom.** Zoom has no interface to ask it to
+leave a meeting from outside. This is acceptable on a dedicated caption PC, but
+**never kill a Zoom other than the one we started.** A meeting that someone
+left open must not be taken down with it.
 
-Zoom側の設定（1回きり。毎回は要らない）:
+Settings on the Zoom side (once; not needed every time):
 
-- 音声の出力先を `CABLE Input` に、マイクはミュート
-- 表示名を `Live Captions` などにする
-- 「参加時にマイクをミュート」「参加時にビデオをオフ」
-- **「コンピューターオーディオに参加」の窓を出さない設定にする。**
-  出たままだと、無人で入っても音が繋がらず、原因の分からない失敗になる
+- send the audio output to `CABLE Input`, and mute the microphone
+- set the display name to something like `Live Captions`
+- turn on "mute my microphone when joining" and "turn off my video when joining"
+- **turn off the "Join with Computer Audio" dialog.**
+  If it keeps appearing, an unattended join gets no audio, and the failure has
+  no visible cause
 """
 
 from __future__ import annotations
@@ -29,39 +32,44 @@ import re
 import subprocess
 import urllib.parse
 
-# 会議番号は9〜11桁。人が貼ると空白やハイフンが混ざる。
+# A meeting number has 9 to 11 digits. When a person pastes one, spaces and
+# hyphens get mixed in.
 _DIGITS = re.compile(r"[0-9]")
-# 招待URLの形。`/j/<番号>` を拾う。ホストは `zoom.us` かその下。
+# The shape of an invitation URL. Picks up `/j/<number>`. The host is `zoom.us`
+# or something under it.
 _JOIN_PATH = re.compile(r"/j/(\d{9,12})")
-# 個人リンク。**番号が入っていないので、こちらでは会議番号に直せない。**
+# A personal link. **It carries no number, so we cannot turn it into a meeting
+# number.**
 _PERSONAL = re.compile(r"/my/([A-Za-z0-9._-]+)")
-# 会議の窓のクラス名。**実測で確かめた**（Zoom 2026-09 時点、Windows）。
-# タイトルで見ないこと。表示言語で変わる（日本語では「Zoom ミーティング」）。
+# Class names of the meeting window. **Confirmed by measurement** (Zoom as of
+# 2026-09, Windows). Do not look at the title. It changes with the display
+# language (in Japanese it reads "Zoom ミーティング").
 MEETING_WINDOW_CLASSES = frozenset({
-    "ConfMultiTabContentWndClass",   # いまの Zoom の会議の窓
-    "ZPContentViewWndClass",         # 古い版
+    "ConfMultiTabContentWndClass",   # the meeting window of current Zoom
+    "ZPContentViewWndClass",         # older versions
 })
-# Windows の既定の置き場。レジストリが読めなかったときに見る。
+# The default location on Windows. Used when the registry cannot be read.
 _FALLBACK_EXE = os.path.expandvars(r"%APPDATA%\Zoom\bin\Zoom.exe")
 
 
 class JoinError(ValueError):
-    """会議の指定として受け付けられない文字列。"""
+    """A string that cannot be accepted as a meeting specification."""
 
 
 def parse_meeting(text: str) -> tuple[str, str]:
-    """会議の指定から `(会議番号, パスコード)` を取り出す。
+    """Take `(meeting number, passcode)` out of a meeting specification.
 
-    受け付ける形:
+    Accepted forms:
 
         https://zoom.us/j/1234567890?pwd=abc
         https://example.zoom.us/j/1234567890?pwd=abc
         zoommtg://zoom.us/join?action=join&confno=1234567890&pwd=abc
         1234567890
-        123 4567 890        （人が貼るとこうなる）
+        123 4567 890        (this is what a person pastes)
 
-    **`pwd` はURLに載っているハッシュをそのまま使う。** 人が読むパスコード
-    （6桁の数字など）ではない。招待URLから切り取ってくること。
+    **`pwd` is the hash carried in the URL, used as is.** It is not the
+    passcode a person reads (six digits, for example). Cut it out of the
+    invitation URL.
     """
     raw = str(text or "").strip()
     if not raw:
@@ -69,7 +77,7 @@ def parse_meeting(text: str) -> tuple[str, str]:
     if len(raw) > 500:
         raise JoinError("会議の指定が長すぎる。招待URLをそのまま貼ること。")
 
-    # 数字と区切りだけなら、会議番号そのものとみなす。
+    # If it holds only digits and separators, treat it as the meeting number.
     if re.fullmatch(r"[0-9 \-]+", raw):
         digits = "".join(_DIGITS.findall(raw))
         if not (9 <= len(digits) <= 12):
@@ -80,9 +88,10 @@ def parse_meeting(text: str) -> tuple[str, str]:
     if parsed.scheme not in ("http", "https", "zoommtg"):
         raise JoinError(f"知らない書き方: 「{raw[:80]}」。招待URLか会議番号を入れること。")
 
-    # **Zoom の宛先かどうかを確かめる。** 危険だからではなく（番号しか取らない）、
-    # 貼り間違いを黙って飲み込まないためである。関係の無いURLから数字だけ拾って
-    # 別の会議に入りに行く、という失敗がいちばん分かりにくい。
+    # **Check that the address is a Zoom one.** Not because it is dangerous
+    # (we only take the number), but so that a paste mistake is not swallowed
+    # silently. Picking digits out of an unrelated URL and joining a different
+    # meeting is the hardest failure to understand.
     host = (parsed.hostname or "").lower()
     if host and host != "zoom.us" and not host.endswith(".zoom.us"):
         raise JoinError(
@@ -93,7 +102,7 @@ def parse_meeting(text: str) -> tuple[str, str]:
     query = urllib.parse.parse_qs(parsed.query)
     pwd = (query.get("pwd") or [""])[0]
 
-    # zoommtg: は confno をそのまま持っている。
+    # A zoommtg: URL carries confno directly.
     confno = (query.get("confno") or [""])[0]
     if confno:
         digits = "".join(_DIGITS.findall(confno))
@@ -102,8 +111,9 @@ def parse_meeting(text: str) -> tuple[str, str]:
         return digits, pwd
 
     if _PERSONAL.search(parsed.path or ""):
-        # **個人リンクは会議番号に直せない。** 開くたびに違う会議になりうるし、
-        # URLの中に番号が無い。黙って失敗させず、何をすればよいかを言う。
+        # **A personal link cannot be turned into a meeting number.** It can
+        # open a different meeting each time, and the URL holds no number. Do
+        # not fail silently; say what to do instead.
         raise JoinError(
             "個人リンク（/my/…）には対応していない。"
             "会議を始めたときに出る、番号入りの招待URL（/j/…）を貼ること。"
@@ -116,9 +126,10 @@ def parse_meeting(text: str) -> tuple[str, str]:
 
 
 def join_url(confno: str, pwd: str = "", name: str = "") -> str:
-    """`zoommtg:` のURLを組み立てる。**値は必ず符号化する。**
+    """Build the `zoommtg:` URL. **Always encode the values.**
 
-    元になるのは人が貼った文字列なので、そのまま繋げてはいけない。
+    They come from a string a person pasted, so they must not be concatenated
+    as is.
     """
     parts = ["action=join", "confno=" + urllib.parse.quote(str(confno))]
     if pwd:
@@ -129,10 +140,11 @@ def join_url(confno: str, pwd: str = "", name: str = "") -> str:
 
 
 def zoom_exe() -> str | None:
-    """`Zoom.exe` の場所。見つからなければ None。
+    """The location of `Zoom.exe`. None if it is not found.
 
-    **決め打ちにしない。** Zoomは更新のたびに自分を置き直す。OSに登録されている
-    `zoommtg:` の開き方を先に見て、無ければ既定の置き場を見る。
+    **Do not hard-code it.** Zoom moves itself on every update. Look first at
+    the `zoommtg:` open command registered with the OS, and fall back to the
+    default location.
     """
     try:
         import winreg
@@ -140,7 +152,7 @@ def zoom_exe() -> str | None:
         with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT,
                             r"zoommtg\shell\open\command") as key:
             command, _ = winreg.QueryValueEx(key, "")
-        # `"C:\...\Zoom.exe" "--url=%1"` という形で入っている。
+        # It is stored in the form `"C:\...\Zoom.exe" "--url=%1"`.
         found = re.match(r'\s*"([^"]+)"', str(command))
         path = found.group(1) if found else str(command).split()[0]
         if os.path.exists(path):
@@ -151,11 +163,12 @@ def zoom_exe() -> str | None:
 
 
 def running() -> bool:
-    """`Zoom.exe` が動いているか。
+    """Whether `Zoom.exe` is running.
 
-    **これで「会議に入っているか」を判断してはいけない。** Zoomは会議を抜けても
-    常駐の窓口を残すので、常時起動の機体では**ほぼいつでも True** になる。
-    会議に入っているかは `in_meeting()` で見ること。
+    **Do not use this to decide whether we are in a meeting.** Zoom keeps a
+    resident window after leaving a meeting, so on a machine that runs all the
+    time this is **almost always True**. Use `in_meeting()` to check whether we
+    are in a meeting.
     """
     return bool(_zoom_pids())
 
@@ -179,14 +192,16 @@ def _zoom_pids() -> set[int]:
 
 
 def in_meeting() -> bool:
-    """いま会議に入っているか。
+    """Whether we are in a meeting right now.
 
-    **プロセスの有無では分からない。** Zoomは会議を抜けても常駐の窓口を残す。
-    常時起動の字幕PCでは `Zoom.exe` がほぼいつでも動いているので、それを
-    「会議中」と読むと、**こちらが入れた会議から永遠に出なくなる。**
+    **The presence of the process does not tell you.** Zoom keeps a resident
+    window after leaving a meeting. On a caption PC that runs all the time,
+    `Zoom.exe` is almost always running, and reading that as "in a meeting"
+    means **we never leave the meeting we joined.**
 
-    会議の窓のクラス名で見る。実測で確かめた名前である（2026-09-19）。
-    **タイトルでは見ない。** 表示言語で変わる（日本語では「Zoom ミーティング」）。
+    Look at the class name of the meeting window. These names were confirmed by
+    measurement (2026-09-19). **Do not look at the title.** It changes with the
+    display language (in Japanese it reads "Zoom ミーティング").
     """
     pids = _zoom_pids()
     if not pids:
@@ -212,30 +227,34 @@ def in_meeting() -> bool:
         user32.EnumWindows(proto(visit), 0)
         return bool(found)
     except (OSError, AttributeError, ValueError):
-        # 見分けが付かないときは「会議中」と答える。**安全側は触らないほうである。**
-        # 人が開いていた会議を、判定に失敗したせいで切ってはいけない。
+        # When we cannot tell, answer "in a meeting". **The safe side is to
+        # leave things alone.** A meeting a person had open must not be cut off
+        # because the check failed.
         return True
 
 
 def join(text: str, name: str = "") -> str:
-    """Zoomを起こして会議に入らせる。投げたURLを返す。
+    """Start Zoom and make it join the meeting. Return the URL that was sent.
 
-    **入れたかどうかは分からない。** `zoommtg:` はハンドラに渡すだけで、
-    待機室・パスコード違い・更新のダイアログのどれに落ちても何も返らない。
-    確認は音で取ること。
+    **We cannot tell whether the join succeeded.** A `zoommtg:` URL is only
+    handed to the handler, and nothing comes back whether it ends in the
+    waiting room, a wrong passcode, or an update dialog. Confirm with the
+    audio.
     """
     confno, pwd = parse_meeting(text)
     url = join_url(confno, pwd, name)
     exe = zoom_exe()
     try:
         if exe:
-            # **シェルを通さない。** `pwd` は人が貼った文字列から来る。
+            # **Do not go through a shell.** `pwd` comes from a string a
+            # person pasted.
             subprocess.Popen(
                 [exe, f"--url={url}"], shell=False, stdin=subprocess.DEVNULL,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         else:
-            # 実行ファイルが見つからないときは、OSの関連付けに任せる。
+            # When the executable is not found, leave it to the OS file
+            # association.
             os.startfile(url)  # noqa: S606
     except OSError as exc:
         raise JoinError(
@@ -247,11 +266,11 @@ def join(text: str, name: str = "") -> str:
 
 
 def leave() -> bool:
-    """Zoomを終了させる。終了させたなら True。
+    """Quit Zoom. True if it was quit.
 
-    **会議から出る口は無い。** 終了させるしかない。
-    `Zoom.exe` を全部落とすので、**こちらが会議に入れたときだけ呼ぶこと**
-    （`schedule.py` が覚えている）。
+    **There is no interface to leave a meeting.** Quitting is the only way.
+    This kills every `Zoom.exe`, so **call it only when we are the one who
+    joined the meeting** (`schedule.py` remembers that).
     """
     if not in_meeting():
         return False

@@ -1,34 +1,39 @@
-"""会議のチャットに、字幕のURLを投げる。
+"""Post the caption URL to the chat of the meeting.
 
-**APIでは出来ない。** Zoom の REST API に「会議中のチャットへ投稿する」口は
-無い（`/chat/messages` は会議の外の Team Chat で、別物である）。Meeting SDK か
-Zoom Apps を作れば出来るが、アプリの審査と大学側の承認が要る。字幕トークンを
-手動にしているのと同じ理由で、いまは採らない。
+**The API cannot do this.** The Zoom REST API has no endpoint that posts to the
+chat of a meeting in progress (`/chat/messages` is Team Chat, outside the
+meeting, which is a different thing). A Meeting SDK app or a Zoom App could do
+it, but that needs app review and approval from the university. For the same
+reason the caption token is handled by hand, this is not the road taken for now.
 
-**そこで、字幕PCの Zoom クライアントを画面操作で動かす。**
+**So the Zoom client on the caption PC is driven through its windows.**
 
-実測で確かめた窓（Zoom 7.0.6、Windows、2026-09-20）:
+The windows, as measured (Zoom 7.0.6, Windows, 2026-09-20):
 
-    会議       ConfMultiTabContentWndClass
-    チャット   ZConfChatPopupContainerWndClass   Alt+H で開閉する**別の**窓
+    meeting   ConfMultiTabContentWndClass
+    chat      ZConfChatPopupContainerWndClass   a **separate** window that
+                                                Alt+H opens and closes
 
-**チャットが開いているかは、この窓があるかどうかで見る。** Alt+H は開閉の
-切り替えなので、状態を見ずに押してはいけない。開いているときに押すと閉じて
-しまい、その後の貼り付けと Enter が会議の窓へ落ちる。害はないが、投稿されない
-まま「送った」と記録することになる。**無人で回す以上、それが一番困る。**
+**Whether the chat is open is decided by whether this window exists.** Alt+H
+toggles, so it must not be pressed without checking the state first. Pressing it
+while the chat is open closes the chat, and the paste and the Enter that follow
+land in the meeting window. That does no damage, but nothing is posted while the
+program records that it "sent" the message. **For unattended operation, that is
+the worst outcome.**
 
-## 危ないことをしている自覚を持つこと
+## Be aware that this is a dangerous thing to do
 
-**これは、別の窓にキーを打ち込む道具である。** 前面の窓が入れ替わった隙に
-打つと、どこへ何が入るか分からない。各段の前に「いま前面にあるのが目当ての
-窓か」を必ず確かめ、違えば中止する。`_focused` がそれをやっている。
+**This tool types keys into another window.** If it types in the moment the
+foreground window changes, there is no telling what goes where. Before every
+step, check that the window in front is the intended one, and stop if it is not.
+`_focused` is what does this.
 
-## クリップボードを奪う
+## It takes the clipboard
 
-貼り付けで送るので、クリップボードを使う。**中身は退避して戻す。**
-ただし戻せるのは文字だけである。画像やファイルを入れていた場合は失われる。
-文字を打ち込む方法（1文字ずつキーを送る）は、URLと日本語で取りこぼすので
-採らない。
+The message is sent by pasting, so the clipboard is used. **The content is saved
+and put back.** Only text can be put back, however. An image or a file that was
+on the clipboard is lost. Typing the text instead (sending one key per
+character) drops characters with URLs and Japanese, so it is not used.
 """
 
 from __future__ import annotations
@@ -40,22 +45,24 @@ from pathlib import Path
 
 from . import config, zoom_join
 
-# **Linux からも import できるようにしてある。** 窓を触る関数は Windows で
-# しか動かないが、**文面とQRの組み立て（`compose` / `qr_file`）は機体を選ばない。**
-# Linux 版（`zoom_chat_linux.py`）がそこだけ借りる。**複製しないこと。**
-# 一度やって内容がずれた（HANDOFF「プロンプトと用語表は本体に一本化した」）。
-# Windows での動きは変わらない。
+# **This module can also be imported on Linux.** The functions that touch
+# windows run only on Windows, but **building the message and the QR code
+# (`compose` / `qr_file`) works on any machine.** The Linux version
+# (`zoom_chat_linux.py`) borrows only those. **Do not copy them.** That was done
+# once, and the two copies drifted apart. The behavior on Windows does not
+# change.
 if hasattr(ctypes, "windll"):
     user32 = ctypes.windll.user32
     kernel32 = ctypes.windll.kernel32
 else:
     user32 = kernel32 = None
 
-# チャットの窓のクラス名。**実測**（上の説明を見ること）。
+# The class name of the chat window. **Measured** (see the notes above).
 CHAT_WINDOW_CLASS = "ZConfChatPopupContainerWndClass"
 
-# 参加者に出す文面。**英語で固定する。** 読むのは会議の参加者であって、
-# 操作画面を開いている人ではない。`i18n` を通さないのはそのためである。
+# The message shown to the participants. **It is fixed to English.** The readers
+# are the participants of the meeting, not the person who has the control page
+# open. That is why it does not go through `i18n`.
 DIRECTION_EN = {
     "ja2en": "Japanese to English",
     "en2ja": "English to Japanese",
@@ -66,17 +73,18 @@ MESSAGE = (
     "Open the link in any browser. No app or sign-in needed."
 )
 
-# --- 待ち時間 ---------------------------------------------------------------
-# **短くしないこと。** Zoom は貼り付けの中身を作るのに間を置く。詰めると、
-# 中身が出来る前に Enter を打って、空のまま送ることになる。
-FOCUS_SEC = 0.35        # 窓を前面に出してから落ち着くまで
-OPEN_CHAT_SEC = 4.0     # Alt+H のあと、チャットの窓が出るまで待つ上限
-PASTE_SEC = 0.9         # 文字を貼ってから Enter まで
-SENT_SEC = 1.5          # Enter のあと、次へ進むまで
+# --- Waiting times -----------------------------------------------------------
+# **Do not make these shorter.** Zoom takes a moment to build the pasted
+# content. If they are cut down, Enter is pressed before the content is ready,
+# and an empty message is sent.
+FOCUS_SEC = 0.35        # After bringing a window to the front, until it settles
+OPEN_CHAT_SEC = 4.0     # After Alt+H, the limit for the chat window to appear
+PASTE_SEC = 0.9         # From pasting the text until Enter
+SENT_SEC = 1.5          # After Enter, until the next step
 
 
 # =========================================================================
-# Windows の下回り
+# The Windows layer
 # =========================================================================
 
 CF_UNICODETEXT = 13
@@ -88,9 +96,10 @@ SW_RESTORE = 9
 VK = {"RETURN": 0x0D, "MENU": 0x12, "CONTROL": 0x11, "H": 0x48,
       "V": 0x56, "ESCAPE": 0x1B}
 
-# **引数と戻り値の型を必ず宣言すること。** 既定は 32bit int なので、64bit の
-# ハンドルが切り詰められ、`OverflowError` になる（2026-09-20 に踏んだ）。
-# **Windows のときだけ。** Linux では `user32` も `kernel32` も None である。
+# **Always declare the argument and return types.** The default is a 32-bit int,
+# so a 64-bit handle is truncated and raises `OverflowError` (hit on
+# 2026-09-20). **Only on Windows.** On Linux both `user32` and `kernel32` are
+# None.
 if user32 is not None:
     kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
     kernel32.GlobalAlloc.restype = ctypes.c_void_p
@@ -128,7 +137,7 @@ def _key(vk: int, up: bool = False) -> _INPUT:
 
 
 def _send(*names: str, hold: tuple[str, ...] = ()) -> None:
-    """キーを叩く。`hold` は押しっぱなしにする修飾キー。"""
+    """Press keys. `hold` lists the modifier keys to keep held down."""
     seq: list[_INPUT] = [_key(VK[h]) for h in hold]
     for name in names:
         seq.append(_key(VK[name]))
@@ -145,7 +154,7 @@ def _class_of(hwnd: int) -> str:
 
 
 def _find_window(classes: frozenset[str] | set[str]) -> int:
-    """Zoom の持ち物のうち、そのクラス名で見えている窓を1つ返す。無ければ 0。"""
+    """Return one visible window of Zoom with that class name. 0 if none."""
     pids = zoom_join._zoom_pids()
     if not pids:
         return 0
@@ -165,7 +174,8 @@ def _find_window(classes: frozenset[str] | set[str]) -> int:
 
 
 def _raise(hwnd: int) -> bool:
-    """前面に出す。**Windows は横取りを嫌がる。** 入力スレッドを繋いでから頼む。"""
+    """Bring a window to the front. **Windows does not like the foreground being
+    taken away.** Attach the input thread first, then ask."""
     if user32.IsIconic(hwnd):
         user32.ShowWindow(hwnd, SW_RESTORE)
     cur = kernel32.GetCurrentThreadId()
@@ -182,22 +192,24 @@ def _raise(hwnd: int) -> bool:
 
 
 def _focused(hwnd: int) -> bool:
-    """いま前面にあるのがこの窓か。**打つ前に必ず確かめること。**"""
+    """Is this window the one in front right now? **Always check before
+    typing.**"""
     return user32.GetForegroundWindow() == hwnd
 
 
-# --- クリップボード ---------------------------------------------------------
+# --- Clipboard ---------------------------------------------------------------
 
 
 _owner_hwnd = 0
 
 
 def _owner() -> int:
-    """クリップボードの持ち主になる、見えない窓を1つ作る。
+    """Create one invisible window to own the clipboard.
 
-    **`OpenClipboard(NULL)` で開いてはいけない。** 持ち主が NULL になると、
-    `SetClipboardData` が成功を返すのに中身が入らない。読み返すと空である
-    （2026-09-20 に踏んだ。`EnumClipboardFormats` が何も返さないので分かる）。
+    **Do not open it with `OpenClipboard(NULL)`.** When the owner is NULL,
+    `SetClipboardData` returns success but nothing is stored. Reading it back
+    gives an empty clipboard (hit on 2026-09-20; you can tell because
+    `EnumClipboardFormats` returns nothing).
     """
     global _owner_hwnd
     if _owner_hwnd:
@@ -207,7 +219,8 @@ def _owner() -> int:
         wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
         ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
         wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID]
-    hwnd_message = wintypes.HWND(-3)   # HWND_MESSAGE。画面には出ない。
+    hwnd_message = wintypes.HWND(-3)   # HWND_MESSAGE. It never appears on
+                                       # screen.
     _owner_hwnd = user32.CreateWindowExW(
         0, "STATIC", "LiveCaptionClipboard", 0, 0, 0, 0, 0,
         hwnd_message, None, None, None) or 0
@@ -237,7 +250,8 @@ def _clip_put(fmt: int, blob: bytes) -> bool:
 
 
 def clip_get_text() -> str | None:
-    """いまの文字。**戻せるのはこれだけである**（画像やファイルは戻せない）。"""
+    """The text on the clipboard now. **This is all that can be put back**
+    (images and files cannot)."""
     if not _clip_open():
         return None
     try:
@@ -268,31 +282,35 @@ def clip_set_text(text: str) -> bool:
 
 
 # =========================================================================
-# 本体
+# The main part
 # =========================================================================
 
 
-# --- ファイルの添付 ---------------------------------------------------------
+# --- Attaching a file --------------------------------------------------------
 #
-# **クリップボードでファイルを渡さない。** ファイル一覧（CF_HDROP）を載せると、
-# RustDesk のクリップボード同期が落ちる（2026-09-20 に切り分けた。文字だけなら
-# 落ちない）。麻生の指示で、Zoom の添付ボタンから拾わせる形にした。
+# **Do not hand the file over through the clipboard.** Putting a file list
+# (CF_HDROP) on the clipboard breaks the clipboard sync of RustDesk (narrowed
+# down on 2026-09-20; text alone does not break it). As requested, the file is
+# now picked up through the attach button of Zoom.
 #
-# **こちらのほうが確かでもある。** 添付ボタンを押すと標準の Windows ファイル
-# ダイアログ（`#32770`）が開くので、中の部品を ID で掴んでパスを入れられる。
-# 座標に頼るのは、最初の1回の押下だけである。
+# **That way is also more reliable.** Pressing the attach button opens the
+# standard Windows file dialog (`#32770`), so the controls inside can be found
+# by ID and the path can be typed into them. Coordinates are needed only for
+# that first press.
 
-# 添付ボタンの位置。**チャットの窓の左下からの距離**（96dpi 換算）。
-# 実測（Zoom 7.0.6、Windows、2026-09-20。168dpi のとき、左から167・下から48）。
+# The position of the attach button. **The distance from the bottom left corner
+# of the chat window** (at 96 dpi). Measured (Zoom 7.0.6, Windows, 2026-09-20.
+# At 168 dpi it was 167 from the left and 48 from the bottom).
 ATTACH_FROM_LEFT = 95
 ATTACH_FROM_BOTTOM = 27
 FILE_DIALOG_CLASS = "#32770"
-# ファイルダイアログの部品。Windows の共通ダイアログで決まっている番号である。
+# The controls of the file dialog. These numbers are fixed by the Windows common
+# dialog.
 DLG_FILENAME = 1148
 DLG_OPEN = 1
 DLG_CANCEL = 2
-DIALOG_SEC = 6.0        # 添付ボタンを押してから、ダイアログが出るまでの上限
-DIALOG_GONE_SEC = 8.0   # 開くを押してから、ダイアログが消えるまでの上限
+DIALOG_SEC = 6.0        # Limit for the dialog to appear after pressing attach
+DIALOG_GONE_SEC = 8.0   # Limit for the dialog to close after pressing Open
 
 WM_SETTEXT = 0x000C
 BM_CLICK = 0x00F5
@@ -302,11 +320,12 @@ DPI_PER_MONITOR_V2 = -4
 
 
 def _dpi_aware():
-    """この糸だけ、画面の実寸で座標を扱うようにする。
+    """Make this thread alone work in real screen coordinates.
 
-    **本体は画面の実寸を知らないまま動いている。** そのままだと
-    `GetWindowRect` が引き伸ばされた座標を返し、押す場所がずれる。
-    プロセス全体の設定を変えると、画面の取り込みや他の窓に響くので、糸だけ変える。
+    **The rest of the program runs without knowing the real screen size.** Left
+    as it is, `GetWindowRect` returns stretched coordinates, and the press lands
+    in the wrong place. Changing the setting for the whole process would affect
+    screen capture and other windows, so only this thread is changed.
     """
     try:
         user32.SetThreadDpiAwarenessContext.restype = ctypes.c_void_p
@@ -326,12 +345,13 @@ def _dpi_restore(token) -> None:  # noqa: ANN001
 
 
 def _file_dialog() -> int:
-    """Zoom が出しているファイルダイアログ。無ければ 0。"""
+    """The file dialog that Zoom has opened. 0 if there is none."""
     return _find_window({FILE_DIALOG_CLASS})
 
 
 def _click(x: int, y: int) -> None:
-    """その場所を1回押す。**押す前の位置に必ず戻す。**"""
+    """Click once at that position. **Always move the pointer back to where it
+    was.**"""
     where = wintypes.POINT()
     user32.GetCursorPos(ctypes.byref(where))
     try:
@@ -346,11 +366,12 @@ def _click(x: int, y: int) -> None:
 
 
 def attach(chat: int, path: Path) -> bool:
-    """チャットにファイルを添付して送る。**クリップボードは使わない。**
+    """Attach a file to the chat and send it. **The clipboard is not used.**
 
-    添付ボタンを押す位置だけが座標頼みである。**押してもダイアログが出なければ、
-    Escape を叩いて必ず戻す。** 隣には画面取り込みのボタンがあるので、外した
-    ままにすると、そちらが開いたまま会議が続くことになる。
+    Only the position of the attach button depends on coordinates. **If no
+    dialog appears after the press, always press Escape to get back.** The
+    button next to it captures the screen, so a missed press that is left alone
+    would keep that open for the rest of the meeting.
     """
     if not _raise(chat):
         return False
@@ -375,14 +396,14 @@ def attach(chat: int, path: Path) -> bool:
         if dialog:
             break
     if not dialog:
-        # 何か別のものが開いたかもしれない。**開いたままにしない。**
+        # Something else may have opened. **Do not leave it open.**
         _send("ESCAPE")
         print("  [チャット] 添付の窓が出てこない。QRは送らない。")
         return False
 
     edit = user32.GetDlgItem(dialog, DLG_FILENAME)
     if edit:
-        # ComboBoxEx32 の中の Edit が本体である。
+        # The real control is the Edit inside the ComboBoxEx32.
         inner = user32.FindWindowExW(edit, None, "ComboBox", None)
         if inner:
             edit = user32.FindWindowExW(inner, None, "Edit", None) or edit
@@ -399,7 +420,8 @@ def attach(chat: int, path: Path) -> bool:
         if not user32.IsWindow(dialog) or not user32.IsWindowVisible(dialog):
             break
     else:
-        # 開けなかった（パスが違う、など）。**閉じてから帰る。**
+        # It could not open the file (a wrong path, for example). **Close the
+        # dialog before returning.**
         user32.SendMessageW(user32.GetDlgItem(dialog, DLG_CANCEL), BM_CLICK, 0, 0)
         print("  [チャット] 添付の窓が閉じない。QRは送らない。")
         return False
@@ -412,7 +434,7 @@ def attach(chat: int, path: Path) -> bool:
 
 
 def compose(url: str, direction: str = "") -> str:
-    """参加者に出す文面を作る。**英語で固定。**"""
+    """Build the message shown to the participants. **Always in English.**"""
     way = DIRECTION_EN.get(direction or config.DIRECTION, "")
     if not way:
         return f"Live captions for this meeting:\n{url}\n" \
@@ -421,13 +443,15 @@ def compose(url: str, direction: str = "") -> str:
 
 
 def qr_file(url: str, name: str = "") -> Path | None:
-    """チャットに添えるQRを書き出す。書けなければ None。
+    """Write the QR code that goes with the chat message. None if it cannot be
+    written.
 
-    **受け取った人に分かる名前にする。** クリップボード経由で送るので、
-    ファイル名がそのまま相手に見える。`{GUID}.png` では何のファイルか
-    分からない。
+    **Give it a name the receiver can understand.** The file is sent through the
+    clipboard, so the receiver sees the file name as it is. With `{GUID}.png`
+    nobody can tell what the file is.
 
-    置き場は `local/`。会議の記録と混ぜない。**次に投げるときに上書きする。**
+    It is written in `local/`, away from the meeting records. **It is
+    overwritten the next time a message is posted.**
     """
     try:
         import segno
@@ -455,9 +479,10 @@ def chat_window() -> int:
 
 
 def open_chat() -> int:
-    """チャットの窓を出して、その窓を返す。出せなければ 0。
+    """Open the chat window and return it. 0 if it cannot be opened.
 
-    **既に開いていれば Alt+H を押さない。** 押すと閉じてしまう。
+    **If it is already open, Alt+H is not pressed.** Pressing it would close the
+    chat.
     """
     found = chat_window()
     if found:
@@ -476,13 +501,13 @@ def open_chat() -> int:
 
 
 def post(text: str, files: list[Path] | None = None) -> dict:
-    """チャットに投げる。何を投げられたかを返す。**例外は投げない。**
+    """Post to the chat. Return what could be posted. **It never raises.**
 
-    **文字を先に送る。** ファイルはホストの設定で止められることがあり、
-    こちらからは止められたことが分からない。先に文字を送っておけば、
-    止められてもURLは届く。
+    **Send the text first.** Files can be blocked by the setting of the host,
+    and from this side there is no way to tell that they were blocked. If the
+    text goes first, the URL still arrives even when the file is blocked.
 
-    返すのは `{"text": bool, "files": int, "why": str}`。
+    It returns `{"text": bool, "files": int, "why": str}`.
     """
     done = {"text": False, "files": 0, "why": ""}
     files = list(files or [])
@@ -505,19 +530,21 @@ def post(text: str, files: list[Path] | None = None) -> dict:
             if not Path(path).exists():
                 continue
             if not attach(chat, Path(path)):
-                # **ここで止めない。** 文字は既に届いている。
+                # **Do not stop here.** The text has already arrived.
                 done["why"] = "ファイルを添付できなかった。URLだけは届いている。"
                 break
             done["files"] += 1
     finally:
-        # **必ず戻す。** 人が入れていたものを黙って持っていかない。
+        # **Always put it back.** Do not quietly take away what a person had
+        # placed on the clipboard.
         if saved is not None:
             clip_set_text(saved)
     return done
 
 
 def _paste_and_send(chat: int, load, wait: float) -> bool:  # noqa: ANN001
-    """クリップボードに載せて、貼って、送る。前面が外れたら中止する。"""
+    """Put the text on the clipboard, paste it, and send it. Stop if the window
+    is no longer in front."""
     if not _raise(chat):
         return False
     if not load():

@@ -1,39 +1,43 @@
 #!/usr/bin/env python3
-"""Zoom 字幕API (third-party closed caption) の疎通確認ツール。
+"""A tool to check that the Zoom caption API (third-party closed caption)
+works.
 
-一括測定:
-    python scripts/zoom_cc_test.py --auto "<APIトークンURL>"
+Measure everything at once:
+    python scripts/zoom_cc_test.py --auto "<API token URL>"
 
-表示の挙動を目で確かめる:
-    python scripts/zoom_cc_test.py --display "<APIトークンURL>"
+Watch how the captions behave on screen:
+    python scripts/zoom_cc_test.py --display "<API token URL>"
 
-seq を明示して始める（既定は local/seq_state.json の続き）:
-    python scripts/zoom_cc_test.py --display --seq 5000 "<APIトークンURL>"
+Start from a seq you name (the default continues local/seq_state.json):
+    python scripts/zoom_cc_test.py --display --seq 5000 "<API token URL>"
 
-重要: seq はミーティングのセッション全体で単調増加していないといけない。
-巻き戻すと Zoom はエラーを返さずに黙って捨てる。本番で字幕アプリが落ちて
-再起動したとき、seq を 1 に戻すと字幕が無言で止まる。
+Important: seq has to keep increasing over the whole meeting session. Roll it
+back and Zoom drops the caption silently, without an error. If the caption
+program dies during a real meeting and you restart it with seq back at 1, the
+captions stop without a word.
 
-対話:
-    python scripts/zoom_cc_test.py "<APIトークンURL>"
+Interactive:
+    python scripts/zoom_cc_test.py "<API token URL>"
 
-トークンの取り方:
-    1. ホストとしてミーティングを開始する
-    2. ツールバーの「字幕」の横の「∧」をクリック
-    3. 「手動字幕の設定」→「APIトークンをコピー」
-    トークンはそのセッション限り。会議を開き直したら取り直す。
+How to get the token:
+    1. Start a meeting as the host
+    2. Click the "^" next to "Captions" in the toolbar
+    3. "Set up manual captioner" -> "Copy the API token"
+    The token lasts for that session only. Take a new one if you reopen the
+    meeting.
 
-準備:
-    2台目の端末（スマホでよい）で同じ会議に入り、「字幕を表示」をオンにしておく。
-    測定中に字幕がどう見えるかを目で確認するため。
+Before you start:
+    Join the same meeting from a second device (a phone is fine) and turn
+    "Show captions" on. That is how you see what the captions look like while
+    you measure.
 
-対話コマンド:
-    <任意の文字列>       その文字列を字幕として送る
-    /rate N [interval]  短い字幕を N 回、interval 秒間隔で連投する
-    /long N             N 文字の字幕を 1 回送る
-    /lang xx-XX         言語コードを変更する（既定 en-US）
-    /seq                現在の seq を表示する
-    /quit               終了
+Interactive commands:
+    <any text>          send that text as a caption
+    /rate N [interval]  send N short captions, interval seconds apart
+    /long N             send one caption of N characters
+    /lang xx-XX         change the language code (default en-US)
+    /seq                show the current seq
+    /quit               exit
 """
 
 import json
@@ -47,8 +51,8 @@ from pathlib import Path
 TIMEOUT = 10.0
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-# seq はミーティングのセッション全体で単調増加していないといけない。
-# スクリプトを再実行しても続きから始められるよう、会議ごとに保存する。
+# seq has to keep increasing over the whole meeting session. It is saved per
+# meeting, so that a rerun of the script continues where it left off.
 STATE_PATH = PROJECT_ROOT / "local" / "seq_state.json"
 
 
@@ -69,7 +73,8 @@ class CaptionSender:
         return {}
 
     def _load_seq(self) -> int:
-        """同じ会議で前に送った続きから始める。seq を巻き戻すと Zoom は黙って捨てる。"""
+        """Continue from what was sent before in the same meeting. Roll seq
+        back and Zoom drops the caption silently."""
         return self._state().get(self.meeting_key, 0) + 1
 
     def _save_seq(self) -> None:
@@ -79,7 +84,8 @@ class CaptionSender:
         STATE_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
     def post(self, text: str):
-        """字幕を1回送る。(status, body, 所要秒) を返す。status は接続失敗時 None。"""
+        """Send one caption. Returns (status, body, seconds taken). status is
+        None when the connection fails."""
         url = f"{self.base_url}&seq={self.seq}&lang={self.lang}"
         req = urllib.request.Request(
             url,
@@ -99,7 +105,7 @@ class CaptionSender:
             return None, str(e.reason), time.perf_counter() - t0
         dt = time.perf_counter() - t0
         if status == 200:
-            # seq は成功したときだけ進める。リトライでは増やさない。
+            # seq moves on only after a success. A retry does not increase it.
             self.seq += 1
             self._save_seq()
         return status, body, dt
@@ -115,7 +121,8 @@ def show(status, body, dt) -> None:
 
 
 def burst(sender: CaptionSender, n: int, interval: float, prefix: str):
-    """n 回連投して (成功数, 失敗数, 遅延のリスト, 実測の秒数) を返す。"""
+    """Send n in a row and return (successes, failures, list of delays,
+    seconds measured)."""
     ok, ng, lat = 0, 0, []
     t0 = time.perf_counter()
     for i in range(n):
@@ -143,10 +150,12 @@ def cmd_rate(sender: CaptionSender, args: list[str]) -> None:
 
 
 def make_text(n: int) -> str:
-    """n 文字の文字列を作る。10文字ごとに、その位置の文字数が数字で入る。
+    """Build a string of n characters, with the position written as a number
+    every 10 characters.
 
-    画面に見えた最後の数字が、そのまま「何文字まで表示されたか」になる。
-    末尾の5文字は [END] なので、最後まで出ていればそれが見える。
+    The last number you can see on screen is how many characters were shown.
+    The final five characters are [END], so if it was shown to the end, you
+    see that.
     """
     if n < 10:
         return "x" * n
@@ -172,7 +181,7 @@ def auto(sender: CaptionSender) -> int:
     print("2台目の端末で「字幕を表示」をオンにして、画面を見ながら実行すること。")
     print()
 
-    # 1. 疎通
+    # 1. Does it reach Zoom
     print("1. 疎通確認")
     status, body, dt = sender.post("Hello. This is a caption API test.")
     show(status, body, dt)
@@ -183,7 +192,7 @@ def auto(sender: CaptionSender) -> int:
     print("   => Zoomの画面に英文が出ているか目で確認すること。")
     print()
 
-    # 2. 表示時間
+    # 2. How long a caption stays on screen
     print("2. 表示時間の確認")
     print("   目印を1つ送る。Zoomの画面から消えるまでの秒数を数えること。")
     sender.post("=== WATCH THIS LINE. Count seconds until it disappears. ===")
@@ -193,7 +202,7 @@ def auto(sender: CaptionSender) -> int:
     print("\r   (待機終了)                ")
     print()
 
-    # 3. レート
+    # 3. Rate
     print("3. 送信レートの上限")
     print("   間隔を変えて連投する。実測が下回るのは往復時間のため。")
     print(f"   {'間隔':>10}  {'成功':>4} {'失敗':>4}  {'実測':>10}  {'平均遅延':>9}")
@@ -210,7 +219,7 @@ def auto(sender: CaptionSender) -> int:
     print("   => 失敗が出た行から上が、使える上限。")
     print()
 
-    # 4. 文字数
+    # 4. Number of characters
     print("4. 1回に送れる文字数")
     for n in (100, 500, 1000, 2000, 4000, 8000):
         status, body, dt = sender.post(make_text(n))
@@ -262,7 +271,8 @@ def interactive(sender: CaptionSender) -> int:
 
 
 def display_test(sender: CaptionSender) -> int:
-    """字幕の表示の挙動を目で確かめるためのモード。時間をかけてゆっくり送る。"""
+    """A mode for watching how the captions behave. It sends slowly, taking
+    its time."""
     print("=" * 62)
     print("Zoom 字幕 表示挙動の確認")
     print("=" * 62)

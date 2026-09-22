@@ -1,12 +1,13 @@
-"""音声の取り込み。
+"""Audio capture.
 
-字幕専用PCでは、Zoomの出力を VB-CABLE の `CABLE Input` に向けてある。
-こちらは `CABLE Output` を普通の録音デバイスとして開く。
-ループバックAPIは使わないので、音量やミュートの影響を受けない。
+On the caption PC, the Zoom output is sent to `CABLE Input` of VB-CABLE. Here
+we open `CABLE Output` as an ordinary recording device. We do not use a
+loopback API, so volume and mute settings have no effect on us.
 
-装置は 48 kHz で開き、こちらで 24 kHz に落とす（gpt-live-transcribe の要求）。
-48000 → 24000 はちょうど 2:1 なので、2サンプルの平均を取る。単純だが、
-そのまま間引くよりは折り返しが小さい。
+The device is opened at 48 kHz and we down-sample to 24 kHz here (required by
+gpt-live-transcribe). 48000 to 24000 is exactly 2:1, so we take the mean of
+every two samples. This is simple, but it gives less aliasing than dropping
+every other sample.
 """
 
 from __future__ import annotations
@@ -21,11 +22,13 @@ from . import config
 
 
 def list_devices() -> list[tuple[int, str, int, str]]:
-    """(番号, 名前, 入力チャンネル数, ホストAPI) の一覧。入力を持つものだけ。
+    """A list of (index, name, input channel count, host API), for devices that
+    have an input.
 
-    **ホストAPIまで返すのは、同じ名前が何度も出てくるためである。** Windowsでは
-    `CABLE Output` が MME・DirectSound・WASAPI の3つに現れる。名前だけでは
-    選び分けられない（local/HANDOFF.md「入力は MME のままでよい」）。
+    **The host API is included because the same name shows up several times.**
+    On Windows, `CABLE Output` appears under MME, DirectSound and WASAPI. The
+    name alone cannot tell them apart. (Measured on real meeting audio: MME is
+    fine for the input.)
     """
     apis = sd.query_hostapis()
     out = []
@@ -37,7 +40,7 @@ def list_devices() -> list[tuple[int, str, int, str]]:
 
 
 def describe_device(index: int | None) -> str:
-    """番号から「名前（ホストAPI）」を作る。画面に出すためのもの。"""
+    """Build "name (host API)" from an index. For showing on screen."""
     if index is None:
         return "既定の入力"
     for i, name, _, api in list_devices():
@@ -47,7 +50,9 @@ def describe_device(index: int | None) -> str:
 
 
 def find_device(name: str | None) -> int | None:
-    """名前の一部から入力デバイスを探す。見つからなければ None（既定を使う）。"""
+    """Find an input device from part of its name. None if not found (the
+    default device is then used).
+    """
     if not name:
         return None
     lowered = name.lower()
@@ -61,7 +66,7 @@ def find_device(name: str | None) -> int | None:
 
 
 class Capture:
-    """入力デバイスから 24 kHz・モノラル・16 bit の PCM を取り出す。"""
+    """Take 24 kHz, mono, 16-bit PCM out of an input device."""
 
     def __init__(self, device: int | None = None, capture_rate: int = config.CAPTURE_RATE) -> None:
         self.device = device
@@ -72,61 +77,71 @@ class Capture:
                 f"取り込みレート {capture_rate} が {config.ASR_RATE} の整数倍ではない。"
                 " Windowsのサウンド設定で CABLE Output を 48000 Hz にすること。"
             )
-        # 取り込みは装置のレートで、送る単位は 100 ms ぶん。
+        # Capture runs at the device rate; we send in units of 100 ms.
         self.blocksize = capture_rate * config.CHUNK_MS // 1000
-        # **待ち行列は asyncio のものである。スレッドプールは使わない。**
-        # `queue.Queue` を `run_in_executor` で待つ形にしていたが、この待ちは
-        # 取り消せない。生成を止めるたびにスレッドが1本 `get()` の中に残り、
-        # (1) 次に音が流れたとき、残った本数ぶんのチャンクを持ち去って捨てる
-        # (2) 生成を止めた状態で終了すると、アプリが終われなくなる
-        # （非デーモンのスレッドをインタプリタが最後に join するため）
-        # 入れるのは装置のスレッド、取り出すのはイベントループ、という受け渡しは
-        # `call_soon_threadsafe` で行う。待ち手がループの中にいるので取り消しが効く。
+        # **The queue is an asyncio one. Do not use a thread pool.**
+        # It used to be a `queue.Queue` waited on through `run_in_executor`,
+        # but that wait cannot be cancelled. Every time caption generation was
+        # stopped, one thread was left inside `get()`, and
+        # (1) the next time audio flowed, those leftover threads took one chunk
+        #     each and threw it away
+        # (2) quitting while generation was stopped left the application unable
+        #     to exit (the interpreter joins non-daemon threads at the end)
+        # The device thread puts, the event loop takes, and the hand-off goes
+        # through `call_soon_threadsafe`. The waiter is inside the loop, so
+        # cancellation works.
         self._queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=100)
-        # 装置のコールバックから、どのループへ渡すか。start() で覚える。
+        # Which loop the device callback hands to. Remembered in start().
         self._loop: asyncio.AbstractEventLoop | None = None
         self._stream: sd.InputStream | None = None
         self.dropped = 0
-        # 直近の最大振幅。操作画面のメーターに使う。読んだ側が0に戻す。
-        # **音が来ているかを目で見るためのものである。** デバイスを選び違えても、
-        # 誰かが喋るまで気づけないのでは遅い。
+        # The peak amplitude since the last read. Used by the meter on the
+        # control page. The reader resets it to 0.
+        # **This exists so you can see with your eyes that audio is coming
+        # in.** If you pick the wrong device, noticing only when somebody
+        # speaks is too late.
         self._peak = 0.0
-        # 最後に音らしい音が来た時刻（`time.monotonic`）。**読んでも消さない。**
-        # 無人で回すときの「会議が終わったらしい」の手がかりに使う。
+        # The time when sound that looks like sound last arrived
+        # (`time.monotonic`). **Reading it does not clear it.**
+        # It is the hint for "the meeting seems to be over" in unattended runs.
         self._voice_at = time.monotonic()
 
     def _callback(self, indata, frames, time_info, status) -> None:  # noqa: ANN001
         if status:
-            # オーバーフローは記録だけして続ける。会議中に落とさない。
+            # Record an overflow and carry on. Never crash during a meeting.
             self.dropped += 1
         mono = indata.mean(axis=1) if indata.ndim > 1 else indata
-        # 2サンプルの平均で 24 kHz に落とす
+        # Down-sample to 24 kHz by taking the mean of every two samples
         n = (len(mono) // self.decim) * self.decim
         reduced = mono[:n].reshape(-1, self.decim).mean(axis=1)
         pcm = np.clip(reduced * 32767.0, -32768, 32767).astype(np.int16)
         if reduced.size:
             level = float(np.abs(reduced).max())
             self._peak = max(self._peak, level)
-            # **こちらは消費されない。** `_peak` は操作画面のメーターが読むたびに
-            # 0 に戻すので、他から覗くと値を奪い合う。無音の見張り用に別に持つ。
+            # **This one is not consumed.** `_peak` is reset to 0 every time
+            # the meter on the control page reads it, so anything else that
+            # looks at it would fight over the value. The silence watcher gets
+            # its own field.
             if level > config.VOICE_PEAK:
                 self._voice_at = time.monotonic()
         loop = self._loop
         if loop is None:
-            # start() を通っていない。捨てるしかない。
+            # start() was never called. There is nothing to do but drop it.
             self.dropped += 1
             return
         try:
             loop.call_soon_threadsafe(self._push, pcm.tobytes())
         except RuntimeError:
-            # ループが閉じた後にコールバックが来ることがある。落とさない。
+            # A callback can arrive after the loop is closed. Do not crash.
             self.dropped += 1
 
     def _push(self, chunk: bytes) -> None:
-        """**イベントループのスレッドで動く。** 待ち行列に入れるのはここだけ。
+        """**Runs on the event loop thread.** This is the only place that puts
+        into the queue.
 
-        溜まりすぎたら捨てる。10秒ぶん（100個）で頭打ちにしてある。
-        遅れた音を後から流しても、字幕は会話と噛み合わない。
+        Drop what piles up too far. The cap is 10 seconds' worth (100 items).
+        Playing late audio afterwards only produces captions that no longer
+        match the conversation.
         """
         try:
             self._queue.put_nowait(chunk)
@@ -134,8 +149,9 @@ class Capture:
             self.dropped += 1
 
     def start(self) -> None:
-        # **開くのはイベントループの中からである。** 装置のコールバックが
-        # `call_soon_threadsafe` で渡す先を、ここで覚える。
+        # **Open the device from inside the event loop.** This is where we
+        # remember the loop that the device callback hands to through
+        # `call_soon_threadsafe`.
         try:
             self._loop = asyncio.get_running_loop()
         except RuntimeError as exc:
@@ -158,26 +174,33 @@ class Capture:
             self._stream.stop()
             self._stream.close()
             self._stream = None
-        # 閉じた後に来たコールバックが、古いループへ渡さないようにする。
+        # Keep a callback that arrives after the close from handing to the old
+        # loop.
         self._loop = None
 
     def take_peak(self) -> float:
-        """前に読んでからの最大振幅を返し、0に戻す。**HTTPのスレッドから呼ぶ。**"""
+        """Return the peak amplitude since the last read, and reset it to 0.
+
+        **Called from the HTTP thread.**
+        """
         peak, self._peak = self._peak, 0.0
         return peak
 
     def quiet_for(self) -> float:
-        """最後に音が来てから何秒たったか。
+        """How many seconds since sound last arrived.
 
-        **`take_peak()` と違い、読んでも値を消さない。** 無音の見張りが何度でも呼ぶので、
-        操作画面のメーターから値を奪わないよう、別に持ってある。
+        **Unlike `take_peak()`, reading does not clear the value.** The silence
+        watcher calls this over and over, so it has its own field and does not
+        steal the value from the meter on the control page.
         """
         return max(0.0, time.monotonic() - self._voice_at)
 
     def drain(self) -> int:
-        """溜まっている音声を捨てる。認識に繋ぎ直したときに呼ぶ。
+        """Throw away the audio that has piled up. Called after reconnecting to
+        speech recognition.
 
-        溜め込んで一気に流すと、遅れた字幕が会話と噛み合わなくなる。
+        Holding audio back and then sending it all at once makes the captions
+        late, and they no longer match the conversation.
         """
         n = 0
         while True:
@@ -188,20 +211,23 @@ class Capture:
                 return n
 
     async def chunks(self):
-        """100 ms ぶんの PCM を順に返す。
+        """Yield 100 ms of PCM at a time.
 
-        **待つのはイベントループの中だけである。** 取り消しがそのまま効くので、
-        生成を止めても、デバイスを差し替えても、待ち手は残らない。
+        **The wait happens inside the event loop only.** Cancellation works
+        directly, so no waiter is left behind when generation is stopped or the
+        device is swapped.
         """
         while True:
             yield await self._queue.get()
 
 
 async def check_level(capture, seconds: float = 20.0) -> bool:
-    """音量を表示するだけのモード。音声経路の確認に使う。
+    """A mode that only shows the level. Used to check the audio path.
 
-    APIを一切呼ばないので、鍵も会議も要らない。**実機の試験はここから始めること。**
-    ここで振れなければ、認識も字幕も動かない。切り分けの起点になる。
+    It calls no API at all, so it needs neither a key nor a meeting. **Start
+    testing on real hardware here.** If the meter does not move here, neither
+    speech recognition nor captions will work. This is the starting point when
+    narrowing down a problem.
     """
     capture.start()
     print(f"{seconds:.0f} 秒間、入力の音量を表示する。Zoomで音が鳴っている状態で見ること。")
@@ -241,9 +267,10 @@ async def check_level(capture, seconds: float = 20.0) -> bool:
 
 
 class FileCapture:
-    """WAVファイルを実時間で流す。会議を開かずに全体を試すために使う。
+    """Play a WAV file in real time. Used to test the whole system without
+    opening a meeting.
 
-    ファイルは 24 kHz・16 bit・モノラルであること。ffmpeg で作る:
+    The file must be 24 kHz, 16-bit, mono. Make one with ffmpeg:
         ffmpeg -i in.m4a -ac 1 -ar 24000 -c:a pcm_s16le out.wav
     """
 
@@ -271,10 +298,11 @@ class FileCapture:
         return 0.0
 
     def quiet_for(self) -> float:
-        """ファイル再生は「ずっと音がある」ことにする。
+        """File playback counts as "sound is always present".
 
-        **0 を返さないと、無音の見張りが即座に会議を畳む。** 試験は
-        `--from-file` で回すので、ここを 0.0 にすると試験そのものが成立しない。
+        **If this does not return 0, the silence watcher closes the meeting at
+        once.** Tests run with `--from-file`, so anything other than 0.0 here
+        makes the test itself impossible.
         """
         return 0.0
 
@@ -293,7 +321,7 @@ class FileCapture:
                 await asyncio.sleep(max(0.0, target - _time.perf_counter()))
             if not self.loop_forever:
                 self.finished.set()
-                # 最後の文が確定するまで無音を流し続ける
+                # Keep feeding silence until the last sentence is settled
                 silence = b"\x00" * self.bytes_per_chunk
                 while True:
                     yield silence

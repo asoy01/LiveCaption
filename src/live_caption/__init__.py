@@ -1,1 +1,1 @@
-"""日本語のZoom会議に、リアルタイムの英語字幕を出す。"""
+"""Show real-time English captions on a Japanese-language Zoom meeting."""

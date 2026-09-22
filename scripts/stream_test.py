@@ -1,23 +1,29 @@
 #!/usr/bin/env python3
-"""gpt-live-transcribe に音声を実時間で流し込み、遅延と区切り方を測る。
+"""Feed audio to gpt-live-transcribe in real time, and measure the delay and
+the way it splits the text.
 
-    pixi run python scripts/stream_test.py <24kHz mono wav> [秒数] [delay]
+    pixi run python scripts/stream_test.py <24kHz mono wav> [seconds] [delay]
 
-    例: pixi run python scripts/stream_test.py local/SampleRecordings/_wav24k/mix.wav 180 low
+    Example: pixi run python scripts/stream_test.py local/SampleRecordings/_wav24k/mix.wav 180 low
 
-音声ファイルを、実際の会議と同じ速さ（100 ms ずつ）で送る。したがって
-「秒数」に指定しただけ実時間がかかる。既定は 180 秒。
+It sends the audio file at the speed of a real meeting, 100 ms at a time. So
+it takes as much real time as the number of seconds you ask for. The default
+is 180 seconds.
 
-delay は API の遅延と精度の調整つまみ。minimal / low / medium / high / xhigh。
-公称の初回部分文字列までの時間は 0.70 / 1.19 / 1.39 / 2.09 / 2.91 秒。
+`delay` is the knob for the delay and the accuracy of the API:
+minimal / low / medium / high / xhigh. The stated time to the first partial
+string is 0.70 / 1.19 / 1.39 / 2.09 / 2.91 seconds.
 
-測るもの:
-    1. 発話が止まってから、確定した文字列が返るまでの秒数（これが字幕の遅延）
-    2. 1つの区切りが何文字になるか（Zoom字幕は1回のPOSTを短くしたい）
-    3. 用語（keywords）を渡したときの認識
-    4. 話し続けている間の delta の間隔（`IDLE_FLUSH_SEC` を下げられる下限）
+What it measures:
+    1. The seconds from the end of the speech to the final string (this is the
+       caption delay)
+    2. How many characters one segment holds (one POST to the Zoom captions
+       should be short)
+    3. Recognition when the terms (keywords) are passed in
+    4. The gap between deltas while a person keeps talking (the lower limit
+       for `IDLE_FLUSH_SEC`)
 
-音声は 24 kHz・16 bit・モノラルの WAV であること。ffmpeg で作る:
+The audio must be 24 kHz, 16 bit, mono WAV. Make it with ffmpeg:
     ffmpeg -i in.m4a -ac 1 -ar 24000 -c:a pcm_s16le out.wav
 """
 
@@ -40,7 +46,7 @@ from live_caption import glossary as glossary_mod  # noqa: E402
 
 
 def config_idle() -> float:
-    """いま設定されている無音待ちの秒数。比較のために出す。"""
+    """The silence timeout as it is set now. Printed so you can compare."""
     return config_mod.IDLE_FLUSH_SEC
 
 URL = "wss://api.openai.com/v1/realtime?intent=transcription"
@@ -49,7 +55,8 @@ RATE = 24000
 
 
 def keywords(limit: int = 100) -> list[str]:
-    """認識側に渡す語。本体の用語表を使う（ここに複製しない）。"""
+    """Terms passed to the recognizer. It uses the engine's glossary; do not
+    copy the list here."""
     return glossary_mod.keywords(glossary_mod.load(), limit)
 
 
@@ -88,9 +95,9 @@ async def run(path: Path, seconds: int, delay: str) -> int:
                         "languages": ["ja", "en"],
                         "delay": delay,
                     },
-                    # gpt-live-transcribe は turn detection に対応しない。
-                    # 「Turn detection is not supported for this transcription model」
-                    # モデルが自分の判断で区切りを返す。
+                    # gpt-live-transcribe does not support turn detection:
+                    # "Turn detection is not supported for this transcription
+                    # model". The model decides where to split by itself.
                     "turn_detection": None,
                 }
             },
@@ -98,7 +105,7 @@ async def run(path: Path, seconds: int, delay: str) -> int:
     }
 
     headers = {"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}"}
-    segments: list[tuple[float, float, str]] = []   # (発話終了の音声位置, 遅延, 文字列)
+    segments: list[tuple[float, float, str]] = []   # (audio position where the speech ended, delay, text)
     pending_ends: list[float] = []
     first_delta: list[float] = []
 
@@ -113,13 +120,15 @@ async def run(path: Path, seconds: int, delay: str) -> int:
                     "type": "input_audio_buffer.append",
                     "audio": base64.b64encode(chunk).decode(),
                 }))
-                # 実時間に合わせる。送り終えた分と経過時間の差を待つ。
+                # Keep to real time. Wait for the difference between what has
+                # been sent and the time that has passed.
                 target = t0 + (i + 1) * CHUNK_MS / 1000
                 await asyncio.sleep(max(0.0, target - time.perf_counter()))
 
         debug = bool(os.environ.get("DEBUG"))
         seen: dict[str, int] = {}
-        # gpt-live-transcribe は completed を返さない。delta を item_id ごとに束ねる。
+        # gpt-live-transcribe does not send completed. Group the deltas by
+        # item_id.
         items: dict[str, dict] = {}
         order: list[str] = []
         last_delta_at = [0.0]
@@ -141,8 +150,9 @@ async def run(path: Path, seconds: int, delay: str) -> int:
                         items[item_id] = {"text": "", "first": now, "last": now, "gaps": []}
                         order.append(item_id)
                     else:
-                        # 同じ item の中の間隔＝話し続けている間の間隔。
-                        # item の切れ目をまたぐ間隔は、本当の沈黙を含むので混ぜない。
+                        # A gap inside one item is a gap while the person
+                        # keeps talking. A gap across the break between two
+                        # items holds real silence, so it is left out.
                         items[item_id]["gaps"].append(now - items[item_id]["last"])
                     items[item_id]["text"] += ev.get("delta", "")
                     items[item_id]["last"] = now
@@ -159,14 +169,15 @@ async def run(path: Path, seconds: int, delay: str) -> int:
         audio_done = time.perf_counter() - t0
         print(f"  音声の送信を終えた: {audio_done:.1f}s")
 
-        # 送り終えてから delta が止まるまでが、実時間からの遅れ。
+        # The time from the end of the sending to the last delta is how far
+        # behind real time it runs.
         quiet_since = time.perf_counter()
         while time.perf_counter() - quiet_since < 3.0:
             before = last_delta_at[0]
             await asyncio.sleep(0.25)
             if last_delta_at[0] != before:
                 quiet_since = time.perf_counter()
-        # 最後に commit を送ると completed が来るかを見る
+        # See whether a final commit brings a completed event
         await ws.send(json.dumps({"type": "input_audio_buffer.commit"}))
         await asyncio.sleep(3)
         receiver.cancel()
@@ -193,9 +204,10 @@ async def run(path: Path, seconds: int, delay: str) -> int:
     print(f"1 item の長さ: 最小 {min(lens)}字  中央 {sorted(lens)[len(lens)//2]}字  最大 {max(lens)}字")
     print()
 
-    # **IDLE_FLUSH_SEC を下げられる下限は、ここで決まる。**
-    # 無音タイマーは「delta が来なくなってから」を測っている。話し続けている
-    # 最中の間隔より短くすると、まだ喋っている途中で文を確定させてしまう。
+    # **This is what sets the lower limit for IDLE_FLUSH_SEC.**
+    # The silence timer measures the time since the last delta. Set it shorter
+    # than the gaps that occur while a person keeps talking, and it finishes a
+    # sentence while they are still speaking.
     gaps = sorted(g for i in order for g in items[i]["gaps"])
     if gaps:
         def pct(p: float) -> float:
@@ -207,8 +219,9 @@ async def run(path: Path, seconds: int, delay: str) -> int:
             f"  p99 {pct(0.99):.2f}s  最大 {gaps[-1]:.2f}s"
         )
         print()
-        # 閾値を動かしたときに、無音での確定が何回起きるか。
-        # **下げた分がそのまま「途中で切る」回数になる。**
+        # How often a sentence is finished on silence for each threshold.
+        # **Whatever you take off the threshold becomes that many more cuts in
+        # the middle of a sentence.**
         minutes = max(audio_done, 1.0) / 60.0
         print("  閾値ごとの、無音で確定させる回数:")
         print("    閾値     件数   1分あたり")
@@ -232,8 +245,9 @@ async def run(path: Path, seconds: int, delay: str) -> int:
 
 
 def main() -> int:
-    # **本体の load_env を使う。** 自前で持つと、.env による閾値の差し替えが
-    # ここだけ効かず、表示する IDLE_FLUSH_SEC が実際と食い違う。
+    # **Use the engine's load_env.** With a copy of its own, a threshold
+    # replaced through .env would not take effect here, and the IDLE_FLUSH_SEC
+    # it prints would differ from the real one.
     config_mod.load_env()
     if not os.environ.get("OPENAI_API_KEY"):
         print("OPENAI_API_KEY が無い。")

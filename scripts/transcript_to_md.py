@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""会議の記録（`.jsonl`）から、読める形（`.md`）を作り直す。
+"""Rebuild the readable form (`.md`) from a meeting record (`.jsonl`).
 
-本体は終了時に `.md` を書く。**電源ごと落ちたときは書かれない。** そのときに使う。
-`.jsonl` は1文ごとに書いて流してあるので、落ちる直前までが残っている。
+The engine writes the `.md` when it ends. **It does not when the power goes
+out.** That is when you use this. The `.jsonl` is written and flushed one
+sentence at a time, so everything up to the moment it died is still there.
 
-    pixi run python scripts/transcript_to_md.py                       # いちばん新しいものを直す
+    pixi run python scripts/transcript_to_md.py                       # fix the newest one
     pixi run python scripts/transcript_to_md.py local/transcripts/live-caption_2026-09-08_143012.jsonl
-    pixi run python scripts/transcript_to_md.py --all                 # .md が無いものを全部
+    pixi run python scripts/transcript_to_md.py --all                 # every one that has no .md
 
-書式は本体（`src/live_caption/transcript.py` の `render()`）を呼んで作る。
-**複製しないこと。** 一度やって内容がずれた（local/HANDOFF.md 参照）。
+The format is produced by calling the engine (`render()` in
+`src/live_caption/transcript.py`). **Do not copy it.** That was done once, and
+the two drifted apart.
 """
 
 from __future__ import annotations
@@ -50,8 +52,8 @@ def main() -> int:
     if args.path:
         targets = [Path(args.path)]
     else:
-        # **接頭辞で絞る。** 置き場は変えられるので、無関係な .jsonl が
-        # 同じフォルダにあることがある。
+        # **Filter on the prefix.** The place where records are kept can be
+        # changed, so unrelated .jsonl files may sit in the same folder.
         found = sorted(Path(args.dir).glob(f"{config.TRANSCRIPT_PREFIX}*.jsonl"))
         if not found:
             print(f"記録が無い: {args.dir}")

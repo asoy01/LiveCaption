@@ -1,14 +1,18 @@
-"""音声認識。gpt-live-transcribe に WebSocket で流し込む。
+"""Speech recognition. Streams into gpt-live-transcribe over a WebSocket.
 
-このモデルの性質（local/HANDOFF.md の「実測結果: ストリーミング」）:
+What this model does, measured on real meeting audio:
 
-- **turn detection に対応しない。** 指定すると拒否される。`turn_detection: null` にする。
-- **`completed` を返さない。`delta` を連続で流すだけ。** 文の切り出しは segmenter が行う。
-- `keywords` は日本語でも機能する。用語表を渡す。
-- `delay` は `low`。`minimal` と `high` はどちらも用語を外した。
+- **It does not support turn detection.** Setting it is rejected. Use
+  `turn_detection: null`.
+- **It never returns `completed`. It only streams `delta` continuously.**
+  Sentence splitting is done by segmenter.
+- `keywords` works for Japanese too. We pass the term list.
+- `delay` is `low`. Both `minimal` and `high` missed the terms.
 
-回線は切れる前提で書く。切れたら繋ぎ直し、溜まった音声は捨てて現在から再開する。
-溜め込んで一気に流すと、遅れた字幕が会話と噛み合わなくなる。
+Write the code assuming the connection will drop. When it drops, reconnect,
+throw away the audio that piled up, and resume from the present. Holding audio
+back and sending it all at once makes the captions late, and they no longer
+match the conversation.
 """
 
 from __future__ import annotations
@@ -51,7 +55,7 @@ class Asr:
                             "languages": list(self.languages),
                             "delay": self.delay,
                         },
-                        # このモデルは turn detection に対応しない。
+                        # This model does not support turn detection.
                         "turn_detection": None,
                     }
                 },
@@ -62,15 +66,16 @@ class Asr:
         self._stop.set()
 
     def resume(self) -> None:
-        """停止した後にもう一度使えるようにする。
+        """Make this usable again after a stop.
 
-        操作画面から字幕の生成を止めて、また開始したときに呼ぶ。
-        `stop()` を立てたままだと、接続してもすぐ抜けてしまう。
+        Called when caption generation is stopped from the control page and
+        then started again. While the `stop()` flag stays set, the loop leaves
+        right after connecting.
         """
         self._stop.clear()
 
     async def run(self, capture, on_delta: Callable[[str], None]) -> None:
-        """接続が切れても繋ぎ直しながら回り続ける。"""
+        """Keep running, reconnecting whenever the connection drops."""
         headers = {"Authorization": f"Bearer {config.openai_key()}"}
         backoff = 1.0
 
@@ -80,7 +85,8 @@ class Asr:
                     config.ASR_URL, additional_headers=headers, max_size=None
                 ) as ws:
                     await ws.send(self._session())
-                    # 切断中に溜まった音声は捨てる。現在から再開する。
+                    # Throw away the audio that piled up while disconnected.
+                    # Resume from the present.
                     capture.drain()
                     backoff = 1.0
                     print("  [文字起こし] 接続した")
@@ -92,7 +98,7 @@ class Asr:
                         sender.cancel()
             except asyncio.CancelledError:
                 raise
-            except Exception as e:  # noqa: BLE001 - 会議中に落とさない
+            except Exception as e:  # noqa: BLE001 - never crash in a meeting
                 if self._stop.is_set():
                     break
                 self.reconnects += 1

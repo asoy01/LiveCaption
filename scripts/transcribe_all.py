@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
-"""同じ音声を複数の音声認識に通して、書き起こしを保存する。
+"""Run the same audio through several speech recognizers and save the
+transcripts.
 
-    pixi run python scripts/transcribe_all.py <16k mono wav> [OpenAI用の小さいファイル]
+    pixi run python scripts/transcribe_all.py <16k mono wav> [smaller file for OpenAI]
 
-第2引数を省くと、OpenAI にも第1引数を送る。OpenAI の文字起こしAPIは
-**1ファイル25 MBまで**なので、長い音声では元の m4a を第2引数に渡すこと。
+Leave out the second argument and the first one goes to OpenAI too. The
+OpenAI transcription API takes **at most 25 MB per file**, so for long audio
+pass the original m4a as the second argument.
 
-走らせるもの:
-    1. Deepgram nova-3  language=multi   本命候補
-    2. Deepgram whisper-large            ローカル構成(whisper.cpp)の品質の代理
-    3. OpenAI gpt-transcribe             プロンプトなし
-    4. OpenAI gpt-transcribe             用語プロンプトあり
+What it runs:
+    1. Deepgram nova-3  language=multi   the main candidate
+    2. Deepgram whisper-large            a stand-in for the quality of a local
+                                         setup (whisper.cpp)
+    3. OpenAI gpt-transcribe             without a prompt
+    4. OpenAI gpt-transcribe             with a prompt of terms
 
-language は ja に固定しない。KAGRAの朝礼は前半が英語、後半が日本語で、
-1つの会議の中で切り替わるため。
+The language is not pinned to ja. The morning meeting used here is in English
+in the first half and in Japanese in the second, so it switches inside one
+meeting.
 
-結果は local/compare/<音声名>.<部品名>.txt に保存する。
+The results are saved to local/compare/<audio name>.<part name>.txt.
 """
 
 import json
@@ -48,13 +52,14 @@ def load_env() -> None:
             continue
         key, _, value = line.partition("=")
         key, value = key.strip(), value.strip().strip('"').strip("'")
-        # .env の値を優先する。環境変数に同じ名前があっても上書きする。
+        # .env wins. It overwrites an environment variable of the same name.
         if value:
             os.environ[key] = value
 
 
 def glossary_terms() -> list[str]:
-    """OpenAI の prompt に渡す語。本体の用語表を使う（ここに複製しない）。"""
+    """Terms for the OpenAI prompt. It uses the engine's glossary; do not copy
+    the list here."""
     return [e.ja for e in glossary_mod.load()]
 
 
@@ -80,7 +85,8 @@ def deepgram(audio: bytes, params: list[tuple[str, str]], mime: str) -> str:
 
 
 def multipart(fields: dict[str, str], filename: str, content: bytes) -> tuple[bytes, str]:
-    """multipart/form-data の本体を組み立てる。標準ライブラリだけで済ませるため。"""
+    """Build a multipart/form-data body, so that the standard library is
+    enough."""
     boundary = uuid.uuid4().hex
     sep = f"--{boundary}".encode()
     chunks = []
@@ -159,8 +165,10 @@ def main() -> int:
             [("model", "nova-3"), ("language", "multi"),
              ("punctuate", "true"), ("smart_format", "true")],
             "audio/wav")),
-        # language を省くと Whisper は勝手に英訳して返す（task=translate になる）。
-        # その英訳は品質が低く、用語表も通らないので使えない。必ず language を指定する。
+        # Leave out language and Whisper translates into English on its own
+        # (it becomes task=translate). That translation is poor and the
+        # glossary does not reach it, so it cannot be used. Always give
+        # language.
         ("deepgram-whisper-large", lambda: deepgram(
             audio,
             [("model", "whisper-large"), ("language", "ja"), ("punctuate", "true")],
@@ -191,7 +199,7 @@ def main() -> int:
             print(f"HTTP {e.code}")
             print(f"   {detail}")
             continue
-        except Exception as e:  # noqa: BLE001 - 1つ失敗しても残りは回す
+        except Exception as e:  # noqa: BLE001 - one failure must not stop the rest
             print(f"失敗: {type(e).__name__}: {e}")
             continue
         dt = time.perf_counter() - t0

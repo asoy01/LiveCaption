@@ -1,32 +1,35 @@
 <#
-    LiveCaption を、ログオン時に自動で起動させる。
+    Make LiveCaption start automatically at logon.
 
-    タスクスケジューラに「LiveCaption」という名前のタスクを作る。
-    起動するのは StartLiveCaptionTray.vbs で、窓は1つも出ない。
-    状態はタスクトレイのアイコンで分かる。
+    It creates a task named "LiveCaption" in Task Scheduler. What it starts is
+    StartLiveCaptionTray.vbs, and no window opens at all. The task tray icon
+    shows you the state.
 
         powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install_autostart.ps1
         powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -Remove
 
-    管理者権限は要らない。作るのは、このユーザーのタスク1つだけである。
+    No administrator rights are needed. It creates one task, for this user
+    only.
 
-    **「ユーザーがログオンしているかどうかにかかわらず実行する」は選ばない。**
-    それを選ぶとセッション0で走る。セッション0にはデスクトップが無いので、
-    Zoomの画面が出ず、音も繋がらない。VB-CABLE の経路もセッションごとである。
-    だからこのタスクは「ログオン時」かつ「ユーザーがログオンしているときのみ」にする。
+    **Do not choose "Run whether user is logged on or not".** That runs the
+    task in session 0. Session 0 has no desktop, so the Zoom window does not
+    appear and the audio does not connect. The VB-CABLE path is also per
+    session. So this task is "At log on" and "Run only when user is logged on".
 
-    **機体はログオンしたままにしておくこと。** 画面がロックされているのは構わない。
-    ログオフすると、このタスクは動けない。再起動のあとは、誰かがログオンするまで
-    字幕アプリは上がらない（自動ログオンにするかどうかは運用の判断である）。
+    **Leave the machine logged on.** A locked screen is fine. If you log off,
+    this task cannot run. After a reboot, the caption program does not come up
+    until somebody logs on (whether to turn on automatic logon is a decision
+    for whoever runs the machine).
 
-    リポジトリを移動・改名したら、もう一度実行すること。パスを絶対で覚えている。
+    Run it again after you move or rename the repository. It remembers an
+    absolute path.
 #>
 
 [CmdletBinding()]
 param(
-    # タスクを消す。
+    # Delete the task.
     [switch]$Remove,
-    # タスクの名前。既定は LiveCaption。
+    # The name of the task. The default is LiveCaption.
     [string]$TaskName = 'LiveCaption'
 )
 
@@ -53,14 +56,14 @@ if (-not (Test-Path -LiteralPath $target)) {
     throw "起動するファイルが無い: $target"
 }
 
-# wscript.exe に .vbs を渡す。//B で、途中のダイアログも出さない。
+# Hand the .vbs to wscript.exe. //B also keeps dialogs from appearing.
 $action = New-ScheduledTaskAction -Execute 'wscript.exe' `
     -Argument "//B `"$target`"" -WorkingDirectory $repo
 
-# **ログオン時。** セッション0を避けるため、これ以外は選ばない。
+# **At log on.** Nothing else, so that session 0 is avoided.
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 
-# 対話するユーザーとして走らせる（デスクトップが要る）。
+# Run it as the interactive user (it needs a desktop).
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME `
     -LogonType Interactive -RunLevel Limited
 
@@ -73,8 +76,9 @@ $settings = New-ScheduledTaskSettingsSet `
     -RestartInterval (New-TimeSpan -Minutes 1) `
     -StartWhenAvailable
 
-# **Tailscale を待たない。** アプリ側が、tailnet のアドレスを取れるまで
-# 背景で試し直す。ここで待たせると、字幕アプリの起動そのものが遅れる。
+# **Do not wait for Tailscale.** The program retries in the background until
+# it gets the tailnet address. Waiting here would only delay the start of the
+# caption program itself.
 $trigger.Delay = 'PT20S'
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `

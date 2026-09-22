@@ -1,6 +1,7 @@
-"""設定。実測で決まった値は既定値として埋め込んである。
+"""Settings. Values that came from measurements are built in as defaults.
 
-根拠は local/HANDOFF.md の「実測結果」にある。値を変えるときは、そこも読むこと。
+The comment above each value says why it is what it is. Read that comment
+before you change the value.
 """
 
 from __future__ import annotations
@@ -13,146 +14,179 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
-# --- 音声 -------------------------------------------------------------------
-# gpt-live-transcribe は 24 kHz・16 bit・モノラルの PCM を要求する。
+# --- Audio -------------------------------------------------------------------
+# gpt-live-transcribe needs 24 kHz, 16 bit, mono PCM.
 ASR_RATE = 24_000
-# 送る単位。100 ms が推奨。短くすると通信の回数が増え、長くすると遅延が増える。
+# How much audio we send at a time. 100 ms is the recommended value. A shorter
+# chunk means more network round trips; a longer one means more delay.
 CHUNK_MS = 100
-# 取り込みは装置の実レートで行い、こちらで 24 kHz に落とす。
-# VB-CABLE は Windows のサウンド設定で 48 kHz にしてある（2:1 で間引ける）。
+# Capture at the device's own rate and downsample to 24 kHz here.
+# VB-CABLE is set to 48 kHz in the Windows sound settings (so we can drop
+# every other sample, 2:1).
 CAPTURE_RATE = 48_000
-# 「音が来ている」と見なす振幅。無音の見張りと `--check-audio` が同じ値を使う。
-# **実測に基づく。** 無音は 0.003〜0.008、話し声は 0.698 まで振れた
-# （local/HANDOFF.md「実測結果」）。
+# The amplitude we treat as "sound is arriving". The silence watchdog and
+# `--check-audio` use the same value.
+# **This comes from measurement.** Silence stayed between 0.003 and 0.008,
+# and speech reached 0.698.
 VOICE_PEAK = 0.01
 
-# --- 音声認識 ---------------------------------------------------------------
+# --- Speech recognition ------------------------------------------------------
 ASR_URL = "wss://api.openai.com/v1/realtime?intent=transcription"
 ASR_MODEL = "gpt-live-transcribe"
-# minimal と high はどちらも用語を外した。low が最良（HANDOFF 参照）。
+# Both minimal and high missed glossary terms. low was the best on real
+# meeting audio.
 ASR_DELAY = "low"
-# 会議の途中で言語が変わることがある。言語を固定してはいけない。
+# The language can change in the middle of a meeting. Do not fix it.
 ASR_LANGUAGES = ("ja", "en")
 
-# 会議の分野。**文字起こしと翻訳の両方のプロンプトに入る。**
+# The field the meeting is about. **This goes into both the transcription
+# prompt and the translation prompt.**
 #
-# 既定は分野を限定しない文面である。**自分の会議の分野を書くと、専門用語の
-# 精度が上がる。** `.env` に1行書く:
+# The default text names no field. **Writing the field of your own meeting
+# makes technical terms more accurate.** Put one line in `.env`:
 #
-#   LIVECAPTION_MEETING_CONTEXT=重力波望遠鏡の定例会議。干渉計の光学と制御、防振系、真空、低温の話題。
+#   LIVECAPTION_MEETING_CONTEXT=Weekly meeting on optics and control systems.
 #
-# 用語対訳表とは役割が違う。表は個々の語の対訳を与えるもので、こちらは
-# 「どの分野の語として解釈するか」をモデルに伝えるものである。
+# This has a different job from the glossary. The glossary gives the
+# translation of each single term. This tells the model which field to read
+# the words as.
 MEETING_CONTEXT_ENV = "LIVECAPTION_MEETING_CONTEXT"
 MEETING_CONTEXT_DEFAULT = "技術的な内容の定例会議。"
 
 
 def meeting_context() -> str:
-    """会議の分野。`.env` で差し替えられる。
+    """The field the meeting is about. `.env` can replace it.
 
-    **起動のたびに読む。** 定数にすると、`load_env()` より先に評価されて
-    `.env` の値が効かない。
+    **Read it on every start.** As a constant it would be evaluated before
+    `load_env()`, and the value in `.env` would have no effect.
     """
     return os.environ.get(MEETING_CONTEXT_ENV, "").strip() or MEETING_CONTEXT_DEFAULT
 
 
 def asr_prompt() -> str:
-    """文字起こしに渡すプロンプト。"""
+    """The prompt we pass to transcription."""
     return f"{meeting_context()}日本語と英語が混ざる。"
-# keywords に渡せる語数の上限。
+
+
+# The largest number of words we can pass in keywords.
 #
-# **用語表の全語が入る値にしておくこと。** `keywords()` は日本語と英語の両方を
-# 渡すので、候補の数は用語表の語数の約2倍になる。100 にしていたとき、表の末尾
-# 27語（PRCL・SRCL・ITM・s偏光など）が認識に届いていなかった（2026-09-07）。
-# 翻訳の段には全語が入るので復元は効くが、認識の段では効かない。
+# **Keep this large enough to hold every term in the glossary.** `keywords()`
+# passes both the Japanese and the English side, so the number of candidates
+# is about twice the number of glossary entries. When this was 100, the last
+# 27 terms in the glossary never reached speech recognition (2026-09-07).
+# The translation stage still gets every term, so it can recover them, but
+# the recognition stage cannot.
 #
-# OpenAI の keywords に明示された上限は見当たらない。語数を増やしたときの
-# 効きは未検証である（local/HANDOFF.md「次にやること」）。
-# 切り捨てが起きたときは起動時の画面に警告が出る（app.py）。
+# OpenAI does not document a limit for keywords. We have not tested what
+# happens when the number of words goes up.
+# When words are cut, the startup screen prints a warning (app.py).
 ASR_KEYWORD_LIMIT = 200
 
-# --- 翻訳 -------------------------------------------------------------------
-# nano は速度が変わらず品質だけ落ちた。推論モデルは遅すぎて論外（HANDOFF 参照）。
+# --- Translation -------------------------------------------------------------
+# nano was no faster and only lowered the quality. Reasoning models were far
+# too slow to use. Both were measured on real meeting audio.
 TRANSLATE_MODEL = "gpt-4.1-mini"
 TRANSLATE_URL = "https://api.openai.com/v1/chat/completions"
-# 1文だけ切り出して訳すと指示語が壊れる。直前の文を参考として渡す。
+# Translating a single sentence on its own breaks words like "it" and "that".
+# We pass the sentences just before it as context.
 CONTEXT_SENTENCES = 3
 
-# --- 字幕の切り出しと送信 ---------------------------------------------------
-# Zoomの字幕オーバーレイは既定フォントで1行およそ80文字。
-# **これは英語を出すときの値である。** 日本語は全角で幅が倍あるので、
-# 向きを `en2ja` にすると 40 に差し替わる（下の「字幕の向き」）。
+# --- Caption segmentation and sending ----------------------------------------
+# The Zoom caption overlay fits about 80 characters per line in its default
+# font.
+# **This is the value for putting out English.** Japanese characters are
+# twice as wide, so direction `en2ja` replaces this with 40 (see "Caption
+# direction" below).
 MAX_CAPTION_CHARS = 80
-# 句点が来ないまま伸び続けたときに、強制的に切る長さ。
+# The length at which we cut by force, when the text keeps growing and no
+# sentence-ending mark arrives.
 #
-# **短くすること。** 話者は「、」で繋いで長く話す。120文字にしていたら、
-# 1文が字幕4〜5行になり、送った瞬間に先頭が窓から押し出された。
-# 70文字なら、おおむね2行に収まる。
+# **Keep this short.** Speakers talk for a long time, joining clauses with
+# commas. At 120 characters, one sentence became 4 or 5 caption lines, and
+# the first line was pushed out of the window the moment we sent it.
+# At 70 characters it fits in about 2 lines.
 #
-# **これは日本語を聞くときの値である。** 英語は同じ内容を話すのに字数が倍要るので、
-# 向きを `en2ja` にすると 140 に差し替わる。ただし `.env` や操作画面で明示した値は
-# 残る（下の「字幕の向き」と `apply_direction()`）。
+# **This is the value for listening to Japanese.** English needs about twice
+# as many characters to say the same thing, so direction `en2ja` replaces
+# this with 140. A value set explicitly in `.env` or on the control page is
+# kept (see "Caption direction" below and `apply_direction()`).
 FORCE_CUT_CHARS = 70
-# 発話が途切れてから、句点が無くても確定させるまでの秒数。
+# How many seconds after the speaker stops we finalize the sentence, even
+# with no sentence-ending mark.
 IDLE_FLUSH_SEC = 2.5
-# 上のタイマーが切れたかどうかを見にいく間隔。
+# How often we check whether the timer above has expired.
 #
-# **細かくすること。** 0.5秒にしていたら、満了の検出が0.5秒刻みになり、
-# 平均0.25秒・最悪0.5秒がそのまま字幕の遅れになっていた。0.1秒ごとに起きる
-# コルーチンの費用は無視できる。
+# **Keep this fine-grained.** At 0.5 seconds, we only noticed the timer in
+# 0.5 second steps, and that added 0.25 seconds on average and 0.5 seconds
+# at worst to the caption delay. A coroutine that wakes up every 0.1 seconds
+# costs nothing worth counting.
 IDLE_POLL_SEC = 0.1
-# 無音が続いたときに、確定を待たずに翻訳を先に投げるまでの秒数。0 で止める。
+# How many seconds of silence before we send the translation ahead of time,
+# without waiting for the sentence to be final. 0 turns this off.
 #
-# **無音待ちを速くする手は、これしか残っていない。** `IDLE_FLUSH_SEC` は
-# 下げられない（delta 間隔の p99 が 2.57秒 で、閾値 2.5秒 より上だった）。
-# そこで、待っている 2.5秒 の間に訳しておき、確定した時点で出す。
-# **切る危険は増えない。安全余裕はそのままである。**
+# **This is the only way left to make the silence wait faster.**
+# `IDLE_FLUSH_SEC` cannot go lower: the p99 of the gap between deltas was
+# 2.57 seconds, above the 2.5 second threshold. So we translate during the
+# 2.5 seconds we are waiting, and put the caption out the moment the
+# sentence becomes final.
+# **This does not add any risk of cutting a sentence. The safety margin
+# stays the same.**
 #
-# 値は「翻訳が確定に間に合う、いちばん遅い時刻」にする。早く投げるほど、
-# 話が再開したときの投げ捨てが増えるだけで、得るものは無い。
-#   IDLE_FLUSH_SEC 2.5 − 翻訳の中央値 0.9 − 余裕 0.2 = 1.4
+# Set this to the latest moment at which the translation still finishes
+# before the sentence is final. Sending earlier only throws away more work
+# when the speaker starts again, and gains nothing.
+#   IDLE_FLUSH_SEC 2.5 - median translation 0.9 - margin 0.2 = 1.4
 SPECULATE_AFTER_SEC = 1.4
-# 同じ翻訳から複数行が出たときに、1行ずつ空ける間隔。
-# まとめて送ると読み手が追えない。窓は最小4行しかない。
+# When one translation produces several lines, how long we wait between them.
+# Sending them all at once is too fast to read. The window holds only 4 lines
+# at its smallest.
 LINE_INTERVAL_SEC = 0.6
-# 会議開始時に流す捨て字幕。最初の数個は受信側に届かない（HANDOFF 参照）。
-# **向きが `en2ja` のときは日本語の3行に差し替わる。**
+# Throwaway captions we send when the meeting starts. The first few never
+# reach the receiving side; this was measured on real meetings.
+# **With direction `en2ja`, these are replaced by three Japanese lines.**
 WARMUP_CAPTIONS = (
     "Live captions are starting.",
     "Please widen the caption area to see more lines.",
     "---",
 )
 
-# --- Zoom字幕API ------------------------------------------------------------
-# **これは英語を出すときの値である。** 向きが `en2ja` なら `ja-JP` に差し替わる。
+# --- Zoom caption API --------------------------------------------------------
+# **This is the value for putting out English.** With direction `en2ja` it is
+# replaced by `ja-JP`.
 CAPTION_LANG = "en-US"
 CAPTION_TIMEOUT = 10.0
-# seq はミーティングのセッション全体で単調増加していないといけない。
-# 巻き戻すと Zoom はエラーを返さずに黙って捨てる。会議IDごとに保存する。
+# seq has to grow monotonically across the whole meeting session.
+# If it goes backwards, Zoom returns no error and silently drops the caption.
+# We save it per meeting ID.
 SEQ_STATE_PATH = PROJECT_ROOT / "local" / "seq_state.json"
-# 状態を失ったときの保険。飛ばして送るのは可（実測済み）。
-# 送信レートの実測は 3.5 回/秒なので、係数はそれより大きく取る。
+# A fallback for when we lose the saved state. Skipping numbers is allowed;
+# we measured this. The measured send rate is 3.5 per second, so the factor
+# is set above that.
 SEQ_TIME_SCALE = 10
-SEQ_EPOCH = 1_767_225_600  # 2026-01-01 UTC。32bit に収めるための基準。
+SEQ_EPOCH = 1_767_225_600  # 2026-01-01 UTC. A base that keeps seq in 32 bits.
 
-# --- 字幕の向き -------------------------------------------------------------
-# **会議ごとに1つ選ぶ。** 日本語の会議には英語字幕、英語の会議には日本語字幕。
-# 逆の言語が混ざったときは訳さずにそのまま出す。プロンプトが両方を扱う。
+# --- Caption direction -------------------------------------------------------
+# **Pick one for each meeting.** English captions for a Japanese meeting,
+# Japanese captions for an English meeting. When the other language appears,
+# we put it out as it is, without translating. The prompt handles both.
 #
-# 向きが決めるのは、翻訳のプロンプトと、下の4つだけである。
-# **認識には手を触れない。** `keywords` は用語表の日本語と英語の両方を常に渡すので
-# （`glossary.keywords()`）、向きを変えても同じ語が同じ並びで行く。
-# だから切り替えに WebSocket の張り直しが要らない。用語集の選び直しとはここが違う。
+# The direction decides the translation prompt and the four values below,
+# and nothing else.
+# **It does not touch speech recognition.** `keywords` always passes both the
+# Japanese and the English side of the glossary (`glossary.keywords()`), so
+# changing the direction sends the same words in the same order.
+# That is why switching does not need a new WebSocket. This is where it
+# differs from choosing a different glossary.
 
 
 @dataclass(frozen=True)
 class Direction:
     name: str
-    label: str                # 操作画面に出す名前
-    caption_lang: str         # Zoom字幕APIの lang
-    max_caption_chars: int    # 1行の文字数
-    force_cut_chars: int      # 文末記号が来ないまま伸びたときに切る長さ
-    warmup: tuple[str, ...]   # 流し始めの捨て字幕
+    label: str                # the name shown on the control page
+    caption_lang: str         # the lang of the Zoom caption API
+    max_caption_chars: int    # characters per line
+    force_cut_chars: int      # length at which we cut when no ending mark comes
+    warmup: tuple[str, ...]   # throwaway captions sent at the start
 
 
 DIRECTIONS: dict[str, Direction] = {
@@ -168,9 +202,11 @@ DIRECTIONS: dict[str, Direction] = {
         name="en2ja",
         label="英語 → 日本語",
         caption_lang="ja-JP",
-        # 日本語は全角で幅が倍あるので、同じ窓に入る文字数は半分になる。
+        # Japanese characters are twice as wide, so half as many fit in the
+        # same window.
         max_caption_chars=40,
-        # 英語は同じ内容を話すのに字数が倍要る。70 のままだと文が細切れになる。
+        # English needs about twice as many characters to say the same thing.
+        # At 70 the sentences would be chopped into fragments.
         force_cut_chars=140,
         warmup=(
             "字幕を開始します。",
@@ -179,107 +215,141 @@ DIRECTIONS: dict[str, Direction] = {
         ),
     ),
 }
-# --- 操作画面の言語 ---------------------------------------------------------
-# **閲覧画面は対象外。** あちらは元から英語で、参加者が見るものである。
-# 訳表は `i18n.py` にある。選択は覚えて、次の起動も同じ言語で始める。
+# --- Control page language ---------------------------------------------------
+# **The viewer page is not covered here.** That page is in English from the
+# start, and participants are the ones who read it.
+# The translation tables are in `i18n.py`. We remember the choice, so the
+# next start uses the same language.
 UI_LANG = "ja"
 UI_LANG_STATE_PATH = PROJECT_ROOT / "local" / "ui_lang_state.json"
 
 DIRECTION_DEFAULT = "ja2en"
-# いま選ばれている向き。`apply_direction()` が書き換える。
+# The direction chosen right now. `apply_direction()` rewrites it.
 DIRECTION = DIRECTION_DEFAULT
-# 前回の選択。操作画面で選び直すたびに書く。次の起動もこれで始まる。
+# The last choice. We write it every time the control page changes it.
+# The next start begins with this value.
 DIRECTION_STATE_PATH = PROJECT_ROOT / "local" / "direction_state.json"
 
-# --- ブラウザ字幕 -----------------------------------------------------------
-# Zoom字幕APIはホスト権限（トークンのコピー）が要る。自分がホストでない会議では
-# 使えないので、ブラウザに出す道も用意してある（web.py）。見せ方は2つある。
-# 画面共有するか、参加者に閲覧URLを配るか。
+# --- Browser captions --------------------------------------------------------
+# The Zoom caption API needs host rights (to copy the token). It cannot be
+# used in a meeting you do not host, so there is also a way to put captions
+# in a browser (web.py). There are two ways to show them: share your screen,
+# or hand the viewer URL to the participants.
 #
-# **画面を2つに分けてある。ポートも分けてある。**
-#   閲覧（WEB_PORT）   字幕を見るだけ。ここだけが外に出る
-#   操作（CONTROL_PORT）トークン・送信の開始停止・終了・トンネル・記録。127.0.0.1 のみ
+# **There are two separate pages, on two separate ports.**
+#   viewer (WEB_PORT)    only shows captions. This is the only one that
+#                        leaves the machine
+#   control (CONTROL_PORT) token, start and stop of sending, shutdown,
+#                        tunnel, records. 127.0.0.1 only
 #
-# パスで分けないのは、トンネルもリバースプロキシもオリジンごと通すためである。
-# 経路の書き間違い1つで、URLを知った人が字幕アプリを止められるようになる。
+# We do not separate them by path, because both tunnels and reverse proxies
+# forward a whole origin. One typo in a path, and anyone who learns the URL
+# can stop the caption app.
 WEB_PORT = 8080
 CONTROL_PORT = 8081
-# **操作画面の https の出口**（`tailscale serve`。tailnet の中だけ）。
-# 秘匿が増えるわけではない（tailnet は既に WireGuard で暗号化されている）。
-# 効くのは、ブラウザが secure context と認めることである。`navigator.clipboard`
-# が使えるようになり、URLのコピーボタンが古いやり方に落ちなくて済む。
+# **The https exit for the control page** (`tailscale serve`, inside the
+# tailnet only).
+# This does not add secrecy; the tailnet is already encrypted by WireGuard.
+# What it does is make the browser treat the page as a secure context.
+# `navigator.clipboard` then works, and the button that copies the URL does
+# not have to fall back to the old method.
 #
-# **`allowed_origins()` にこの出口を入れること。** 入れないと、画面は開くのに
-# `Origin` が合わず、**ボタンが全部 403 になる**（2026-09-19 に同じ形で踏んだ）。
+# **Add this exit to `allowed_origins()`.** Without it, the page opens but
+# the `Origin` does not match, and **every button returns 403** (we hit this
+# exact problem on 2026-09-19).
 CONTROL_HTTPS_PORT = 8443
-# 閲覧を待ち受けるアドレス。既定は自分の機体からだけ。
-# トンネルを使うときは cloudflared が 127.0.0.1 に繋ぐので、ここは既定のままでよい。
-# 同じLANの端末から直接見せたいときだけ 0.0.0.0 にする（--web-bind）。
-# **操作画面はこの設定の影響を受けない。常に 127.0.0.1 である。**
+# The address the viewer listens on. By default, this machine only.
+# When you use a tunnel, cloudflared connects to 127.0.0.1, so the default
+# is fine. Set it to 0.0.0.0 (--web-bind) only when you want to show the
+# page directly to another machine on the same LAN.
+# **This setting does not affect the control page. That is always 127.0.0.1.**
 WEB_BIND = "127.0.0.1"
-# 書きかけの文字起こしを閲覧画面へ渡す間隔。
+# How often we hand the unfinished transcript to the viewer page.
 #
-# **文が確定するまでの数秒、画面には何も出ない。** そこを埋めるために、確定を待たずに
-# 途中の文字を流す。delta は中央値 0.01秒 の間隔で来るので、そのまま毎回渡すと
-# 長ポーリングが回りっぱなしになる。ここで間引く。
+# **For the few seconds until a sentence is final, the page shows nothing.**
+# To fill that gap, we send the partial text without waiting for the
+# sentence to be final. Deltas arrive with a median gap of 0.01 seconds, so
+# passing every one of them would keep the long poll running without a
+# break. We thin them out here.
 #
-# **Zoom字幕と翻訳には流さない。** どちらも出した行を置き換えられない。
+# **We do not send partial text to the Zoom captions or to translation.**
+# Neither one can replace a line it has already put out.
 WEB_PARTIAL = True
 PARTIAL_INTERVAL_SEC = 0.2
-# 画面に見せる行数。Zoomの窓は最小4行だが、こちらは自分で決められる。
-# 画面共有では圧縮で小さい字が潰れるので、行数を欲張らず大きく出す。
+# How many lines the page shows. The Zoom window holds only 4 at its
+# smallest, but here we decide for ourselves.
+# In a shared screen, compression destroys small letters, so we do not ask
+# for many lines and we show them large.
 WEB_LINES = 8
-# 閲覧URLに入れる、推測できない経路の長さ（バイト）。
-# 一時トンネルのホスト名もランダムだが、経路にも入れておく。
+# The length, in bytes, of the unguessable path in the viewer URL.
+# The host name of a temporary tunnel is random too, but we put a secret in
+# the path as well.
 VIEWER_SECRET_BYTES = 8
-# 長ポーリングで、新しい行が来なかったときに空で返すまでの秒数。
+# In the long poll, how many seconds we wait before returning an empty
+# answer when no new line has arrived.
 #
-# **SSEは使えない。** 一時トンネル（TryCloudflare）は text/event-stream を
-# 端で溜め込み、接続が閉じるまでブラウザに届かない。実測でも15秒間1バイトも
-# 来なかった。長ポーリングは応答が毎回完結するので通る（実測 0.4〜1.0秒）。
-# 根拠は local/HANDOFF.md の「実測結果: 一時トンネル」。
+# **SSE does not work.** A temporary tunnel (TryCloudflare) buffers
+# text/event-stream at its edge, and nothing reaches the browser until the
+# connection closes. In our measurement, not one byte arrived for 15
+# seconds. A long poll works, because each response completes on its own
+# (measured at 0.4 to 1.0 seconds).
 LONGPOLL_WAIT_SEC = 25.0
 
-# --- トンネル（参加者に閲覧URLを配るとき） ----------------------------------
-# 一時トンネルは cloudflared が字幕PCから外向きに張る。着信は要らないので、
-# 学内LAN・会議室のWiFi・テザリングのどれでも通る。
+# --- Tunnel (handing the viewer URL to participants) -------------------------
+# cloudflared opens the temporary tunnel outward from the caption PC. No
+# incoming connection is needed, so it works on a campus LAN, on meeting
+# room WiFi, and on a phone hotspot.
 #
-# **既定では張らない。** 未公開の観測結果を扱う会議で、事故で外に出さないため。
-# 使うときは操作画面の「トンネル」から開始するか、--tunnel を付けて起動する。
+# **We do not open it by default.** This keeps unpublished results from
+# going outside by accident.
+# To use it, start it from "Tunnel" on the control page, or start the app
+# with --tunnel.
 TUNNEL_CMD = "cloudflared"
-# 探しに行く場所。PATH に無ければここを見る（local/bin に置く運用）。
+# Where we look for it. If it is not in PATH, we look here (we keep it in
+# local/bin).
 TUNNEL_LOCAL = PROJECT_ROOT / "local" / "bin" / "cloudflared.exe"
-# URLが出てくるまで待つ秒数。これを過ぎたら失敗として扱う。
+# How many seconds we wait for the URL to appear. After that we treat it as
+# a failure.
 TUNNEL_TIMEOUT_SEC = 30.0
 
-# 配信の経路は2つある。操作画面で選び、前回の選択を覚える。
+# There are two delivery routes. You pick one on the control page, and we
+# remember the last choice.
 #
-#   cloudflare  一時トンネル。**URLは起動のたびに変わる。** 準備は要らない。
-#               その場で決まった会議に向く。
-#   tailscale   Tailscale Funnel。**ホスト名が変わらない。** 会議のURLを前もって
-#               作って案内に載せられる。tailnet 側の設定が1回だけ要る。
+#   cloudflare  A temporary tunnel. **The URL changes on every start.**
+#               Nothing to prepare. Good for a meeting decided on the spot.
+#   tailscale   Tailscale Funnel. **The host name does not change.** You can
+#               build the meeting URL in advance and put it in the
+#               invitation. It needs one setup step on the tailnet side.
 TUNNEL_KINDS = ("cloudflare", "tailscale")
 TUNNEL_KIND = "cloudflare"
 TUNNEL_KIND_STATE_PATH = PROJECT_ROOT / "local" / "tunnel_kind.json"
 TAILSCALE_CMD = "tailscale"
-# Windows の既定の置き場。PATH に無ければここを見る。
+# The default location on Windows. If it is not in PATH, we look here.
 TAILSCALE_LOCAL = Path(r"C:\Program Files\Tailscale\tailscale.exe")
-# Funnel が公開側で受けるポート。**443・8443・10000 しか選べない**（Tailscaleの制限）。
+# The port Funnel listens on for the public side. **Only 443, 8443 and 10000
+# can be chosen** (a Tailscale restriction).
 FUNNEL_PUBLIC_PORT = 443
-# tailnet 上のホスト名を覚えておく秒数。**0 にすると毎回プロセスを起こす。**
-# 操作画面は2秒ごとに状態を取りに来るので、覚えないと1日に数万回になる。
+# How many seconds we remember the host name on the tailnet. **At 0 we start
+# a process every time.** The control page asks for the status every 2
+# seconds, so without remembering it, that would be tens of thousands of
+# times a day.
 TAILSCALE_HOST_CACHE_SEC = 30.0
-# Tailscale が配るアドレスの範囲。**操作画面を出してよいのはここだけである。**
-# 汎用のバインド指定にしてはいけない。0.0.0.0 と書けば、認証の無い操作画面が
-# 学内LANの全員に見える。
-# tailnet のアドレスが取れるまで、背景で試し直す間隔（秒）。
-# 自動起動では Tailscale がまだ上がっていないことがある。
+# The address ranges Tailscale hands out. **These are the only addresses the
+# control page may be served on.**
+# Do not replace this with a general bind setting. Writing 0.0.0.0 would
+# show the control page, which has no authentication, to everyone on the
+# campus LAN.
+# How often, in seconds, we retry in the background until we get a tailnet
+# address.
+# When the app starts automatically, Tailscale may not be up yet.
 CONTROL_BIND_RETRY_SEC = 15.0
 
-# --- 常駐（タスクトレイとログ） ---------------------------------------------
-# **窓を消すなら、ログの行き先を先に決めること。** いまのところ、このアプリの
-# 唯一の記録は端末に出る行である。窓を消したら、どこかに残さないと失敗が追えない。
-# アプリのアイコン。スタートメニューのショートカットと、タスクトレイが使う。
+# --- Background running (tray icon and logs) ---------------------------------
+# **If you remove the window, decide where the log goes first.** Right now,
+# the only record this app keeps is the lines it prints to the terminal.
+# Once the window is gone, a failure cannot be traced unless the lines are
+# kept somewhere.
+# The application icon. The Start menu shortcut and the tray icon use it.
 APP_ICON = PROJECT_ROOT / "etc" / "LiveCaption.ico"
 LOG_DIR = PROJECT_ROOT / "local" / "log"
 LOG_KEEP = 20
@@ -288,132 +358,170 @@ TAILSCALE_NETS = (
     ipaddress.ip_network("fd7a:115c:a1e0::/48"),
 )
 
-# --- 会議ごとの閲覧URL -------------------------------------------------------
-# **会議ごとに別のURLを使う。** 参加者が会議ごとに違うので、前の会議のURLで
-# 今日の字幕が見えてはいけない。URLに載る `/v/<経路>` の部分を会議ごとに作る。
+# --- A viewer URL for each meeting -------------------------------------------
+# **Each meeting uses its own URL.** The participants differ from meeting to
+# meeting, and today's captions must not be visible through an older
+# meeting's URL. We build the `/v/<path>` part of the URL per meeting.
 #
-# **前もって作れる。** Tailscale ではホスト名が分かっているので、会議の前日でも
-# URLを確定できる。Zoomのリンクと一緒に案内に載せるための作りである。
+# **You can build it in advance.** With Tailscale the host name is known, so
+# the URL can be fixed the day before the meeting. This is what lets you put
+# it in the invitation next to the Zoom link.
 #
-# **配信するのは選んである1つだけ。** 他の会議のURLは、その日には404を返す。
+# **Only the one meeting you selected is delivered.** The URL of any other
+# meeting returns 404 that day.
 MEETINGS_STATE_PATH = PROJECT_ROOT / "local" / "meetings.json"
-# ホストがトークンを貼るURLの経路の長さ（バイト）。
-# **閲覧用（VIEWER_SECRET_BYTES）より長くする。** 閲覧用は破られても字幕が漏れる
-# だけで、しかも数十人に配る。こちらは Zoom へ何を送るかを決める。
+# The length, in bytes, of the path in the URL where the host pastes the
+# token.
+# **Make it longer than the viewer one (VIEWER_SECRET_BYTES).** If the viewer
+# path is guessed, only the captions leak, and it is handed to dozens of
+# people anyway. This path decides what we send to Zoom.
 HOST_SECRET_BYTES = 32
 
-# --- 予定された会議に自動で参加する ------------------------------------------
-# **既定では何もしない。** 会議ごとに `auto` の印を付けたものだけを回す。
-# 配信は「未公開の内容を扱う会議では使わない」という決まりで既定を切りにしてある。
-# 無人で配信を始めるのはその既定を裏返す操作なので、人が1件ずつ選ぶ。
+# --- Joining scheduled meetings automatically --------------------------------
+# **By default this does nothing.** Only meetings marked `auto` are handled.
+# Delivery is off by default, following the rule "do not use it for meetings
+# with unpublished content". Starting delivery with nobody watching turns
+# that default around, so a person selects each meeting one by one.
 SCHEDULE_TICK_SEC = 5.0
-# 開始からこれだけ過ぎた回は、もう拾わない。止めていた間に流れた回を
-# まとめて始めないため。
+# We no longer pick up a meeting this many minutes after its start time.
+# This keeps us from starting, all at once, every meeting that passed while
+# the app was stopped.
 SCHEDULE_GRACE_MIN = 10
-# 生成が本当に始まったかを確かめるまでの猶予。
-# **`generating` だけを見てはいけない。** 入力を開けなかったときも False に戻る。
+# How long we give it before we check that generation really started.
+# **Do not look at `generating` alone.** It also goes back to False when the
+# audio input could not be opened.
 SCHEDULE_ARM_SEC = 90.0
-# Zoomに入れと言ってから、音が一度も来ないまま「入れていない」と見なすまでの秒数。
-# **急がない。** 会議が始まるのは遅れるものである。待機室・パスコード違い・更新の
-# ダイアログは、どれも「音が来ない」としてしか観測できない。
+# How many seconds after we tell Zoom to join, with no sound ever arriving,
+# before we decide that we are not in the meeting.
+# **Do not rush this.** Meetings start late. A waiting room, a wrong
+# passcode and an update dialog can all only be observed as "no sound
+# arrives".
 SCHEDULE_JOIN_AUDIO_SEC = 300.0
-# **最初の1文が出るまでの猶予。** 会議の冒頭は、参加者を待って数分の無言が
-# 続くのが普通である（麻生の指摘、2026-09-21）。無音の時計をそこで回すと、
-# **始まる前の会議を畳んでしまう。** 会議ごとの `silence_min` のほうが長ければ、
-# そちらを立てる。
+# **How long we give the first sentence to appear.** At the start of a
+# meeting, several minutes of silence while people arrive is normal
+# (reported 2026-09-21). Running the silence timer during that would
+# **close a meeting that has not begun yet.** If the meeting's own
+# `silence_min` is longer, we use that instead.
 #
-# **始まらないまま置き去りにはしない。** ここを過ぎたら畳む。認識の接続は
-# 黙っていても課金されるので、空の会議に何時間も座らせない。
+# **We do not leave it sitting there forever.** Past this point we close it.
+# The recognition connection is billed even while nobody speaks, so we do
+# not let it sit in an empty meeting for hours.
 SCHEDULE_OPENING_SEC = 900.0
 
-# Zoomのチャットに投げる時刻。**予定の開始時刻を過ぎてから投げる。**
+# When we post to the Zoom chat. **We post after the scheduled start time.**
 #
-# **Zoomのチャットは、入る前の発言が見えない。** 早く投げると、後から入って
-# きた人には何も残らない（麻生の指摘、2026-09-20）。字幕アプリは開始の
-# `lead_min` 分前に動き出すので、そこで投げると全員が取りこぼす。
+# **The Zoom chat does not show messages sent before you joined.** Posting
+# early leaves nothing for people who join later (reported 2026-09-20). The
+# caption app starts `lead_min` minutes before the start, so posting at that
+# moment means everyone misses it.
 #
-# **2回投げる。開始時刻と、その3分後**（麻生の指示、2026-09-20）。同じ内容である。
-# 1回目は定刻に入った人に、2回目は少し遅れて入った人に届く。
+# **We post twice: at the start time, and 3 minutes later** (as requested,
+# 2026-09-20). The text is the same both times. The first reaches people who
+# joined on time, the second reaches people who were a little late.
 SCHEDULE_CHAT_AT_MIN = (0.0, 3.0)
-# 2回が続けて出ないように空ける下限。Zoomの参加が遅れて1回目が押し出されると、
-# 2回目の時刻を既に過ぎていることがある。**同じ文が数秒差で2つ並ぶのは、
-# 壊れているように見える。**
+# The smallest gap we keep between the two posts. If joining Zoom is delayed
+# and the first post is pushed back, the time for the second one may already
+# have passed. **The same sentence appearing twice, seconds apart, looks
+# broken.**
 SCHEDULE_CHAT_GAP_SEC = 60.0
-# そこから、投げられないまま諦めるまでの上限と、見に行く間隔。
-# **`zoommtg:` を投げてから会議の窓が出るまで、Zoomは数十秒から数分かかる。**
-# 実測では、起動の5秒後にはまだ無かった（2026-09-20 の実会議）。
+# From there, how long we keep trying before giving up, and how often we
+# check.
+# **Zoom takes tens of seconds to several minutes to show the meeting window
+# after we hand it a `zoommtg:` link.** In our measurement, it was still not
+# there 5 seconds after launch (a real meeting, 2026-09-20).
 SCHEDULE_CHAT_WAIT_SEC = 600.0
 SCHEDULE_CHAT_RETRY_SEC = 10.0
-# Zoomに出す表示名。**発言しない参加者だと分かる名前にする。**
+# The display name in Zoom. **Use a name that shows this participant will
+# not speak.**
 ZOOM_DISPLAY_NAME = "Live Captions"
-# Linux で Zoom を起こすときの命令。Windows では使わない（レジストリから探す）。
+# The command that starts Zoom on Linux. Not used on Windows, where we look
+# it up in the registry.
 ZOOM_CMD = "zoom"
 
-# --- ホストがトークンを貼る受け口 --------------------------------------------
-# **これはトンネル越しに出る、唯一の書き込み口である。** 閲覧サーバは他に
-# 状態を変える手段を持たない。狭く作り、開いている時間を短くする。
+# --- Where the host pastes the token -----------------------------------------
+# **This is the only place that accepts a write through the tunnel.** The
+# viewer server has no other way to change any state. Keep it narrow, and
+# keep it open for a short time.
 #
-# 予定の開始前後、これだけの分は受け付ける。**恒久的な口にしない。**
-# 会議1本あたり1時間ほどに絞られる。
+# We accept the token for this many minutes around the scheduled start.
+# **Do not make it a permanent endpoint.** This narrows it down to about an
+# hour per meeting.
 HOST_TOKEN_WINDOW_MIN = 30
-# 失敗をこれだけ数えたら、その会議の受け口を閉じる。
-# 32バイトの経路を総当たりされる心配は無いが、走査や不具合で叩かれ続けるのを止める。
+# After this many failures, we close the endpoint for that meeting.
+# Nobody is going to brute-force a 32 byte path, but this stops a scanner or
+# a bug from hammering it.
 HOST_MAX_ATTEMPTS = 5
-# 受け口を叩ける最短の間隔（秒）。長ポーリングと同じ機体で実時間の文字起こしを
-# しているので、洪水を浴びせられないようにする。
+# The shortest interval, in seconds, between two requests to the endpoint.
+# The same machine runs the long poll and the real-time transcription, so we
+# make sure it cannot be flooded.
 HOST_MIN_INTERVAL_SEC = 1.0
-# 受け取る本文の上限。トークンのURL1本しか来ないので、小さくてよい。
+# The largest body we accept. Only one token URL ever arrives, so it can be
+# small.
 HOST_MAX_BODY = 4096
-# **Cloudflare では開かない。** TLS が Cloudflare の入口で終わるので、
-# Zoom の資格情報がそこを平文で通る。Tailscale なら TLS はこの機体で終わる。
+# **We do not open this on Cloudflare.** TLS ends at the Cloudflare edge, so
+# the Zoom credential would pass through it in the clear. With Tailscale,
+# TLS ends on this machine.
 HOST_TOKEN_KINDS = ("tailscale",)
 
 
-# --- 会議の記録 -------------------------------------------------------------
-# 確定した1文ごとに、日本語の認識文と英語の字幕を対にして残す（transcript.py）。
-# **既定で残す。** 誤認識は日本語の側にしか現れないので、用語表を育てるのに要る。
-# 会議の内容が字幕PCのディスクに残るので、要らないときは --no-save で止められる。
+# --- Meeting record ----------------------------------------------------------
+# For each final sentence, we keep the recognized text and the caption as a
+# pair (transcript.py).
+# **We keep it by default.** A misrecognition only shows on the recognized
+# side, and we need that to grow the glossary.
+# The content of the meeting stays on the caption PC's disk, so --no-save
+# turns it off when you do not want that.
 #
-# **置き場は `local/transcripts/`**（麻生の指示、2026-09-20）。**字幕PCの中に
-# 溜めておいて、操作画面から落とす。** 字幕PCは常時起動で、操作は tailnet 越し
-# である。ダウンロードフォルダに出しても、取りに行くには RustDesk が要る。
-# 記録を読むためだけに遠隔操作を起こすのは重い。
+# **They go in `local/transcripts/`** (as requested, 2026-09-20). **They
+# collect on the caption PC, and you download them from the control page.**
+# The caption PC runs all the time, and we operate it over the tailnet.
+# Writing them to the download folder would mean starting a remote desktop
+# session to fetch them, which is too much work just to read a record.
 #
-# （2026-09-08 から 2026-09-20 まではダウンロードフォルダだった。そのときの
-# 理由は「会議のあとすぐ開ける」ことで、字幕PCの前に座る前提だった。）
+# (From 2026-09-08 to 2026-09-20 they went to the download folder. The
+# reason then was "open it right after the meeting", which assumed you were
+# sitting at the caption PC.)
 #
-# 置き場を変えるなら `.env` の `LIVECAPTION_SAVE_DIR` か `--save-dir`。
+# To change the location, use `LIVECAPTION_SAVE_DIR` in `.env`, or
+# --save-dir.
 #
-# 名前に `live-caption_` を付ける。`scripts/transcript_to_md.py` もこの接頭辞で
-# 探す（`*.jsonl` で探すと、無関係なファイルを拾う）。
+# We prefix the name with `live-caption_`. `scripts/transcript_to_md.py`
+# looks for that prefix too (searching for `*.jsonl` would pick up unrelated
+# files).
 TRANSCRIPT_DIR = PROJECT_ROOT / "local" / "transcripts"
 TRANSCRIPT_PREFIX = "live-caption_"
 
-# 置き場を変えるときに書く環境変数。`.env` に書けば次の起動から効く。
+# The environment variable that changes the location. Put it in `.env` and
+# it takes effect on the next start.
 SAVE_DIR_ENV = "LIVECAPTION_SAVE_DIR"
 
-# 「停止」を押してから、記録を区切るまでの秒数。
+# How many seconds after "stop" is pressed before we close the record.
 #
-# **停止は「この会議は終わり」の意味である**（配信もZoom字幕も閉じる）。記録も
-# そこで閉じて `.md` を書く。閉じないと、落とした `.md` に「会議はまだ続いている」
-# と書かれたままになる（麻生の指摘、2026-09-20）。
+# **Stop means "this meeting is over"** (it closes delivery and the Zoom
+# captions too). So we close the record there and write the `.md`. Without
+# closing it, a downloaded `.md` would still say the meeting is going on
+# (reported 2026-09-20).
 #
-# **すぐには閉じない。** 止めた時点で、最後の1文がまだ翻訳の途中のことがある
-# （翻訳の中央値 0.9秒、行の間隔 0.6秒）。即座に区切ると、その1文だけが次の
-# 記録に落ちる。3秒待てば、書き終わってから区切れる。
-# **この間に再開したら区切らない。** 休憩で止めただけなら、記録は1本のままにする。
+# **We do not close it right away.** At the moment you stop, the last
+# sentence may still be in translation (median translation 0.9 seconds, line
+# interval 0.6 seconds). Closing immediately would drop that one sentence
+# into the next record. Waiting 3 seconds lets it finish first.
+# **If you start again within that time, we do not close it.** If you only
+# stopped for a break, the record stays as one file.
 STOP_ROLL_WAIT_SEC = 3.0
 
 
 def check_save_dir(path: str | Path) -> Path:
-    """記録の置き場として使えるか確かめる。使える絶対パスを返す。
+    """Check that this can hold the records. Return a usable absolute path.
 
-    **無ければ作る。** 会議の前に「フォルダが無い」で止まるより、作ってしまう
-    ほうがよい。作れない場所（権限、存在しないドライブ）はここで弾く。
+    **Create it if it does not exist.** Creating it is better than stopping
+    before a meeting because the folder is missing. Places we cannot create
+    (permissions, a drive that does not exist) are rejected here.
 
-    **書けるかどうかは、実際に書いて確かめる。** Windows では、読めるのに
-    書けないフォルダ（ドライブの直下、OneDrive の同期中）がある。属性を見るだけ
-    では通ってしまい、会議の最中に記録だけが静かに落ちる。
+    **We test whether we can write by actually writing.** On Windows there
+    are folders you can read but not write (the root of a drive, a folder
+    OneDrive is syncing). Looking at the attributes alone would pass, and
+    then the record alone would quietly fail in the middle of a meeting.
     """
     text = str(path).strip().strip('"')
     if not text:
@@ -435,66 +543,81 @@ def check_save_dir(path: str | Path) -> Path:
         raise ValueError(f"そのフォルダには書けない: {exc}") from exc
     return target
 
-# --- その他 -----------------------------------------------------------------
-# 用語対訳表は etc/glossary/ に置いた .tsv である。**会議ごとに組み合わせを変える。**
-# docs/ ではない。**これは読み物ではなく、アプリが読むデータである。**
-# サブシステムによって語彙が違うので、1つの大きな表を全部の会議で使うと、
-# 関係の無い語が認識の keywords を食い、上限で本当に要る語が落ちる。
+# --- Other -------------------------------------------------------------------
+# A glossary is a .tsv file in etc/glossary/. **You change which ones you
+# combine for each meeting.**
+# They are not in docs/. **They are not something to read; they are data the
+# app reads.**
+# Different subsystems use different words, so using one big table for every
+# meeting means unrelated words eat the recognition keywords, and the words
+# you actually need fall off the end at the limit.
 GLOSSARY_DIR = PROJECT_ROOT / "etc" / "glossary"
-# **置き場を外から変えられるようにしてある。** Docker では、表は操作画面から
-# 足したり消したりする利用者データなので、リポジトリではなくボリュームに置く。
-# 置かないと、アップロードした表がコンテナの作り直しで消える。
+# **The location can be changed from outside.** Under Docker, the glossaries
+# are user data that people add and remove from the control page, so they go
+# in a volume and not in the repository. Otherwise an uploaded glossary
+# would disappear when the container is rebuilt.
 GLOSSARY_DIR_ENV = "LIVECAPTION_GLOSSARY_DIR"
-# 何も選ばれていないときに読むもの（拡張子は付けない）。
-# **リポジトリには表が入っていないので、既定は空である。** 表を用意したら、
-# 操作画面から選ぶ。ここに名前を書いておくこともできる。
+# What we load when nothing is selected (without the file extension).
+# **The repository ships no glossary, so the default is empty.** Once you
+# have one, select it from the control page. You can also write its name
+# here.
 GLOSSARY_DEFAULT: tuple[str, ...] = ()
 
 
 def glossary_dir() -> Path:
-    """用語対訳表の置き場。
+    """Where the glossaries live.
 
-    **呼ぶたびに環境変数を見る。** `load_env()` は import のあとに走るので、
-    ここで定数にしてしまうと `.env` の指定が効かない。
+    **Read the environment variable on every call.** `load_env()` runs after
+    the import, so making this a constant would make the setting in `.env`
+    have no effect.
     """
     raw = os.environ.get(GLOSSARY_DIR_ENV, "").strip()
     return Path(raw).expanduser() if raw else GLOSSARY_DIR
-# 前回の選択。操作画面で選び直すたびに書く。次の起動もこれで始まる。
+# The last choice. We write it every time the control page changes it.
+# The next start begins with this value.
 GLOSSARY_STATE_PATH = PROJECT_ROOT / "local" / "glossary_state.json"
 ENV_PATH = PROJECT_ROOT / ".env"
 
-# --- VNC（コンテナで動かすときだけ） ------------------------------------------
-# **常用しない。** 認証が無く、tailnet の中からは誰でも届く。
-# 会議ソフトへのサインインと、自動参加が詰まったときの様子見に使う。
-VNC_RFB_PORT = 5900          # VNC クライアントから繋ぐ先
-VNC_WEB_PORT = 6080          # ブラウザから繋ぐ先（noVNC、http）
-# **https の出口**（`tailscale serve`。tailnet の中だけ）。
-# ブラウザは `http` を secure context と見なさないので、`navigator.clipboard` が
-# 生えない。**noVNC が見ている側のクリップボードを読めないのはこれが理由である。**
+# --- VNC (only when running in a container) ----------------------------------
+# **Do not use this routinely.** It has no authentication, and anyone inside
+# the tailnet can reach it.
+# We use it to sign in to the meeting software, and to look at what is
+# happening when automatic joining gets stuck.
+VNC_RFB_PORT = 5900          # what a VNC client connects to
+VNC_WEB_PORT = 6080          # what a browser connects to (noVNC, http)
+# **The https exit** (`tailscale serve`, inside the tailnet only).
+# A browser does not treat `http` as a secure context, so
+# `navigator.clipboard` does not exist there. **That is why noVNC cannot
+# read the clipboard of the machine you are watching from.**
 VNC_HTTPS_PORT = 6443
 NOVNC_ROOT = "/usr/share/novnc"
-# 1 なら起動した時点から上げる。既定は上げない（操作画面から開ける）。
+# 1 starts it together with the app. By default we do not start it; you open
+# it from the control page.
 VNC_ENV = "LIVECAPTION_VNC"
 
-# --- 終わらせても戻ってくるか -------------------------------------------------
-# **Docker では戻ってくる**（compose の `restart: unless-stopped`）。
-# そのとき「終了」は「再起動」である。**勝手に戻ってくるのに「終了」と
-# 書いてあると、押した人は壊れたと思う。** 画面の文言をここで切り替える。
+# --- Does it come back after you end it --------------------------------------
+# **Under Docker it comes back** (`restart: unless-stopped` in compose).
+# There, "shut down" means "restart". **A button that says "shut down" while
+# the app comes back on its own makes the person who pressed it think
+# something is broken.** We switch the wording on the page here.
 #
-# **compose が `restart:` に渡すのと同じ変数を、同じ値のまま読む。**
-# 以前は `LIVECAPTION_RESTARTS`（0/1）という別の変数だった。2つに分けると、
-# 片方だけ直して、画面の文言だけが実際と食い違う日が来る。
-# Windows のネイティブ起動では、この変数が無いので False になる。
+# **We read the same variable compose passes to `restart:`, with the same
+# value.**
+# It used to be a separate variable, `LIVECAPTION_RESTARTS` (0/1). With two
+# variables, someone fixes one of them and the wording on the page ends up
+# disagreeing with what actually happens.
+# A native start on Windows has no such variable, so this is False.
 RESTART_ENV = "LIVECAPTION_RESTART"
 
-# Docker の restart policy のうち、**正常終了しても入れ直すもの**。
-# `on-failure` は終了コード 0 では戻さないので、ここには入れない。
-# 操作画面の「終了」は 0 で終わる。
+# The Docker restart policies that **bring the container back even after a
+# clean exit**.
+# `on-failure` does not bring it back on exit code 0, so it is not listed
+# here. "Shut down" on the control page exits with 0.
 _RESTART_ALWAYS = ("always", "unless-stopped")
 
 
 def restarts() -> bool:
-    """終わらせても、外の仕組みが入れ直してくれるか。"""
+    """Will something outside start it again after we end it?"""
     return os.environ.get(RESTART_ENV, "").strip().lower() in _RESTART_ALWAYS
 
 
@@ -502,9 +625,11 @@ def restarts() -> bool:
 class Settings:
     caption_url: str
     device: str | None = None
-    # 使う用語集の名前。None なら、前回の選択（無ければ GLOSSARY_DEFAULT）。
+    # The names of the glossaries to use. None means the last choice, or
+    # GLOSSARY_DEFAULT if there is none.
     glossary_names: tuple[str, ...] | None = None
-    # 字幕の向き。None なら、前回の選択（無ければ DIRECTION_DEFAULT）。
+    # The caption direction. None means the last choice, or
+    # DIRECTION_DEFAULT if there is none.
     direction: str | None = None
     delay: str = ASR_DELAY
     translate_model: str = TRANSLATE_MODEL
@@ -514,12 +639,13 @@ class Settings:
     transcript_dir: Path = TRANSCRIPT_DIR
 
 
-# --- .env から差し替えられる調整つまみ -------------------------------------
+# --- Tuning knobs you can override from .env ---------------------------------
 #
-# **既定値は実測で決めたものである。** 上のコメントに根拠が書いてある。
-# 会議室や話し方に合わせて現場で変えたいときだけ、`.env` に書く。
+# **The defaults come from measurement.** The comments above say why.
+# Write them in `.env` only when you want to change them on site, to match
+# the room or the way people speak.
 #
-# (環境変数名, 定数名, 型, これ未満は受け付けない値)
+# (environment variable, constant name, type, smallest accepted value)
 _TUNABLE = (
     ("LIVECAPTION_IDLE_FLUSH_SEC", "IDLE_FLUSH_SEC", float, 0.3),
     ("LIVECAPTION_SPECULATE_AFTER_SEC", "SPECULATE_AFTER_SEC", float, 0.0),
@@ -527,19 +653,24 @@ _TUNABLE = (
     ("LIVECAPTION_LINE_INTERVAL_SEC", "LINE_INTERVAL_SEC", float, 0.0),
 )
 
-# 先回りを投げてから確定までに空けておく秒数。翻訳の中央値 0.9 ＋ 余裕 0.2。
-# `IDLE_FLUSH_SEC` だけを差し替えたときに、`SPECULATE_AFTER_SEC` をこれで導く。
+# The seconds we leave between sending the speculative translation and the
+# sentence becoming final. Median translation 0.9 plus a margin of 0.2.
+# When only `IDLE_FLUSH_SEC` is overridden, we derive `SPECULATE_AFTER_SEC`
+# from it with this.
 SPECULATE_MARGIN_SEC = 1.1
 
-# **差し替える前の値を控えておく。** 操作画面の「既定に戻す」で使う。
-# `apply_env_overrides()` が globals() を書き換えるので、その前に取る。
+# **Keep the values from before any override.** "Reset to default" on the
+# control page uses them.
+# `apply_env_overrides()` rewrites globals(), so we take them before that.
 _DEFAULTS = {attr: globals()[attr] for _e, attr, _c, _f in _TUNABLE}
 
-# **人が明示して変えたつまみ。** 向きを切り替えると `FORCE_CUT_CHARS` の既定値も
-# 変わる（日本語70 / 英語140）が、**明示した値まで勝手に戻してはいけない。**
-# ここに入っているものは向きに追随しない。既定と同じ値に戻したら、ここから外れる。
+# **Knobs a person changed explicitly.** Switching the direction also
+# changes the default of `FORCE_CUT_CHARS` (70 for Japanese, 140 for
+# English), but **it must not undo a value someone set explicitly.**
+# Anything listed here does not follow the direction. Setting it back to the
+# default value removes it from this set.
 _EXPLICIT: set[str] = set()
-# 画面に出す説明。**単位と、変えるとどうなるかを書く。**
+# The explanation shown on the page. **Give the unit, and say what changes.**
 _TUNING_HELP = {
     "IDLE_FLUSH_SEC": "秒。発話が途切れてから、文末記号が無くても確定させるまで。"
                       "実測の delta 間隔の p99 が 2.57 秒なので、下げると話の途中で切る",
@@ -553,9 +684,10 @@ _TUNING_HELP = {
 
 
 def coerce_tuning(attr: str, raw) -> float | int:
-    """調整つまみの値を検算する。駄目なら `ValueError` を投げる。
+    """Check a tuning value. Raise `ValueError` when it is not usable.
 
-    **`.env` からも操作画面からも、同じ規則で弾く。** 2か所に書くと食い違う。
+    **The same rule rejects values from `.env` and from the control page.**
+    Written in two places, the two would drift apart.
     """
     for _env_name, name, cast, floor in _TUNABLE:
         if name != attr:
@@ -571,10 +703,12 @@ def coerce_tuning(attr: str, raw) -> float | int:
 
 
 def default_of(attr: str) -> float | int:
-    """そのつまみの既定値。**向きで変わるものは、いまの向きから取る。**
+    """The default of that knob. **For ones that follow the direction, take
+    it from the direction chosen right now.**
 
-    `FORCE_CUT_CHARS` は聞く言語で変わる（日本語70 / 英語140）。操作画面の
-    「既定に戻す」が、向きに合った値に戻るようにするため、ここで分岐する。
+    `FORCE_CUT_CHARS` depends on the language we listen to (70 for Japanese,
+    140 for English). We branch here so that "reset to default" on the
+    control page gives the value that matches the direction.
     """
     if attr == "FORCE_CUT_CHARS":
         return direction().force_cut_chars
@@ -582,11 +716,13 @@ def default_of(attr: str) -> float | int:
 
 
 def _remember_explicit(attr: str, value) -> None:
-    """人が明示して変えた値かどうかを覚える。
+    """Remember whether a person set this value explicitly.
 
-    **既定と同じ値なら「明示していない」に戻す。** 操作画面の「.env に保存」は
-    既定のままの項目も書き出すので、`.env` に値があること自体は意思の証拠にならない。
-    既定と違う値だけを、向きの切り替えから守る。
+    **A value equal to the default goes back to "not explicit".** "Save to
+    .env" on the control page writes out every item, including the ones left
+    at their default, so a value being present in `.env` is not by itself
+    proof that someone meant it. Only values that differ from the default
+    are protected from a direction switch.
     """
     if value == default_of(attr):
         _EXPLICIT.discard(attr)
@@ -595,7 +731,7 @@ def _remember_explicit(attr: str, value) -> None:
 
 
 def set_tuning(attr: str, raw) -> float | int:
-    """調整つまみを検算して入れる。操作画面から呼ぶ。"""
+    """Check a tuning value and set it. Called from the control page."""
     value = coerce_tuning(attr, raw)
     globals()[attr] = value
     _remember_explicit(attr, value)
@@ -603,7 +739,8 @@ def set_tuning(attr: str, raw) -> float | int:
 
 
 def tuning() -> list[dict]:
-    """調整つまみの、いまの値と既定値。操作画面に返す。"""
+    """The current and default value of each knob. Returned to the control
+    page."""
     return [
         {
             "name": attr,
@@ -619,15 +756,17 @@ def tuning() -> list[dict]:
 
 
 def direction() -> Direction:
-    """いま選ばれている向き。"""
+    """The direction chosen right now."""
     return DIRECTIONS[DIRECTION]
 
 
 def apply_direction(name: str) -> Direction:
-    """字幕の向きを切り替えて、出力側の定数を差し替える。選んだ向きを返す。
+    """Switch the caption direction and replace the output constants.
+    Return the direction chosen.
 
-    **翻訳のプロンプトはここでは作り直さない。** 呼ぶ側（`app.apply_direction`）が
-    用語表を持っているので、そちらでやる。ここが差し替えるのは定数だけである。
+    **We do not rebuild the translation prompt here.** The caller
+    (`app.apply_direction`) holds the glossary, so it does that. All this
+    function replaces is constants.
     """
     if name not in DIRECTIONS:
         known = " / ".join(DIRECTIONS)
@@ -637,17 +776,20 @@ def apply_direction(name: str) -> Direction:
     globals()["CAPTION_LANG"] = d.caption_lang
     globals()["MAX_CAPTION_CHARS"] = d.max_caption_chars
     globals()["WARMUP_CAPTIONS"] = d.warmup
-    # 明示して変えた値は残す。触っていないものだけ、向きの既定値に合わせる。
+    # Keep values set explicitly. Only untouched ones follow the default of
+    # the new direction.
     if "FORCE_CUT_CHARS" not in _EXPLICIT:
         globals()["FORCE_CUT_CHARS"] = d.force_cut_chars
     return d
 
 
 def direction_selection() -> str:
-    """覚えている向き。無ければ既定。
+    """The remembered direction, or the default if there is none.
 
-    **覚えるのは、会議ごとに選び直す手間を無くすためである。** 用語集と同じ考え方。
-    起動時の画面と操作画面の両方に出るので、前回のままなことには気づける。
+    **We remember it so that you do not have to pick it again for every
+    meeting.** This follows the same idea as the glossary. It appears on the
+    startup screen and on the control page, so you can see when it is still
+    set to the last choice.
     """
     try:
         saved = json.loads(DIRECTION_STATE_PATH.read_text(encoding="utf-8"))
@@ -658,7 +800,7 @@ def direction_selection() -> str:
 
 
 def tunnel_kind_selection() -> str:
-    """覚えている配信の経路。無ければ Cloudflare。"""
+    """The remembered delivery route, or Cloudflare if there is none."""
     try:
         saved = json.loads(TUNNEL_KIND_STATE_PATH.read_text(encoding="utf-8"))
         kind = str(saved.get("kind", ""))
@@ -668,7 +810,7 @@ def tunnel_kind_selection() -> str:
 
 
 def remember_tunnel_kind(kind: str) -> None:
-    """次の起動のために覚える。書けなくても落とさない。"""
+    """Remember it for the next start. Do not crash if we cannot write."""
     try:
         TUNNEL_KIND_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
         TUNNEL_KIND_STATE_PATH.write_text(
@@ -679,7 +821,7 @@ def remember_tunnel_kind(kind: str) -> None:
 
 
 def ui_lang_selection() -> str:
-    """覚えている操作画面の言語。無ければ日本語。"""
+    """The remembered control page language, or Japanese if there is none."""
     from . import i18n
 
     try:
@@ -691,7 +833,7 @@ def ui_lang_selection() -> str:
 
 
 def apply_ui_lang(name: str) -> str:
-    """操作画面の言語を切り替える。選んだ言語を返す。"""
+    """Switch the control page language. Return the language chosen."""
     from . import i18n
 
     if name not in i18n.LANGS:
@@ -701,7 +843,7 @@ def apply_ui_lang(name: str) -> str:
 
 
 def remember_ui_lang(name: str) -> None:
-    """次の起動のために覚える。書けなくても落とさない。"""
+    """Remember it for the next start. Do not crash if we cannot write."""
     try:
         UI_LANG_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
         UI_LANG_STATE_PATH.write_text(
@@ -712,7 +854,8 @@ def remember_ui_lang(name: str) -> None:
 
 
 def remember_direction(name: str) -> None:
-    """次の起動のために選択を覚える。書けなくても落とさない。"""
+    """Remember the choice for the next start. Do not crash if we cannot
+    write."""
     try:
         DIRECTION_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
         DIRECTION_STATE_PATH.write_text(
@@ -723,7 +866,8 @@ def remember_direction(name: str) -> None:
 
 
 def tuning_warning() -> str:
-    """設定の組み合わせがおかしいときの一言。無ければ空文字。"""
+    """One line about a bad combination of settings. Empty when there is
+    none."""
     if SPECULATE_AFTER_SEC and SPECULATE_AFTER_SEC >= IDLE_FLUSH_SEC:
         return (f"先回り（{SPECULATE_AFTER_SEC}秒）が確定待ち（{IDLE_FLUSH_SEC}秒）"
                 f"以上なので、先回りは一度も走らない。")
@@ -731,18 +875,21 @@ def tuning_warning() -> str:
 
 
 def save_env(values: dict[str, str], path: Path | None = None) -> Path:
-    """`.env` の該当行を書き換える。書いたパスを返す。
+    """Rewrite the matching lines of `.env`. Return the path we wrote.
 
-    **他の行を消してはいけない。** `.env` には `OPENAI_API_KEY` が入っている。
-    既にある行はその場で置き換え、無ければ末尾に足す。
-    `#LIVECAPTION_...=` のように畳んである行は、コメントを外して使う
-    （`.env.example` をそのまま写した `.env` がこの形になっている）。
+    **Do not delete any other line.** `.env` holds `OPENAI_API_KEY`.
+    A line that already exists is replaced in place; a missing one is added
+    at the end.
+    A line commented out as `#LIVECAPTION_...=` has the comment mark removed
+    and is then used (a `.env` copied straight from `.env.example` looks
+    like this).
 
-    **書き込みは一時ファイル経由で行う。** 途中で落ちて `.env` が壊れると、
-    APIキーごと失われる。
+    **We write through a temporary file.** If we crashed halfway and broke
+    `.env`, the API key would be lost with it.
     """
-    # **既定値引数で ENV_PATH を捕まえない。** import のときに1回だけ評価されるので、
-    # 後から差し替えられなくなる（Segmenter で同じ罠を踏んだ）。
+    # **Do not capture ENV_PATH in a default argument.** It is evaluated once
+    # at import time, and then it could not be replaced later (we fell into
+    # the same trap in Segmenter).
     path = ENV_PATH if path is None else path
     lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
     remaining = dict(values)
@@ -767,14 +914,18 @@ def save_env(values: dict[str, str], path: Path | None = None) -> Path:
 
 
 def apply_env_overrides() -> None:
-    """調整つまみを環境変数（`.env` を含む）で差し替える。
+    """Override the tuning knobs from environment variables (including
+    `.env`).
 
-    **定数の行で `os.environ` を読んではいけない。** `config` は `load_env()` より
-    先に import されるので、その時点では `.env` はまだ読まれていない。
-    差し替えはここで、`.env` を読んだ後に行う。
+    **Do not read `os.environ` on the line that defines a constant.**
+    `config` is imported before `load_env()` runs, so at that moment `.env`
+    has not been read yet. We apply the overrides here, after reading
+    `.env`.
 
-    **会議の当日に、書き間違いでアプリが起動しないのは困る。** 数字として読めない
-    値や小さすぎる値は、警告を出して既定値のままにする。**黙って無視はしない。**
+    **The app must not fail to start on the day of a meeting because of a
+    typo.** A value that cannot be read as a number, or that is too small,
+    produces a warning and leaves the default in place. **We never ignore it
+    silently.**
     """
     changed: list[str] = []
     for env_name, attr, _cast, _floor in _TUNABLE:
@@ -789,13 +940,16 @@ def apply_env_overrides() -> None:
             continue
         globals()[attr] = value
         _remember_explicit(attr, value)
-        # 既定と同じ値が書いてあることは多い（「.env に保存」が全項目を書くため）。
-        # 変わっていないものを「差し替えた」と出すと、読む側が混乱する。
+        # The value written is often the same as the default, because "save
+        # to .env" writes every item. Reporting an unchanged value as
+        # "overridden" would confuse the reader.
         if value != before:
             changed.append(f"{attr} {before} → {value}")
 
-    # `IDLE_FLUSH_SEC` だけを変えたときは、先回りの時刻もそれに合わせる。
-    # **合わせないと、先回りが早すぎて投げ捨てが増えるだけになる。**
+    # When only `IDLE_FLUSH_SEC` was changed, move the speculation time with
+    # it.
+    # **Without that, speculation fires too early and only throws away more
+    # work.**
     if (not os.environ.get("LIVECAPTION_SPECULATE_AFTER_SEC", "").strip()
             and os.environ.get("LIVECAPTION_IDLE_FLUSH_SEC", "").strip()
             and SPECULATE_AFTER_SEC):
@@ -807,16 +961,16 @@ def apply_env_overrides() -> None:
     if changed:
         print("  [設定] .env で差し替えた: " + "、".join(changed))
 
-    # 先回りは確定より前に投げないと意味が無い。
+    # Speculation is pointless unless it fires before the sentence is final.
     warning = tuning_warning()
     if warning:
         print(f"  [設定の警告] {warning}")
 
 
 def load_env(path: Path = ENV_PATH) -> None:
-    """.env を読んで、調整つまみを反映する。
+    """Read .env and apply the tuning knobs.
 
-    **.env の値を優先し、環境変数を上書きする。**
+    **The values in .env win, and overwrite the environment variables.**
     """
     if path.exists():
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -825,10 +979,11 @@ def load_env(path: Path = ENV_PATH) -> None:
                 continue
             key, _, value = line.partition("=")
             key, value = key.strip(), value.strip().strip('"').strip("'")
-            # .env の値を優先する。環境変数に同じ名前があっても上書きする。
+            # The value in .env wins. It overwrites an environment variable
+            # of the same name.
             if value:
                 os.environ[key] = value
-    # .env が無くても、環境変数だけで差し替えられるようにする。
+    # Even without a .env, the environment variables alone can override.
     apply_env_overrides()
 
 

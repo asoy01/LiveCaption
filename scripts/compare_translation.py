@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
-"""各音声認識の書き起こしを、同じ翻訳段に通して英語を比べる。
+"""Send each transcript through the same translation stage and compare the
+English.
 
-    pixi run python scripts/compare_translation.py [先頭何文字を使うか] [対象のパターン]
+    pixi run python scripts/compare_translation.py [leading characters] [pattern]
 
-    例: pixi run python scripts/compare_translation.py 1100 "mix.*.txt"
-        pixi run python scripts/compare_translation.py 900 "en.openai-gpt-transcribe.txt"
+    Example: pixi run python scripts/compare_translation.py 1100 "mix.*.txt"
+             pixi run python scripts/compare_translation.py 900 "en.openai-gpt-transcribe.txt"
 
-`local/compare/` の書き起こしを読み、それぞれの先頭 N 文字を同じプロンプト・
-同じ用語対訳表で英訳して並べる。
+It reads the transcripts in `local/compare/`, translates the first N
+characters of each into English with the same prompt and the same glossary,
+and prints them one after another.
 
-**判定はここで行う。** 日本語の書き起こしを並べても意味がない。
-認識は音を当てて漢字を外すので、最終的な英語が正しいかだけが問題になる。
+**The judgement is made here.** Putting the Japanese transcripts side by side
+tells you nothing. Speech recognition matches the sound and picks the wrong
+kanji, so the only question is whether the final English is right.
 
-**プロンプトと用語表の読み込みは本体（src/live_caption/）を使う。**
+**The prompt and the glossary are loaded through the engine
+(src/live_caption/).**
 """
 
 import sys
@@ -27,17 +31,20 @@ from live_caption.translator import build_system, chat  # noqa: E402
 COMPARE_DIR = PROJECT_ROOT / "local" / "compare"
 MODEL = "gpt-4.1-mini"
 
-# 2026-09-03 朝礼の冒頭（先頭1100文字前後）で、英語に出るべき語と、出てはいけない語。
-# 目で読むだけだと改善したか分からないので、機械的に数えられるようにしておく。
-# 別の素材を使うときは、この2つを書き換えること。
+# Words that must appear in the English, and words that must not, for the
+# opening of the 2026-09-03 morning meeting (the first 1100 characters or so).
+# Reading it by eye does not tell you whether it improved, so keep it
+# countable by machine.
+# Rewrite these two lists when you use different material.
 EXPECTED = [
     "interferometer", "birefringence", "polarization", "half-wave plate",
     "PBS", "OMMT", "cavity scan", "eigenpolarization", "beat note",
     "transmitted power", "Saito",
 ]
-# 「干渉計」を「防振系/懸架系」と取り違えた徴候。実際に起きた誤訳。
+# Signs that "干渉計" (interferometer) was taken for the vibration isolation
+# or suspension system. This mistranslation really happened.
 FORBIDDEN = ["suspension system", "vibration isolation"]
-# Whisper が捏造した、その場にいない人名。
+# Names of people who were not there, invented by Whisper.
 HALLUCINATED = ["Terada", "Odash"]
 
 
@@ -53,8 +60,9 @@ def main() -> int:
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 1200
     pattern = sys.argv[2] if len(sys.argv) > 2 else "mix.*.txt"
 
-    # 期待語のリストは 2026-09-03 朝礼の日本語部分に合わせてある。
-    # 別の素材では意味を成さないので、判定を出さない。
+    # The list of expected words matches the Japanese part of the 2026-09-03
+    # morning meeting. It means nothing for other material, so no judgement is
+    # printed then.
     do_check = pattern.startswith("mix.")
 
     files = sorted(COMPARE_DIR.glob(pattern))

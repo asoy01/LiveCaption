@@ -125,8 +125,9 @@ def parse_args() -> argparse.Namespace:
                         "ログは local/log/ にも残す（窓を消して起動するときに要る）")
     p.add_argument("--no-save", action="store_true",
                    help="会議の記録を残さない（既定では残す）")
-    # **既定を None にしておく。** `.env` を読むのは parse_args の後なので、
-    # ここで既定を埋めると、操作画面から選んだ置き場が上書きされてしまう。
+    # **Keep the default at None.** `.env` is read after parse_args, so a
+    # default filled in here would overwrite the directory chosen on the
+    # control page.
     p.add_argument("--save-dir", metavar="フォルダ", default=None,
                    help=f"記録の置き場（既定: {config.TRANSCRIPT_DIR}"
                         f"、または .env の {config.SAVE_DIR_ENV}）")
@@ -138,24 +139,28 @@ def parse_args() -> argparse.Namespace:
 
 
 def _control_extra(value: str) -> tuple[str, ...] | None:
-    """`--control-bind` の値を確かめる。おかしければ理由を出して None を返す。
+    """Check the value of `--control-bind`. If it is wrong, print the reason
+    and return None.
 
-    **操作画面には認証が無い。** 守っているのは「どこから届くか」だけである。
-    だから、ここを汎用のバインド指定にしてはいけない。`0.0.0.0` と書けば、
-    **認証の無い操作画面が学内LANの全員に見える。** Tailscale の範囲だけを通す。
+    **The control page has no authentication.** The only thing that protects
+    it is where the request comes from. So this must not become a general
+    bind option. Writing `0.0.0.0` would make **the control page, which has
+    no authentication, visible to everyone on the campus LAN.** Allow only
+    the Tailscale range.
 
-    値を省いたら（`auto`）、このPCの Tailscale のアドレスを自分で調べる。
-    手で書かせると、書き間違えたときに「出ていない」のか「別の場所に出ている」のか
-    分からなくなる。
+    If the value is omitted (`auto`), this PC looks up its own Tailscale
+    address. If the user types it by hand, a typo makes it impossible to tell
+    whether the page is not up at all or is up at a different address.
     """
     from live_caption import tunnel as tunnel_mod
 
     if value == "auto":
         addrs = tunnel_mod.tailscale_addrs()
         if not addrs:
-            # **起動は止めない。** 自動起動では、Tailscale がまだ上がっていない
-            # ことがある。再起動の直後に数十秒遅れただけで字幕アプリが立ち
-            # 上がらないのでは困る。127.0.0.1 で立てて、背景で繰り返す。
+            # **Do not stop the startup.** On an automatic startup, Tailscale
+            # may not be up yet. It is a problem if the caption app fails to
+            # start just because it is a few tens of seconds late right after
+            # a reboot. Listen on 127.0.0.1 and retry in the background.
             print("操作画面:   Tailscale のアドレスがまだ分からない。"
                   "取れたら足す（背景で繰り返す）")
             return ()
@@ -171,21 +176,23 @@ def _control_extra(value: str) -> tuple[str, ...] | None:
 
 
 def _hostpart(addr: str) -> str:
-    """URLに入れる形。IPv6 は角括弧で囲む。"""
+    """The form that goes into a URL. IPv6 is wrapped in square brackets."""
     return f"[{addr}]" if ":" in addr else addr
 
 
 def main() -> int:
-    # **デバイス名には、コンソールの文字コードで書けない文字が混じる。**
-    # 例: 「マイク配列 (デジタルマイク向けインテル(R) スマート・サウンド」の (R)。
-    # 既定のままだと、その名前を print した時点で UnicodeEncodeError で落ちる。
-    # 入力を選び直しただけでアプリが止まるのは困るので、書けない文字は置き換える。
+    # **Device names contain characters the console encoding cannot write.**
+    # Example: the (R) in "マイク配列 (デジタルマイク向けインテル(R) スマート・サウンド".
+    # With the default settings, printing that name raises UnicodeEncodeError
+    # and the app dies. It is a problem if the app stops just because the
+    # input device was changed, so replace the characters it cannot write.
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(errors="replace")
 
     args = parse_args()
-    # **ログを最初に開く。** 窓が無い起動では、ここから先の print だけが手がかりになる。
+    # **Open the log first.** When the app starts without a window, the print
+    # calls from here on are the only clue left.
     log_path = None
     if args.tray:
         from live_caption import tray as tray_mod
@@ -208,9 +215,11 @@ def main() -> int:
         print("会議を開かずに試すなら --dry-run を付ける。")
         return 1
 
-    # 記録の置き場。優先順は --save-dir、.env、既定（local/transcripts/）。
-    # **使えない置き場でも起動は止めない。** 会議の当日に、フォルダが消えて
-    # いるというだけで字幕が出ないのは困る。断って既定の置き場に落とす。
+    # Where the meeting record goes. The order is --save-dir, then .env, then
+    # the default (local/transcripts/).
+    # **An unusable directory does not stop the startup.** It is a problem if
+    # no captions appear on the day of the meeting just because the folder is
+    # gone. Say so, and fall back to the default directory.
     chosen = (args.save_dir or os.environ.get(config.SAVE_DIR_ENV, "").strip()
               or str(config.TRANSCRIPT_DIR))
     save_dir = Path(chosen)
@@ -221,8 +230,9 @@ def main() -> int:
             print(f"記録の置き場が使えない（{exc}）ので、{config.TRANSCRIPT_DIR} に落とす。")
             save_dir = config.TRANSCRIPT_DIR
 
-    # トークンは会議が始まらないと取れない。無いまま起動してよい。
-    # --web を付けてあれば、ブラウザの操作画面から後で入れられる。
+    # The token cannot be obtained until the meeting starts. Starting without
+    # one is fine. With --web, it can be entered later from the control page
+    # in the browser.
     settings = config.Settings(
         caption_url=args.token or "",
         device=args.device,
@@ -249,24 +259,28 @@ def main() -> int:
         web = web_mod.WebCaptions(
             port=args.web, control_port=args.control_port, bind=args.web_bind
         )
-        # **操作画面を tailnet に出すかどうか。** 既定では出さない。
+        # **Whether to expose the control page on the tailnet.** Off by
+        # default.
         if args.control_bind is not None:
             extra = _control_extra(args.control_bind)
             if extra is None:
                 return 1
             web.control_extra = extra
-            # 取れていなくても起動する。取れるまで背景で試し直す。
+            # Start even when the address is not available yet. Retry in the
+            # background until it is.
             web.control_retry = True
-        # 配信の口だけ用意しておく。出すかどうかは別（既定では出さない）。
-        # 経路（Cloudflare / Tailscale）は前回の選択を引き継ぐ。
+        # Prepare only the delivery endpoint. Whether to expose it is a
+        # separate matter (off by default). The route (Cloudflare /
+        # Tailscale) carries over the previous selection.
         web.tunnel = tunnel_mod.Delivery(args.web, command=args.cloudflared)
 
         def announce() -> None:
-            """配信の状態が変わったら端末にも出す。
+            """Print changes in the delivery state to the terminal too.
 
-            **URLは起動表示より後に出てくる。** cloudflared が張り終えるまで
-            数秒かかるためである。ここで出さないと、--no-browser のときに
-            配信URLを知る手立てが無くなる。
+            **The URL appears after the startup messages.** cloudflared takes
+            a few seconds to finish setting up the tunnel. Without printing
+            it here, there would be no way to learn the delivery URL when
+            --no-browser is used.
             """
             st = web.tunnel.status()
             stamp = time.strftime("%H:%M:%S")
@@ -290,29 +304,32 @@ def main() -> int:
         if args.tunnel:
             st = web.tunnel.start()
             if st["state"] == "error":
-                # 配信できなくても本体は続ける。
-                # 画面共有とZoom字幕APIは使えるためである。
+                # The app keeps running even when delivery fails, because
+                # screen sharing and the Zoom caption API still work.
                 print("配信を開始できない:")
                 print(st["error"])
             else:
                 print("配信を始めている。URLが出るまで数秒かかる。")
-        # ダブルクリックで起動したときに、ブラウザを自分で開かせない。
-        # **開くのは操作画面である。** 閲覧画面はそこから開ける。
+        # When the app is started by a double click, do not make the user
+        # open the browser. **What opens is the control page.** The viewer
+        # page can be opened from there.
         if not args.no_browser:
             webbrowser.open(web.control_url())
 
-        # **トレイは窓の代わりである。** 窓を消して常駐させると、生きているのか
-        # 死んでいるのかが分からなくなる。色で状態を出し、右クリックで操作できる
-        # ようにする。出せなくても本体は続ける。
+        # **The tray icon takes the place of the window.** When the window is
+        # hidden and the app stays resident, there is no way to tell whether
+        # it is alive or dead. Show the state as a color, and allow operation
+        # by right click. The app keeps running even if the icon fails.
         if args.tray:
             tray = tray_mod.Tray(web, log_path)
             if tray.start():
                 print(f"トレイ:     常駐している。ログ: {log_path}")
 
     application = app_mod.App(settings, web=web)
-    # **操作画面があるときは、停止した状態から始める。** 会議に入る前にアプリを
-    # 立ち上げておけるようにするためである。準備中の雑談を認識に流さない。
-    # 操作画面が無ければ開始する手段が無いので、すぐ始める。
+    # **With a control page, start in the stopped state.** This lets the app
+    # be launched before joining the meeting. Small talk during setup is not
+    # sent to speech recognition. Without a control page there is no way to
+    # start it, so start right away.
     start_now = web is None
     try:
         asyncio.run(application.run(capture, start_now=start_now))
@@ -325,8 +342,8 @@ def main() -> int:
         capture.stop()
         if web is not None:
             if web.tunnel is not None:
-                # **選んでいない方も止める。** 経路を持ち替えた後に終わると、
-                # 片方が張りっぱなしで残る。
+                # **Stop the route that is not selected too.** If the app
+                # exits after the route was switched, the other one stays up.
                 web.tunnel.stop_all()
             web.stop()
         application.report(capture)

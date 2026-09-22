@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""音声認識の誤りを、翻訳段の用語対訳表で復元できるかを試す。
+"""Try to recover misrecognitions with the glossary in the translation stage.
 
     pixi run python scripts/translate_test.py
 
-Deepgram が返した実際の誤認識テキストを入力に使う。日本語の漢字が誤っていても、
-音さえ合っていれば、用語対訳表を持ったLLMが正しい英語を出せるはず、という仮説を試す。
+The input is real misrecognized text that Deepgram returned. The idea under
+test is this: even when the Japanese kanji are wrong, an LLM that holds the
+glossary should still produce the right English as long as the sounds match.
 
-**プロンプトと用語表の読み込みは本体（src/live_caption/）を使う。**
-ここに複製しないこと。複製すると必ずずれる。
+**The prompt and the glossary are loaded through the engine
+(src/live_caption/).**
+Do not copy them here. A copy always drifts.
 """
 
 import sys
@@ -21,7 +23,7 @@ from live_caption.translator import build_system, chat  # noqa: E402
 
 MODELS = ["gpt-5-mini", "gpt-4.1-mini"]
 
-# Deepgram が実際に返したテキスト。正しくは:
+# Text that Deepgram actually returned. The correct form is:
 #   「タイプAの防振系のダンパーについて報告します。防振系のアライメントを確認してください。」
 SAMPLES = [
     "タイプaの防寒系のダンパーについて報告します。防寒系のアライメントを確認してください。",

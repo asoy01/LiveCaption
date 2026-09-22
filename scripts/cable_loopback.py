@@ -1,7 +1,7 @@
-"""VB-CABLE の配線を確認する。Zoomも会議もAPIも要らない。
+"""Check the VB-CABLE wiring. No Zoom, no meeting and no API needed.
 
-CABLE Input にテスト音を流し込みながら、本体と同じやり方で CABLE Output を開く。
-音が返ってくれば、仮想ケーブルは通っている。
+It plays a test tone into CABLE Input while opening CABLE Output the same way
+the engine does. If the sound comes back, the virtual cable is working.
 """
 import asyncio
 import sys
@@ -28,7 +28,7 @@ def find_device(name_part, hostapi_name, want_output):
 
 
 class Tone:
-    """別スレッドで CABLE Input にサイン波を出し続ける。"""
+    """Keep playing a sine wave into CABLE Input on a separate thread."""
 
     def __init__(self, device):
         self.device = device
@@ -61,10 +61,11 @@ class Tone:
 
 
 async def measure(capture, seconds=4.0):
-    """`seconds` 秒ぶん取り込んで、区間ごとの最大振幅を返す。
+    """Capture `seconds` of audio and return the peak level of each block.
 
-    **本体と同じ `chunks()` で取り出す。** 待ち行列を直接触らない。
-    音が1つも来なくても `wait_for` が時間で打ち切るので、必ず戻る。
+    **It reads through the same `chunks()` the engine uses.** It does not touch
+    the queue directly. Even if no sound arrives at all, `wait_for` stops on
+    time, so this always returns.
     """
     capture.start()
     peaks = []
@@ -77,7 +78,7 @@ async def measure(capture, seconds=4.0):
     try:
         await asyncio.wait_for(collect(), seconds)
     except asyncio.TimeoutError:
-        pass  # 時間で打ち切るのが正常な終わり方
+        pass  # stopping on time is the normal way this ends
     finally:
         capture.stop()
     return peaks

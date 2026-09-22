@@ -1,23 +1,26 @@
-"""Zoomの会議に入る・出る。**Linux（コンテナ）専用。**
+"""Join and leave a Zoom meeting. **Linux (container) only.**
 
-Windows 版は `zoom_join.py` にある。**あちらは凍結してある。触らない。**
-共通の部分（`parse_meeting` / `join_url` / `JoinError`）はあちらから借りる。
+The Windows version is in `zoom_join.py`. **That one is frozen. Do not touch
+it.** The shared parts (`parse_meeting` / `join_url` / `JoinError`) are
+borrowed from there.
 
-Windows との大きな違いは2つある。
+There are two large differences from Windows.
 
-1. **プレビュー窓が出る。** `enableShowPreviewWndToJoin=false` は効かない
-   （段階0で確かめた）。だから「Join」を押す段が要る。
-2. **入室と「音に入る」は別である。** Join のあとに
-   「Join with Computer Audio」を押すまで、音は1バイトも来ない。
+1. **A preview window appears.** `enableShowPreviewWndToJoin=false` has no
+   effect (confirmed in stage 0). So a step that presses "Join" is needed.
+2. **Joining the meeting and joining the audio are separate.** After Join,
+   not a single byte of audio arrives until "Join with Computer Audio" is
+   pressed.
 
-**ボタンは窓の角からの距離で押す。** 画面の絶対座標で持つと、窓の大きさや
-画面の解像度が変わった日に、黙って外れる。距離は実測で決めた（2026-09-21、
-1600x1200 の画面）。
+**Buttons are pressed at a distance from the corner of the window.** Holding
+absolute screen coordinates would break silently on the day the window size
+or the screen resolution changes. The distances were measured (2026-09-21, on
+a 1600x1200 screen).
 
-    プレビュー窓 638x532 のとき Join は画面 (1073, 1016)
-      → 右から 47、下から 49
-    音声ダイアログ 570x400 のとき Join with Computer Audio は (799, 563)
-      → 横は中央、上から 143
+    With a 638x532 preview window, Join is at screen (1073, 1016)
+      -> 47 from the right, 49 from the bottom
+    With a 570x400 audio dialog, Join with Computer Audio is at (799, 563)
+      -> centered horizontally, 143 from the top
 """
 
 from __future__ import annotations
@@ -31,53 +34,60 @@ from pathlib import Path
 from . import config
 from .zoom_join import JoinError, join_url, parse_meeting  # noqa: F401
 
-#: 会議の窓の名前。**コンテナの locale は固定してあるので英語である。**
-#: `zoom.zoom` というクラス名は全部の窓で同じなので、Windows のように
-#: クラスでは見分けられない（2026-09-21 に確かめた）。
+#: The names of the meeting window. **The container's locale is fixed, so
+#: they are in English.** The class name `zoom.zoom` is the same on every
+#: window, so windows cannot be told apart by class as they are on Windows
+#: (confirmed on 2026-09-21).
 MEETING_WINDOW_NAMES = frozenset({"Meeting", "Zoom Meeting"})
-#: 常駐の窓口。会議とは関係がない。
+#: The resident home window. It has nothing to do with a meeting.
 HOME_WINDOW_NAMES = frozenset({"Zoom Workplace", "Zoom"})
-#: 音声ダイアログの見分け方（部分一致）。
+#: How the audio dialog is recognized (substring match).
 AUDIO_DIALOG_HINT = "audio conference options"
 
-#: プレビュー窓と見なす最小の大きさ。
-#: **Zoom は細い通知窓を出す**（実測で `zoom` という名前の 850x74 が出た）。
-#: 名前だけで選ぶと、そちらを押しにいく。実物は 638x532 だった。
+#: The smallest size that counts as the preview window.
+#: **Zoom shows a thin notification window** (a 850x74 one named `zoom` was
+#: measured). Selecting by name alone would press that one instead. The real
+#: preview window was 638x532.
 MIN_PREVIEW_W = 300
 MIN_PREVIEW_H = 300
 
-#: ボタンの位置（上の実測）。
+#: Button positions (the measurements above).
 JOIN_FROM_RIGHT = 47
 JOIN_FROM_BOTTOM = 49
 AUDIO_FROM_TOP = 143
 
-#: それぞれの段を待つ秒数。
-#: **速いときは速い。** プロファイルが温まっていれば、プレビュー窓は 4 秒で
-#: 出て、参加から音が来るまで 2〜5 秒で終わる（2026-09-21 の実測）。
-#: ここを短くしないのは、冷えた起動と、混んでいる回線のためである。
+#: How many seconds to wait at each step.
+#: **When it is fast, it is fast.** With a warm profile, the preview window
+#: appears in 4 seconds, and audio arrives 2 to 5 seconds after joining
+#: (measured on 2026-09-21). These waits are not shortened because of cold
+#: starts and busy networks.
 PREVIEW_WAIT_SEC = 45.0
 AUDIO_DIALOG_WAIT_SEC = 45.0
 AUDIO_READY_WAIT_SEC = 20.0
 _POLL_SEC = 0.5
 
-#: クラッシュ報告の置き場。**空にしてから起こす。**
-#: 前回が不正終了だと「Zoom quit unexpectedly」が前面に出て、
-#: 座標で押す手順がそこで止まる。
+#: Where crash reports are kept. **Empty it before starting Zoom.**
+#: If the last run ended badly, "Zoom quit unexpectedly" comes to the front
+#: and the steps that press by coordinates stop there.
 CRASH_REPORT_DIR = Path.home() / ".zoom" / "reports"
 
-#: 参加のあと、窓の顔ぶれを何秒見張るか。**診断のためだけのものである。**
+#: How many seconds to watch which windows are present after joining.
+#: **This is for diagnosis only.**
 #:
-#: 「AI Companionは有効です。」のダイアログが**ほぼ毎回出る**（麻生、
-#: 2026-09-21）。手で閉じなくても字幕は出るので、**邪魔はしていない。**
-#: しかし名前も大きさも分かっていないので、`_preview_window()` が
-#: これを掴まない保証が無い。**いまの安全は順番の運で成り立っている。**
-#: プレビュー窓が先に出るから先に拾われているだけで、Zoom が既に
-#: 起動していて前の会議のダイアログが残っていれば、そちらを押しにいく。
+#: The "AI Companion is on" dialog appears **almost every time** (reported by
+#: a user, 2026-09-21). Captions appear without closing it by hand, so **it
+#: is not in the way.** But its name and size are not known, so there is no
+#: guarantee that `_preview_window()` will not grab it. **The safety we have
+#: now rests on luck in the ordering.** It is only because the preview window
+#: appears first that the preview window is picked up first; if Zoom is
+#: already running and a dialog from the previous meeting is still there,
+#: that one gets pressed.
 #:
-#: **このダイアログは会議に入った後に出るので、`join()` が返るまでには
-#: 見えない。** だから参加のあとも少しのあいだ見張る。
-#: **名前が分かったら `_preview_window()` の除外に足して、この見張りは
-#: まるごと消してよい。**
+#: **This dialog appears after the meeting is joined, so it is not visible
+#: before `join()` returns.** That is why the windows are watched for a while
+#: after joining as well.
+#: **Once the name is known, add it to the exclusions in
+#: `_preview_window()` and this watcher can be removed entirely.**
 WATCH_AFTER_JOIN_SEC = 20.0
 WATCH_STEP_SEC = 5.0
 
@@ -93,9 +103,10 @@ def _run(args: list[str], timeout: float = 10.0) -> str:
 
 
 def _pids() -> set[int]:
-    """Zoom 本体のプロセス。**`pgrep -f` は使わない。**
+    """The Zoom processes themselves. **Do not use `pgrep -f`.**
 
-    自分を起動した殻の命令行にも `zoom` の字が入るので、拾ってしまう。
+    The command line of the shell that started this program also contains the
+    word `zoom`, so it would be picked up too.
     """
     pids = set()
     for p in Path("/proc").iterdir():
@@ -112,16 +123,17 @@ def _pids() -> set[int]:
 
 
 def running() -> bool:
-    """Zoom が動いているか。
+    """Whether Zoom is running.
 
-    **これで「会議に入っているか」を判断してはいけない。** Zoom は会議を
-    抜けても常駐の窓口を残す。会議中かどうかは `in_meeting()` で見ること。
+    **Do not use this to decide whether we are in a meeting.** Zoom leaves
+    the resident home window behind after leaving a meeting. Use
+    `in_meeting()` to see whether a meeting is in progress.
     """
     return bool(_pids())
 
 
 def _windows() -> list[tuple[str, int, str]]:
-    """`(窓ID, PID, 名前)` の一覧。Zoom のものだけ。"""
+    """A list of `(window id, PID, name)`. Zoom's windows only."""
     pids = _pids()
     out = []
     for line in _run(["wmctrl", "-lp"]).splitlines():
@@ -134,7 +146,7 @@ def _windows() -> list[tuple[str, int, str]]:
 
 
 def _geometry(win_id: str) -> tuple[int, int, int, int] | None:
-    """`(x, y, 幅, 高さ)`。取れなければ None。"""
+    """`(x, y, width, height)`. None if it cannot be read."""
     vals = {}
     for line in _run(["xdotool", "getwindowgeometry", "--shell", win_id]).splitlines():
         if "=" in line:
@@ -148,27 +160,32 @@ def _geometry(win_id: str) -> tuple[int, int, int, int] | None:
 
 
 def _audio_attached() -> bool:
-    """Zoom が音を書き出しているか。**sink-input の有無で見る。**
+    """Whether Zoom is writing out audio. **Judged by whether a sink-input
+    exists.**
 
-    PulseAudio の言葉で、`meeting` と `mic` が **sink**（出力先）、
-    アプリがそこへ繋いだ音の流れが **sink-input** である。Zoom が会議の音声に
-    入ると sink-input が現れ、抜けると消える。
+    In PulseAudio terms, `meeting` and `mic` are **sinks** (outputs), and a
+    stream of audio that an application has connected to one is a
+    **sink-input**. When Zoom joins the meeting audio a sink-input appears,
+    and when it leaves the sink-input goes away.
 
-    **これがいちばん確かな「会議中」の印である。** 窓の名前は表示言語で
-    変わるが、これは変わらない。この箱で音を出すのは Zoom だけである。
+    **This is the most reliable sign that a meeting is in progress.** Window
+    names change with the display language; this does not. Zoom is the only
+    thing that plays audio in this container.
     """
     return bool(_run(["pactl", "list", "short", "sink-inputs"]).strip())
 
 
 def in_meeting() -> bool:
-    """いま会議に入っているか。
+    """Whether we are in a meeting right now.
 
-    **プロセスの有無では分からない。** Zoom は会議を抜けても常駐の窓口を
-    残すので、常時起動の機体ではほぼいつでも動いている。それを「会議中」と
-    読むと、**こちらが入れた会議から永遠に出なくなる。**
+    **The presence of the process does not tell you.** Zoom leaves the
+    resident home window behind after leaving a meeting, so on a machine that
+    runs all the time it is running almost always. Reading that as "in a
+    meeting" means **we never leave the meeting we joined.**
 
-    音（sink-input）を先に見て、無ければ窓の名前を見る。音はまだ繋がって
-    いないが会議の窓は出ている、という途中の状態があるためである。
+    Look at the audio (sink-input) first, and at the window names when there
+    is none. There is an in-between state where the audio is not connected
+    yet but the meeting window is already up.
     """
     if not running():
         return False
@@ -183,7 +200,8 @@ def _click(x: int, y: int) -> None:
 
 
 def _wait(predicate, limit: float):  # noqa: ANN001
-    """`predicate()` が真を返すまで待つ。返り値をそのまま返す。時間切れなら None。"""
+    """Wait until `predicate()` returns something true, and return that value
+    as it is. None when the time runs out."""
     deadline = time.monotonic() + limit
     while time.monotonic() < deadline:
         got = predicate()
@@ -194,9 +212,11 @@ def _wait(predicate, limit: float):  # noqa: ANN001
 
 
 def _preview_window() -> tuple[str, int, str] | None:
-    """プレビュー窓。**名前は会議の題名なので、前もっては分からない。**
+    """The preview window. **Its name is the meeting title, so it is not
+    known in advance.**
 
-    だから「常駐の窓口でも、会議の窓でも、音声ダイアログでもないもの」で拾う。
+    So it is picked up as "the window that is not the resident home window,
+    not the meeting window, and not the audio dialog".
     """
     known = {n.lower() for n in HOME_WINDOW_NAMES | MEETING_WINDOW_NAMES}
     for win in _windows():
@@ -218,10 +238,12 @@ def _audio_dialog() -> tuple[str, int, str] | None:
 
 
 def _label(name: str, geo: tuple[int, int, int, int] | None) -> str:
-    """その窓が何なのか。**`_preview_window()` と同じ条件で見ること。**
+    """What that window is. **Judge it by the same conditions as
+    `_preview_window()`.**
 
-    条件を別に書くと、ログが「候補ではない」と言っている窓を
-    `_preview_window()` が拾う日が来る。
+    If the conditions are written separately, a day will come when
+    `_preview_window()` picks up a window that the log says is not a
+    candidate.
     """
     low = name.lower()
     if low in {n.lower() for n in HOME_WINDOW_NAMES}:
@@ -238,11 +260,11 @@ def _label(name: str, geo: tuple[int, int, int, int] | None) -> str:
 
 
 def _log_windows(stage: str) -> None:
-    """見えている Zoom の窓を、名前と大きさで残す。
+    """Record the visible Zoom windows by name and size.
 
-    **窓の無い運用では `docker compose logs` だけが手がかりである。**
-    ここに出しておけば、次の実会議がそのまま記録になる。VNC を見張る人が
-    要らない。
+    **When the app runs without a display, `docker compose logs` is the only
+    clue.** Printing them here makes the next real meeting a record in
+    itself. Nobody has to sit and watch VNC.
     """
     try:
         wins = _windows()
@@ -260,13 +282,15 @@ def _log_windows(stage: str) -> None:
 
 
 def _watch_windows_later() -> None:
-    """参加のあとしばらく、窓の顔ぶれを残す。**別の糸で回す。**
+    """Record which windows are present for a while after joining. **Run it
+    on a separate thread.**
 
-    **`join()` を待たせてはいけない。** 待たせると、そのぶん字幕の生成も
-    チャットへの投稿も遅れる。診断のためだけのものに本筋を待たせない。
+    **`join()` must not be made to wait.** Making it wait delays the captions
+    and the chat posts by the same amount. Do not make the main work wait for
+    something that exists only for diagnosis.
 
-    糸は daemon にする。溜め込む待ちを持たないので、終了を妨げない
-    （`queue.get()` で居座る糸とは別物である）。
+    The thread is a daemon. It holds no blocking wait, so it does not get in
+    the way of shutdown (unlike a thread that sits in `queue.get()`).
     """
     def run() -> None:
         watched = 0.0
@@ -280,11 +304,12 @@ def _watch_windows_later() -> None:
 
 
 def join(text: str, name: str = "") -> str:
-    """Zoom を起こして会議に入らせる。投げたURLを返す。
+    """Start Zoom and make it join the meeting. Return the URL that was
+    passed.
 
-    **入れたかどうかは、ここでは分からない。** 待機室・パスコード違い・
-    更新のダイアログのどれに落ちても、Zoom は何も返さない。
-    **確認は音で取ること**（`in_meeting()` が sink-input を見ている）。
+    **Whether it got in is not known here.** Zoom returns nothing, whether it
+    lands in the waiting room, on a wrong passcode, or on an update dialog.
+    **Confirm by the audio** (`in_meeting()` looks at the sink-input).
     """
     confno, pwd = parse_meeting(text)
     url = join_url(confno, pwd, name)
@@ -295,8 +320,9 @@ def join(text: str, name: str = "") -> str:
             f"Zoom が見つからない（{config.ZOOM_CMD}）。\n"
             "  コンテナに Zoom が入っているか確かめること。")
 
-    # **クラッシュ報告を先に捨てる。** 前回が不正終了だと、起動した瞬間に
-    # 「Zoom quit unexpectedly」が前面に出て、下の座標クリックがそこで止まる。
+    # **Throw away the crash reports first.** If the last run ended badly,
+    # "Zoom quit unexpectedly" comes to the front the moment Zoom starts, and
+    # the coordinate clicks below stop there.
     try:
         for f in CRASH_REPORT_DIR.iterdir():
             if f.is_file():
@@ -311,8 +337,8 @@ def join(text: str, name: str = "") -> str:
     except OSError as exc:
         raise JoinError(f"Zoom を起こせない: {exc}") from exc
 
-    # --- プレビュー窓の「Join」 ---------------------------------------------
-    # **`enableShowPreviewWndToJoin=false` は効かない**（段階0）。
+    # --- The "Join" on the preview window ------------------------------------
+    # **`enableShowPreviewWndToJoin=false` has no effect** (stage 0).
     win = _wait(_preview_window, PREVIEW_WAIT_SEC)
     _log_windows("プレビュー窓を待った後")
     if win is None:
@@ -324,8 +350,9 @@ def join(text: str, name: str = "") -> str:
             x, y, w, h = geo
             _click(x + w - JOIN_FROM_RIGHT, y + h - JOIN_FROM_BOTTOM)
 
-    # --- 音声ダイアログの「Join with Computer Audio」 -----------------------
-    # **入室と「音に入る」は別の操作である。** ここを押すまで音は来ない。
+    # --- The "Join with Computer Audio" on the audio dialog ------------------
+    # **Joining the meeting and joining the audio are separate actions.** No
+    # audio arrives until this is pressed.
     dlg = _wait(_audio_dialog, AUDIO_DIALOG_WAIT_SEC)
     if dlg is None:
         print("  [参加] 音声ダイアログが出てこなかった。音は来ない見込み。")
@@ -335,22 +362,25 @@ def join(text: str, name: str = "") -> str:
             x, y, w, h = geo
             _click(x + w // 2, y + AUDIO_FROM_TOP)
 
-    # 音が来るまで待つ。**来なくても例外にしない。** 待機室で待たされている
-    # だけかもしれない。スケジューラ（schedule.py）が無音で畳む。
+    # Wait until audio arrives. **Do not raise when it does not.** We may
+    # just be held in the waiting room. The scheduler (schedule.py) closes
+    # things down on silence.
     _wait(_audio_attached, AUDIO_READY_WAIT_SEC)
     _log_windows("音に入った後")
 
-    # **AI Companion のダイアログは、ここから先に出る。** 別の糸に投げて、
-    # 本筋は待たせない（`WATCH_AFTER_JOIN_SEC` の説明を読むこと）。
+    # **The AI Companion dialog appears after this point.** Hand it to
+    # another thread and do not make the main work wait (read the note on
+    # `WATCH_AFTER_JOIN_SEC`).
     _watch_windows_later()
     return url
 
 
 def leave() -> bool:
-    """Zoom を終了させる。終了させたなら True。
+    """Quit Zoom. True if it was quit.
 
-    **会議から出る口は無い。** 終了させるしかない。
-    **こちらが会議に入れたときだけ呼ぶこと**（`schedule.py` が覚えている）。
+    **There is no way to leave a meeting.** Quitting is the only option.
+    **Call this only when we were the one who joined the meeting**
+    (`schedule.py` remembers that).
     """
     if not in_meeting():
         return False
@@ -358,7 +388,8 @@ def leave() -> bool:
     if not pids:
         return False
     _run(["pkill", "-TERM", "-f", "/opt/zoom/zoom"], timeout=15)
-    # 素直に落ちなければ切る。**残すと次の会議に入れない。**
+    # Kill it if it does not go down quietly. **If it stays, the next meeting
+    # cannot be joined.**
     deadline = time.monotonic() + 10.0
     while time.monotonic() < deadline and _pids():
         time.sleep(_POLL_SEC)

@@ -1,9 +1,11 @@
 #!/bin/sh
-# 字幕コンテナの入口。tailscaled を起こしてから本体を起動する。
+# The entry point of the caption container. It starts tailscaled, then the
+# engine.
 #
-# **Tailscale はこの箱の中にいる。** サイドカーではない。だから
-# `tailscaled.sock` の共有も、CLI の配り直しも要らない。本体の `tunnel.py` が
-# `shutil.which("tailscale")` で見つける CLI は、同じ箱の /usr/local/bin にある。
+# **Tailscale is inside this box.** It is not a sidecar. So there is no
+# `tailscaled.sock` to share and no CLI to copy around. The CLI that the
+# engine's `tunnel.py` finds with `shutil.which("tailscale")` is the one in
+# /usr/local/bin of the same box.
 set -eu
 
 STATE_DIR=/var/lib/tailscale
@@ -12,18 +14,22 @@ HOSTNAME_TS="${TS_HOSTNAME:-livecaption}"
 
 mkdir -p "$STATE_DIR" /var/run/tailscale
 
-# --- 音声 -------------------------------------------------------------------
-# **会議ソフトの音を、ホストを通さずに拾う。** ホストの音声装置を使わないのが、
-# ホストを選ばない作りの鍵である。出力先（sink）を2つ作る。
+# --- Audio ------------------------------------------------------------------
+# **Pick up the sound of the meeting software without going through the host.**
+# Not using the host's audio device is what makes this work on any host.
+# Two outputs (sinks) are created.
 #
-#   meeting … 会議ソフトの出力先。本体は meeting.monitor から録る
-#   mic     … 会議ソフトに渡す「無音のマイク」。**これが無いと音声に入れない**
+#   meeting … where the meeting software plays. The engine records from
+#             meeting.monitor
+#   mic     … a "silent microphone" handed to the meeting software.
+#             **Without it you cannot join the audio.**
 #
-# `sounddevice` からは `pulse` として見える（`/etc/asound.conf` と
-# `ALSA_PLUGIN_DIR`）。本体には `--device pulse` を渡すこと。
+# `sounddevice` sees them as `pulse` (see `/etc/asound.conf` and
+# `ALSA_PLUGIN_DIR`). Pass `--device pulse` to the engine.
 export XDG_RUNTIME_DIR=/tmp/xdg
 mkdir -p "$XDG_RUNTIME_DIR"
-# **残骸を消してから起こす。** 前回のソケットが残っていると立ち上がらない。
+# **Clear the leftovers before starting it.** It will not come up if the
+# socket from the last run is still there.
 rm -rf "$XDG_RUNTIME_DIR/pulse"
 pulseaudio -D --exit-idle-time=-1 --disable-shm --log-target=stderr \
            2>/var/log/pulseaudio.log
@@ -39,9 +45,10 @@ while ! pactl info >/dev/null 2>&1; do
 done
 
 if pactl info >/dev/null 2>&1; then
-  # **sink のレートを 48000 に揃える。** 既定の 44100 のままだと、会議ソフトの
-  # 48 kHz が 44.1k に落とされ、本体が 48 kHz で開くときにまた上げられる。
-  # リサンプルを2回通ると認識が目に見えて落ちる（段階3で実測した）。
+  # **Set the sink rate to 48000.** At the default 44100, the 48 kHz from the
+  # meeting software is dropped to 44.1k and then raised again when the engine
+  # opens the device at 48 kHz. Two resampling steps make recognition
+  # noticeably worse (measured in stage 3).
   pactl load-module module-null-sink sink_name=meeting rate=48000 \
         channels=2 format=s16le \
         sink_properties=device.description=meeting >/dev/null
@@ -49,18 +56,21 @@ if pactl info >/dev/null 2>&1; then
         channels=2 format=s16le \
         sink_properties=device.description=mic >/dev/null
   pactl set-default-sink meeting
-  # **本体が録るのはここである。** 会議ソフトには PULSE_SOURCE=mic.monitor を
-  # 別に渡す（会議ソフト側から見たマイクは無音でよい）。
+  # **This is where the engine records.** The meeting software gets
+  # PULSE_SOURCE=mic.monitor separately (the microphone it sees may be
+  # silent).
   pactl set-default-source meeting.monitor
   echo "音声:       meeting / mic を作った。本体は meeting.monitor から録る"
 fi
 
-# **状態はボリュームに置く。** これが消えると、Tailnet Lock の署名からやり直しに
-# なり、ホスト名も変わって、配ってあった閲覧URLが死ぬ。
+# **Keep the state on a volume.** If it is lost, you start again from the
+# Tailnet Lock signing, the host name changes, and the viewer URLs you handed
+# out stop working.
 tailscaled --state="$STATE_DIR/tailscaled.state" --socket="$SOCK" \
            --tun=tailscale0 >/var/log/tailscaled.log 2>&1 &
 
-# ソケットが開くまで待つ。開かないまま `tailscale up` を撃つと必ず失敗する。
+# Wait for the socket to open. Running `tailscale up` before it opens always
+# fails.
 i=0
 while [ ! -S "$SOCK" ]; do
   i=$((i + 1))
@@ -75,21 +85,24 @@ done
 if tailscale --socket="$SOCK" status >/dev/null 2>&1; then
   echo "Tailscale:  ログイン済み（状態はボリュームに残っている）"
 elif [ -n "${TS_AUTHKEY:-}" ]; then
-  # **署名済みの鍵を使うこと。** 麻生の tailnet は Tailnet Lock が有効なので、
-  # 署名の無い鍵で入ったノードは、登録はされても他のノードと話せない。
+  # **Use a signed key** if your tailnet has Tailnet Lock enabled. A node that
+  # joins with an unsigned key is registered, but it cannot talk to the other
+  # nodes.
   echo "Tailscale:  auth key で参加する（hostname=$HOSTNAME_TS）"
   tailscale --socket="$SOCK" up \
             --authkey="$TS_AUTHKEY" \
             --hostname="$HOSTNAME_TS" \
             --accept-dns=false || echo "Tailscale:  参加に失敗した。鍵と署名を確認すること。"
 else
-  # 配布版の既定。**秘密を .env に置かずに済む。** ログにURLが出る。
+  # The default for the distributed version. **No secret has to go in .env.**
+  # A URL appears in the log.
   echo "Tailscale:  TS_AUTHKEY が無い。下のURLを開いて手で繋ぐこと。"
   tailscale --socket="$SOCK" up --hostname="$HOSTNAME_TS" --accept-dns=false &
 fi
 
-# アドレスが載るまで少し待つ。**待たなくても起動は止めない。**
-# 本体は `--control-bind` のアドレスが取れなければ背景で取り直す。
+# Wait a little for the address to appear. **Do not hold up startup for it.**
+# If the engine cannot get the address for `--control-bind`, it retries in the
+# background.
 i=0
 while [ "$i" -lt 60 ]; do
   ADDR=$(tailscale --socket="$SOCK" ip -4 2>/dev/null || true)
@@ -102,12 +115,14 @@ while [ "$i" -lt 60 ]; do
 done
 [ -z "${ADDR:-}" ] && echo "Tailscale:  アドレスがまだ無い。本体は背景で取り直す。"
 
-# --- 用語対訳表 ---------------------------------------------------------------
-# **表はボリュームに置く。** 操作画面からアップロード・ダウンロード・削除できる
-# 利用者データであり、イメージに焼き込むと、足した表がコンテナの作り直しで消える。
+# --- Glossary ----------------------------------------------------------------
+# **Keep the tables on a volume.** They are user data that can be uploaded,
+# downloaded and deleted from the control page, so baking them into the image
+# means a table you added is lost when the container is rebuilt.
 #
-# 空のときだけ、イメージに入っている表を種として置く。**上書きはしない。**
-# 操作画面から直したものを、起動のたびに巻き戻すことになる。
+# Seed it with the tables in the image only when it is empty. **Never
+# overwrite.** That would roll back, at every start, what was edited from the
+# control page.
 GLOSS_DIR="${LIVECAPTION_GLOSSARY_DIR:-/app/local/glossary}"
 mkdir -p "$GLOSS_DIR"
 if [ -z "$(ls -A "$GLOSS_DIR" 2>/dev/null)" ] && [ -d /app/etc/glossary ]; then
@@ -117,12 +132,14 @@ else
   echo "用語集:     $GLOSS_DIR（$(ls -1 "$GLOSS_DIR"/*.tsv 2>/dev/null | wc -l) 個）"
 fi
 
-# --- 画面 -------------------------------------------------------------------
-# **会議ソフトを置くための画面である。** 人は見ない。中を見たいときは
-# LIVECAPTION_VNC=1 で起こして、http://<ホスト>:6080/vnc.html を開く。
+# --- Display ----------------------------------------------------------------
+# **This display exists to hold the meeting software.** Nobody looks at it. To
+# look inside, start it with LIVECAPTION_VNC=1 and open
+# http://<host>:6080/vnc.html.
 #
-# 窓の管理役（openbox）が要る。**無いと窓を前面に出せず、`wmctrl` も
-# 窓を見られない**（段階0で踏んだ）。`xdotool search` は WM 無しでも効く。
+# A window manager (openbox) is needed. **Without one you cannot bring a
+# window to the front, and `wmctrl` cannot see the windows either** (hit in
+# stage 0). `xdotool search` works even with no WM.
 export DISPLAY="${DISPLAY:-:99}"
 rm -f /tmp/.X99-lock
 Xvfb "$DISPLAY" -screen 0 "${LIVECAPTION_SCREEN:-1600x1200x24}" \
@@ -138,18 +155,22 @@ while ! xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; do
 done
 openbox >/var/log/openbox.log 2>&1 &
 
-# **xterm の既定は小さすぎて読めない。** VNC から中を触るときの端末なので、
-# 読める大きさと、日本語の出るフォントにしておく。
+# **The xterm defaults are too small to read.** This is the terminal you use
+# when you work inside from VNC, so make it a readable size with a font that
+# shows Japanese.
 #
-# **`UXTerm` のぶんも書くこと。** openbox の右クリックが起こすのは
-# `x-terminal-emulator` で、その実体は `uxterm`（UTF-8 版）である。
-# クラス名が `XTerm` ではなく `UXTerm` なので、片方だけでは当たらない。
+# **Write the `UXTerm` lines too.** A right-click in openbox starts
+# `x-terminal-emulator`, and what that really is is `uxterm` (the UTF-8
+# version). Its class name is `UXTerm`, not `XTerm`, so only one of the two
+# does not match.
 #
-# **毎回上書きする。** この設定はこちらのものである。変えるなら Dockerfile 側。
-# **CJK の等幅を直に指定してはいけない。** ASCII まで全角幅で描かれ、
-# 文字が間延びしたうえ、窓が画面からはみ出す（実測で 1874px、画面は 1600px）。
-# `monospace` にしておけば、fontconfig が半角の等幅を選び、日本語だけ
-# Noto CJK に落ちる。
+# **Overwrite it every time.** This setting belongs to us. Change it in the
+# Dockerfile instead.
+# **Do not name a CJK monospace font directly.** ASCII would then also be
+# drawn at full width: the text is stretched, and the window runs off the
+# screen (measured at 1874px, where the screen is 1600px).
+# With `monospace`, fontconfig picks a half-width monospace font and falls
+# back to Noto CJK for Japanese only.
 cat > "$HOME/.Xresources" <<'XRES'
 *faceName: monospace
 *faceSize: 12
@@ -164,10 +185,12 @@ xrdb -merge "$HOME/.Xresources" 2>/dev/null || true
 
 echo "画面:       $DISPLAY (${LIVECAPTION_SCREEN:-1600x1200x24})"
 
-# **Zoom の設定。** 既にあれば触らない。サインイン後の設定を消さないためである。
+# **The Zoom settings.** If they already exist, leave them alone, so that the
+# settings made after signing in are not lost.
 #
-# `speaker_volume` の既定は 0 である。つまみが左端のままで、PulseAudio 側が
-# 100% でも Zoom は無音を書き出す。**255 が最大。これが段階0で見つけた鍵である。**
+# `speaker_volume` defaults to 0. The slider stays at the far left, and Zoom
+# writes out silence even when PulseAudio is at 100%. **255 is the maximum.
+# This is the key we found in stage 0.**
 if [ ! -f "$HOME/.config/zoomus.conf" ]; then
   mkdir -p "$HOME/.config"
   cat > "$HOME/.config/zoomus.conf" <<'CONF'
@@ -183,10 +206,12 @@ CONF
   echo "Zoom:       設定を書いた（speaker_volume=255）"
 fi
 
-# **VNC はここでは起こさない。本体が持つ。**
-# 操作画面の「中の画面」から、会議中でも開け閉めできるようにするためである。
-# ここで起こすと、入口のシェルが `exec` で本体になったあと親が回収しないので、
-# 閉じるたびにゾンビが1つ残る。`LIVECAPTION_VNC=1` は本体が読み、
-# 「起動した時点から開けておく」の意味になる。
+# **VNC is not started here. The engine owns it.**
+# That is so you can open and close it from "the screen inside" on the control
+# page, even during a meeting.
+# If it were started here, the entrypoint shell becomes the engine with
+# `exec`, so no parent reaps the child, and one zombie is left behind every
+# time it is closed. `LIVECAPTION_VNC=1` is read by the engine and means
+# "keep it open from the moment it starts".
 
 exec pixi run --frozen python run.py "$@"

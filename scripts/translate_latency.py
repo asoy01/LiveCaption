@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""字幕1文ぶんの翻訳にかかる時間を測る。
+"""Measure how long it takes to translate one caption sentence.
 
     pixi run python scripts/translate_latency.py
 
-まとめて訳したときの値（1.7〜2.6秒）は本番の条件と違う。本番は1文ずつ送るので、
-実際の長さで測る。
+The numbers from translating in bulk (1.7 to 2.6 seconds) do not match the
+real conditions. In a meeting the sentences go out one at a time, so measure
+at the real length.
 
-入力は、ストリーミング認識が実際に返した日本語（KAGRA朝礼）。
+The input is Japanese that streaming recognition actually returned, from a
+morning meeting.
 
-**プロンプトと用語表の読み込みは本体（src/live_caption/）を使う。**
+**The prompt and the glossary are loaded through the engine
+(src/live_caption/).**
 """
 
 import sys
@@ -22,7 +25,8 @@ from live_caption.translator import build_system, chat  # noqa: E402
 
 MODELS = ["gpt-4.1-mini", "gpt-4.1-nano"]
 
-# gpt-live-transcribe が実際に返した文。1文ずつ送る想定。
+# Sentences that gpt-live-transcribe actually returned. They are meant to be
+# sent one at a time.
 SENTENCES = [
     "干渉計の方は先ほど言った通りというか、書いてある通りというところですが、藤本くんなんか追加コメントなりディスカッションなりありますか？",
     "その一昨日の時点ではなんかビートで見たときにS偏光しか入れてないのになんかピークが2つあるってことで、それは機材による複屈折によってこういう偏光が斜めの直線偏光になってるんじゃないかって思われていて。",

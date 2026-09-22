@@ -1,24 +1,26 @@
-# Docker のビルド文脈から外すもの。
+# What to keep out of the Docker build context.
 #
-# **`.env` を必ず外すこと。** COPY した覚えが無くても、文脈に入っていれば
-# 事故で焼き付く。鍵はイメージの層に残り、消せない。
+# **Always keep `.env` out.** Even if you never COPY it, anything in the
+# context can be baked in by accident. The key then stays in an image layer
+# and cannot be removed.
 .env
 
-# 履歴と、ホスト側の pixi 環境。コンテナの中では作り直す。
+# History, and the pixi environment on the host. The container builds its own.
 .git/
 .git-rewrite/
 .pixi/
 
-# Python の中間物。
+# Python intermediate files.
 __pycache__/
 **/__pycache__/
 *.pyc
 
-# 作業物と録音。**`local/` は数百MBある。** 試験用の音はボリュームで渡す。
+# Work files and recordings. **`local/` is several hundred MB.** Pass test
+# audio in on a volume.
 local/
 data/
 
-# Windows 専用の入口。コンテナでは使わない。
+# Windows-only entry points. The container does not use them.
 *.bat
 *.vbs
 *.ps1

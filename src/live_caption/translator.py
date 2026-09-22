@@ -1,17 +1,21 @@
-"""翻訳。**向きは会議ごとに選ぶ。**
+"""Translation. **The caption direction is chosen for each meeting.**
 
-- `ja2en`: 日本語は英語に訳し、英語はそのまま出す
-- `en2ja`: 英語は日本語に訳し、日本語はそのまま出す
+- `ja2en`: Japanese is translated into English, English is passed through
+- `en2ja`: English is translated into Japanese, Japanese is passed through
 
-どちらの向きでも、逆の言語が混ざったときはそのまま出す。会議の途中で主に話される
-言語が変わることがあるので、片方の言語だけを前提にできない。
+In both directions, text in the other language is passed through as it is. The
+language that is mainly spoken can change in the middle of a meeting, so neither
+direction can assume one language only.
 
-用語対訳表と置換規則をプロンプトに埋める。認識が漢字を外しても、ここで復元する。
-ただし**全部は救えない**。誤認識が「別の妥当な専門用語」に着地すると、
-流暢な誤訳が出る。認識側の品質も重要である（local/HANDOFF.md 参照）。
+The glossary and the replacement rules are embedded in the prompt. Even when
+speech recognition picks the wrong kanji, they are restored here. **Not
+everything can be saved, though.** When a misrecognition lands on another
+plausible technical term, the result is a fluent mistranslation. The quality of
+the recognition side matters as well.
 
-1文だけ切り出して訳すと指示語が壊れるので、直前の文を参考として渡す。
-訳すのは最後の1文だけ。
+Translating a single sentence on its own breaks the words that point back
+(pronouns and the like), so the preceding sentences are passed as context. Only
+the last sentence is translated.
 """
 
 from __future__ import annotations
@@ -95,7 +99,7 @@ SYSTEM_EN2JA = """\
 - 意味が取れない部分は、無理に訳さず、そのまま音写する。
 """
 
-# 向きから、使うシステムプロンプトを引く。
+# Look up the system prompt to use from the caption direction.
 SYSTEMS = {"ja2en": SYSTEM_JA2EN, "en2ja": SYSTEM_EN2JA}
 
 USER = """\
@@ -114,17 +118,20 @@ def build_system(
     max_chars: int | None = None,
     direction: str | None = None,
 ) -> str:
-    """システムプロンプトを組み立てる。
+    """Build the system prompt.
 
-    **これがこのシステムの中核である。** 本体も `scripts/` の実験もここを使う。
-    プロンプトを別々に持つと必ずずれるので、複製しないこと。
+    **This is the core of the system.** Both the main program and the
+    experiments in `scripts/` use it. Separate copies of the prompt always drift
+    apart, so do not copy it.
 
-    `direction` が None なら、いま選ばれている向き（`config.DIRECTION`）。
-    `max_chars` が None なら、その向きの1行の文字数（英語80 / 日本語40）。
+    If `direction` is None, the caption direction that is selected now
+    (`config.DIRECTION`) is used. If `max_chars` is None, the characters per
+    line of that direction is used (80 for English, 40 for Japanese).
 
-    **既定値引数で `config` の値を捕まえてはいけない。** 既定値引数は import の
-    ときに1回だけ評価されるので、向きの切り替えも `.env` の差し替えも効かなくなる。
-    ここで、呼ばれるたびに読む。
+    **Do not capture a value of `config` in a default argument.** A default
+    argument is evaluated once at import time, so neither switching the caption
+    direction nor replacing `.env` would take effect. The values are read here,
+    every time the function is called.
     """
     name = config.DIRECTION if direction is None else direction
     if max_chars is None:
@@ -138,7 +145,7 @@ def build_system(
 
 
 def chat(model: str, system: str, user: str, timeout: float = 180.0) -> tuple[str, float]:
-    """1回だけ問い合わせる。(本文, 所要秒) を返す。同期。"""
+    """Make one request. Return (body, seconds taken). Synchronous."""
     body = {
         "model": model,
         "messages": [
@@ -173,20 +180,24 @@ class Translator:
         )
 
     def remember(self, target: str) -> None:
-        """訳せた文を文脈に足す。先回りの翻訳が採用されたときに、呼ぶ側から呼ぶ。"""
+        """Add a translated sentence to the context. The caller calls this when
+        an early translation is accepted."""
         self.history.append(target)
         del self.history[:-config.CONTEXT_SENTENCES]
 
     async def translate(self, target: str, *, remember: bool = True) -> tuple[list[str], float]:
-        """1文を訳して、(字幕の行, 所要秒) を返す。失敗したら空リスト。
+        """Translate one sentence and return (caption lines, seconds taken). On
+        failure, an empty list.
 
-        **所要秒は戻り値で返す。属性に置いてはいけない。** 翻訳は最大4本が
-        同時に走るので、共有の属性に書くと、読むときには別の文の値になっている。
+        **The seconds taken are returned, not stored in an attribute.** Up to 4
+        translations run at the same time, so a shared attribute would already
+        hold the value of another sentence by the time it is read.
 
-        `remember=False` は先回りの翻訳のためにある。**投げ捨てる可能性のある
-        文を文脈に混ぜてはいけない。** 先回りは1分に数回走って大半が捨てられるので、
-        混ぜると、直前3文の枠が言いかけの断片で埋まる。採用が決まってから
-        `remember()` を呼ぶこと。
+        `remember=False` exists for the early translation. **A sentence that may
+        be thrown away must not be mixed into the context.** The early
+        translation runs several times a minute and most of its results are
+        discarded, so mixing them in would fill the 3-sentence context with
+        half-spoken fragments. Call `remember()` once the result is accepted.
         """
         try:
             text, took = await asyncio.to_thread(self._request, target)
@@ -194,11 +205,12 @@ class Translator:
             detail = e.read().decode("utf-8", "replace")[:200]
             print(f"  [翻訳の失敗] HTTP {e.code} {detail}")
             return [], 0.0
-        except Exception as e:  # noqa: BLE001 - 会議中に落とさない
+        except Exception as e:  # noqa: BLE001 - never crash during a meeting
             print(f"  [翻訳の失敗] {type(e).__name__}: {e}")
             return [], 0.0
 
-        # 訳した文だけを文脈に足す。失敗した文は足さない。
+        # Only a translated sentence is added to the context. A sentence that
+        # failed is not added.
         if remember:
             self.remember(target)
 
@@ -207,11 +219,13 @@ class Translator:
 
 
 def _wrap(line: str, limit: int) -> list[str]:
-    """モデルが長い行を返したときの保険。単語の切れ目で折る。
+    """A safety net for when the model returns a long line. It wraps at word
+    boundaries.
 
-    **日本語には空白が無い。** 空白で折るだけだと、長い日本語の行がそのまま
-    通ってしまい、保険にならない。空白が無い行は句読点で折り、それも無ければ
-    文字数で切る。
+    **Japanese has no spaces.** Wrapping at spaces alone would let a long
+    Japanese line through untouched, which is no safety net at all. A line with
+    no spaces is wrapped at punctuation, and when there is none, by character
+    count.
     """
     if len(line) <= limit:
         return [line]
@@ -230,23 +244,31 @@ def _wrap(line: str, limit: int) -> list[str]:
 
 
 def _wrap_ja(line: str, limit: int) -> list[str]:
-    """空白の無い行を折る。読点・句点を優先し、無ければ文字数で切る。
+    """Wrap a line that has no spaces. Japanese commas and periods come first,
+    and when there are none, it cuts by character count.
 
-    **行数を先に決めて、幅を均す。** 端から `limit` で切ると、42文字の行が
-    「40文字」と「す。」に割れる。1〜2文字の行は字幕として読めない。
+    **Decide the number of lines first, then even out the width.** Cutting at
+    `limit` from the start would split a 42-character line into one of 40
+    characters and one of 2. A line of 1 or 2 characters cannot be read as a
+    caption.
     """
     out = []
     while len(line) > limit:
-        # **毎回、残りの長さから割り直す。** 最初に決めた幅のまま切り進めると、
-        # 区切りの位置で余りがずれて、最後に「す。」だけの行が残る。
-        pieces = -(-len(line) // limit)      # 何行に割るか（切り上げ）
-        width = -(-len(line) // pieces)      # 均した幅
+        # **Divide again from the remaining length every time.** Cutting on with
+        # the width decided at the start makes the remainder drift at each
+        # break, and the last line ends up holding 2 characters.
+        pieces = -(-len(line) // limit)      # How many lines to divide into
+                                             # (rounded up)
+        width = -(-len(line) // pieces)      # The evened-out width
         window = line[:width]
         cut = max(window.rfind(mark) + len(mark) for mark in ("、", "。", "，", "・"))
-        # あまり手前で切ると細切れになる。後半に区切りが無ければ文字数で切る。
+        # Cutting too early makes the lines tiny. When there is no break in the
+        # second half, cut by character count.
         if cut <= width // 2:
             cut = width
-            # **行の頭に句読点や閉じ括弧を置かない。** 1文字ぶん前の行へ送る。
+            # **Do not put punctuation or a closing bracket at the head of a
+            # line.** Move it back to the previous line, one character at a
+            # time.
             while line[cut: cut + 1] in ("、", "。", "，", "．", "・", "」", "）", "』"):
                 cut += 1
         out.append(line[:cut].strip())

@@ -1,40 +1,50 @@
-"""参加者に閲覧URLを配るための出口。経路は2つあり、操作画面で選ぶ。
+"""The exit that gives participants a viewer URL. There are two routes, and
+the control page chooses between them.
 
-**Cloudflare の一時トンネル**（`Tunnel`）。`cloudflared` を子プロセスで起こし、
-出力に現れる `https://<ランダムな語>.trycloudflare.com` を拾う。
+**Cloudflare temporary tunnel** (`Tunnel`). Start `cloudflared` as a child
+process and pick up the `https://<random words>.trycloudflare.com` that
+appears in its output.
 
     cloudflared tunnel --url http://127.0.0.1:8080
 
-**Tailscale Funnel**（`Funnel`）。`tailscale` に配信を設定させる。
+**Tailscale Funnel** (`Funnel`). Let `tailscale` set up the delivery.
 
     tailscale funnel --bg 8080
 
-どちらを使うかは `Delivery` が持つ。下の比較が選ぶときの基準である。
+`Delivery` holds which one is used. The table below is the basis for the
+choice.
 
 | | Cloudflare | Tailscale |
 |---|---|---|
-| URL | **起動のたびに変わる** | **変わらない** |
-| 準備 | 要らない | tailnet の設定が1回 |
-| 前もってURLを配れるか | 配れない | **配れる** |
+| URL | **changes on every start** | **does not change** |
+| Preparation | none | one tailnet setup |
+| Can the URL be given out in advance? | no | **yes** |
 
-**会議のURLを前もって案内に載せたいなら Tailscale を選ぶ。** ホスト名が
-変わらないので、`meetings.py` が作る経路と合わせればURL全体が前日に決まる。
+**Choose Tailscale when the meeting URL has to go into the announcement in
+advance.** The host name does not change, so combined with the path that
+`meetings.py` builds, the whole URL is fixed the day before.
 
-**接続は字幕PCから外向きに張られる。** 着信は要らない。ポート開放も、ルータの
-設定も、管理者への申請もいらない。学内LAN・会議室のWiFi・テザリングのどれでも通る。
+**The connection is made outward from the caption PC.** No incoming
+connection is needed. No port forwarding, no router setup, and no request to
+an administrator. It works on the campus LAN, on meeting room WiFi, and on
+tethering.
 
-**アカウントもドメインも要らない。** 代わりに次の制約がある（Cloudflareが明記）。
+**No account and no domain are needed.** In exchange there are the following
+limits (Cloudflare states them).
 
-- URLは起動のたびに変わる。前のURLは死ぬ
-- SLAが無い。「テストと開発用」と書かれている
-- 同時のリクエストは200まで。長ポーリングは1人が1本占めるので、これが人数の上限になる
-- **Server-Sent Events が使えない。** だから `web.py` は長ポーリングにしてある
+- The URL changes on every start. The previous URL dies
+- There is no SLA. It is described as being for testing and development
+- Up to 200 concurrent requests. Long polling takes one per person, so this
+  is the limit on the number of viewers
+- **Server-Sent Events do not work.** That is why `web.py` uses long polling
 
-**既定では張らない。** 会議の字幕は Cloudflare を通り、TLSもそこで終わる。
-未公開の観測結果を扱う会議では、画面共有（外に出ない）に留めること。
-使うときだけ、操作画面から開始する。
+**No tunnel is set up by default.** Meeting captions pass through Cloudflare,
+and TLS terminates there. For meetings that handle unpublished observation
+results, keep to screen sharing, which does not leave the room. Start the
+tunnel from the control page only when it is needed.
 
-`cloudflared` が無くても本体は止めない。画面共有とZoom字幕APIは使えるためである。
+The app does not stop when `cloudflared` is missing, because screen sharing
+and the Zoom caption API still work.
 """
 
 from __future__ import annotations
@@ -50,9 +60,9 @@ from pathlib import Path
 
 from . import config
 
-# cloudflared が出す一時トンネルのURL。
+# The temporary tunnel URL that cloudflared prints.
 URL_RE = re.compile(r"https://[a-z0-9][a-z0-9-]*\.trycloudflare\.com")
-# 失敗したときに見せる出力の行数。
+# How many output lines to show when it fails.
 TAIL_LINES = 40
 
 INSTALL_HINT = (
@@ -66,7 +76,7 @@ INSTALL_HINT = (
 
 
 def find_cloudflared(explicit: str | None = None) -> str | None:
-    """`cloudflared` の場所を返す。見つからなければ None。"""
+    """Return where `cloudflared` is. None if it is not found."""
     if explicit:
         return explicit if Path(explicit).exists() else None
     found = shutil.which(config.TUNNEL_CMD)
@@ -76,10 +86,11 @@ def find_cloudflared(explicit: str | None = None) -> str | None:
 
 
 class Tunnel:
-    """`cloudflared` の子プロセス1つぶん。
+    """One `cloudflared` child process.
 
-    状態は4つ。`off` → `starting` → `on`、または `error`。
-    **操作画面（HTTPサーバのスレッド）から開始・停止される。** `_lock` で守る。
+    There are four states: `off` -> `starting` -> `on`, or `error`.
+    **It is started and stopped from the control page (a thread of the HTTP
+    server).** `_lock` protects it.
     """
 
     def __init__(self, port: int, command: str | None = None) -> None:
@@ -91,10 +102,10 @@ class Tunnel:
         self._url = ""
         self._error = ""
         self._tail: list[str] = []
-        # URLが出たときに呼ぶ。画面の表示を揃えるために使う。
+        # Called when the URL appears. Used to keep the screens in step.
         self.on_change = None
 
-    # --- 状態 ---------------------------------------------------------------
+    # --- State --------------------------------------------------------------
 
     def status(self) -> dict:
         with self._lock:
@@ -110,10 +121,10 @@ class Tunnel:
         with self._lock:
             return self._url
 
-    # --- 起動と停止 ---------------------------------------------------------
+    # --- Start and stop -----------------------------------------------------
 
     def start(self) -> dict:
-        """トンネルを張る。**すぐ返る。** URLは後から出てくる。"""
+        """Set up the tunnel. **Returns at once.** The URL appears later."""
         with self._lock:
             if self._state in ("starting", "on"):
                 return self._status_locked()
@@ -131,7 +142,8 @@ class Tunnel:
                     encoding="utf-8",
                     errors="replace",
                     bufsize=1,
-                    # 端末の Ctrl+C を子に飛ばさない。停止はこちらから行う。
+                    # Do not pass the terminal's Ctrl+C to the child. We stop
+                    # it ourselves.
                     creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
                 )
             except OSError as exc:
@@ -147,7 +159,7 @@ class Tunnel:
         return self.status()
 
     def stop(self) -> dict:
-        """トンネルを畳む。URLはその場で死ぬ。"""
+        """Take the tunnel down. The URL dies on the spot."""
         with self._lock:
             was = self._state
             proc, self._proc = self._proc, None
@@ -158,21 +170,23 @@ class Tunnel:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 proc.kill()
-        # 張っていなかったなら黙って戻る。終了のたびに「止めた」と出したくない。
+        # If no tunnel was up, return quietly. We do not want to print
+        # "stopped" on every exit.
         if was != "off":
             self._changed()
         return self.status()
 
-    # --- 子プロセスの見張り -------------------------------------------------
+    # --- Watching the child process -----------------------------------------
 
     def _read(self, proc: subprocess.Popen) -> None:
-        """出力からURLを拾う。失敗したときのために末尾も溜める。"""
+        """Pick the URL out of the output. Also keep the last lines, in case
+        it fails."""
         assert proc.stdout is not None
         for line in proc.stdout:
             line = line.rstrip()
             with self._lock:
                 if self._proc is not proc:
-                    return  # stop() 済み。もう関係ない
+                    return  # stop() already ran. This process no longer matters
                 self._tail.append(line)
                 if len(self._tail) > TAIL_LINES:
                     del self._tail[: len(self._tail) - TAIL_LINES]
@@ -183,7 +197,7 @@ class Tunnel:
             if found:
                 self._changed()
 
-        # 出力が終わった＝プロセスが終わった。
+        # The output ended, which means the process ended.
         with self._lock:
             if self._proc is not proc:
                 return
@@ -195,7 +209,7 @@ class Tunnel:
         self._changed()
 
     def _watch(self, proc: subprocess.Popen, started: float) -> None:
-        """URLが出ないまま時間切れになったら、失敗として見せる。"""
+        """If the time runs out with no URL, show it as a failure."""
         time.sleep(config.TUNNEL_TIMEOUT_SEC)
         with self._lock:
             if self._proc is not proc or self._state != "starting":
@@ -228,8 +242,8 @@ FUNNEL_HINT = (
     "tailscale が見つからない。字幕PCに Tailscale を入れて、サインインすること。\n"
     "  https://tailscale.com/download/windows"
 )
-# Funnel を初めて使うときは、tailnet 側で2つ有効にする必要がある。
-# どちらも `tailscale funnel` が同意のページを開いて案内する。
+# The first time Funnel is used, two things must be enabled on the tailnet
+# side. For both, `tailscale funnel` opens a consent page and guides the user.
 FUNNEL_SETUP_HINT = (
     "Tailscale Funnel が有効になっていない。字幕PCで一度だけ次を実行し、\n"
     "ブラウザに出る同意のページを通すこと（tailnet の管理者権限が要る）。\n"
@@ -239,7 +253,7 @@ FUNNEL_SETUP_HINT = (
 
 
 def find_tailscale(explicit: str | None = None) -> str | None:
-    """`tailscale` の場所を返す。見つからなければ None。"""
+    """Return where `tailscale` is. None if it is not found."""
     if explicit:
         return explicit if Path(explicit).exists() else None
     found = shutil.which(config.TAILSCALE_CMD)
@@ -248,26 +262,29 @@ def find_tailscale(explicit: str | None = None) -> str | None:
     return str(config.TAILSCALE_LOCAL) if config.TAILSCALE_LOCAL.exists() else None
 
 
-# --- tailnet の中だけに https で出す（`tailscale serve`） ---------------------
+# --- Serve over https inside the tailnet only (`tailscale serve`) ------------
 #
-# **これは配信（Funnel）とは別物である。** Funnel は誰でも見られる。`serve` は
-# tailnet の中からしか届かない。操作画面と noVNC を https にするために使う。
+# **This is not the same thing as delivery (Funnel).** Funnel can be seen by
+# anyone. `serve` can only be reached from inside the tailnet. It is used to
+# put the control page and noVNC on https.
 #
-# **証明書は Tailscale が取って、更新まで面倒を見る。** `tailscale cert` を
-# 自分で回す必要はない。名前は完全名（`<機体>.<tailnet>.ts.net`）になるので、
-# 短い名前やIPで開くと証明書が合わない。
+# **Tailscale obtains the certificate and takes care of renewing it.** There
+# is no need to run `tailscale cert` yourself. The name is the full name
+# (`<machine>.<tailnet>.ts.net`), so opening a short name or an IP address
+# does not match the certificate.
 #
-# **`reset` を使ってはいけない。** `serve` と `funnel` は同じ設定を共有するので、
-# 片方を消すつもりで両方消すことになる。止めるときはポートを指定する。
-# 配信の停止は `funnel --https=443 off` で443だけを落としており、こちらの
-# 8443 / 6443 は巻き添えにならない（2026-09-21 に実測した）。
+# **Do not use `reset`.** `serve` and `funnel` share the same settings, so
+# clearing one clears both. Specify the port when stopping. Stopping delivery
+# uses `funnel --https=443 off`, which takes down only 443, so 8443 / 6443
+# here are not caught up in it (measured on 2026-09-21).
 
 
 def serve_https(public_port: int, local_port: int) -> str:
-    """`https://<完全名>:<public_port>` を `127.0.0.1:<local_port>` に繋ぐ。
+    """Connect `https://<full name>:<public_port>` to
+    `127.0.0.1:<local_port>`.
 
-    失敗したときだけ理由を返す。成功なら空。**失敗しても呼ぶ側は止まらない。**
-    https は便利だが、無くても http で使える。
+    Return a reason only on failure. Empty on success. **The caller does not
+    stop on failure.** https is convenient, but without it http still works.
     """
     exe = find_tailscale()
     if exe is None:
@@ -287,7 +304,7 @@ def serve_https(public_port: int, local_port: int) -> str:
 
 
 def serve_off(public_port: int) -> None:
-    """`serve` の1本だけを止める。**`reset` は使わない。**"""
+    """Stop just this one `serve`. **Do not use `reset`.**"""
     exe = find_tailscale()
     if exe is None:
         return
@@ -302,25 +319,30 @@ def serve_off(public_port: int) -> None:
         pass
 
 
-# 直前に調べたホスト名を覚えておく。`(調べた時刻, ホスト名, 失敗の理由)`。
+# Remember the host name that was looked up last.
+# `(time of the lookup, host name, reason for failure)`.
 _HOST_CACHE: tuple[float, str, str] = (0.0, "", "")
 _HOST_CACHE_LOCK = threading.Lock()
 
 
 def tailscale_host(command: str | None = None, max_age: float | None = None
                    ) -> tuple[str, str]:
-    """このPCの tailnet 上のホスト名を返す。`(ホスト名, 失敗の理由)`。
+    """Return this PC's host name on the tailnet. `(host name, reason for
+    failure)`.
 
-    **配信していなくても分かる。** これが Tailscale を選ぶ理由である。会議の前日に
-    URLを確定して、案内に載せられる。
+    **It is known even when nothing is being delivered.** This is the reason
+    to choose Tailscale. The URL can be fixed the day before the meeting and
+    put into the announcement.
 
-        tailscale status --json  →  Self.DNSName  →  livecaption.tail1234.ts.net
+        tailscale status --json  ->  Self.DNSName  ->  livecaption.tail1234.ts.net
 
-    **結果を少しのあいだ覚える。** ここは `Funnel.status()` から呼ばれ、
-    `status()` は操作画面が2秒ごとに叩く `/api/status` から呼ばれる。覚えないと、
-    **画面を開いているあいだ2秒ごとにプロセスを1つ起こす。** 常駐させる機体では
-    1日に数万回になる。ホスト名が変わるのは機体の名前を変えたときだけなので、
-    古い値で困ることはない。`max_age=0` で必ず取り直す。
+    **Remember the result for a short time.** This is called from
+    `Funnel.status()`, and `status()` is called from `/api/status`, which the
+    control page hits every 2 seconds. Without the cache, **one process would
+    be started every 2 seconds while the page is open.** On a machine that
+    runs all the time, that is tens of thousands of times a day. The host
+    name changes only when the machine is renamed, so an old value causes no
+    trouble. `max_age=0` always looks it up again.
     """
     age = config.TAILSCALE_HOST_CACHE_SEC if max_age is None else max_age
     now = time.monotonic()
@@ -336,13 +358,14 @@ def tailscale_host(command: str | None = None, max_age: float | None = None
 
 
 def is_tailscale_addr(addr: str) -> bool:
-    """Tailscale が配る範囲のアドレスかどうか。
+    """Whether the address is in the range Tailscale hands out.
 
-    **操作画面を出してよい範囲を、ここ1か所で決める。** 汎用のバインド指定に
-    してはいけない。`0.0.0.0` と書けば、認証の無い操作画面が学内LANの全員に
-    見えてしまう。Tailscale の範囲だけを通す。
+    **This one place decides the range the control page may be exposed on.**
+    It must not become a general bind option. Writing `0.0.0.0` would make
+    the control page, which has no authentication, visible to everyone on the
+    campus LAN. Allow only the Tailscale range.
 
-        IPv4  100.64.0.0/10   （Tailscale が使う CGNAT の範囲）
+        IPv4  100.64.0.0/10   (the CGNAT range Tailscale uses)
         IPv6  fd7a:115c:a1e0::/48
     """
     try:
@@ -353,10 +376,11 @@ def is_tailscale_addr(addr: str) -> bool:
 
 
 def tailscale_addrs(command: str | None = None) -> list[str]:
-    """このPCの tailnet 上のIP。繋がっていなければ空。
+    """This PC's IP addresses on the tailnet. Empty when it is not connected.
 
-    **手で書かせない。** IPは機体ごとに違うし、書き間違えると
-    「操作画面が出ない」のか「別のアドレスに出ている」のか分からなくなる。
+    **Do not make the user type them.** The IP differs from machine to
+    machine, and after a typo you cannot tell whether the control page is not
+    up at all or is up at a different address.
     """
     exe = find_tailscale(command)
     if exe is None:
@@ -379,7 +403,7 @@ def tailscale_addrs(command: str | None = None) -> list[str]:
 
 
 def _tailscale_host_now(command: str | None = None) -> tuple[str, str]:
-    """実際に `tailscale status --json` を起こして調べる。"""
+    """Actually run `tailscale status --json` and look it up."""
     exe = find_tailscale(command)
     if exe is None:
         return "", FUNNEL_HINT
@@ -400,7 +424,7 @@ def _tailscale_host_now(command: str | None = None) -> tuple[str, str]:
     if state.get("BackendState") != "Running":
         return "", ("Tailscale が繋がっていない"
                     f"（{state.get('BackendState', '状態不明')}）。サインインすること。")
-    # 末尾の点を落とす。DNSの正式表記のままURLに入れない。
+    # Drop the trailing dot. Do not put the formal DNS spelling into a URL.
     name = str((state.get("Self") or {}).get("DNSName", "")).rstrip(".")
     if not name:
         return "", "tailscale status にホスト名が無い。MagicDNS を有効にすること。"
@@ -408,12 +432,14 @@ def _tailscale_host_now(command: str | None = None) -> tuple[str, str]:
 
 
 class Funnel:
-    """Tailscale Funnel ぶん。`Tunnel` と同じ形で使える。
+    """The Tailscale Funnel side. It is used the same way as `Tunnel`.
 
-    **子プロセスは残さない。** `tailscale funnel --bg` は設定を書いて終わる。
-    配信そのものは tailscaled が続ける。だから `Tunnel` のような見張りが要らない。
+    **No child process is left behind.** `tailscale funnel --bg` writes the
+    settings and exits. The delivery itself is carried on by tailscaled. So
+    no watcher like the one in `Tunnel` is needed.
 
-    **URLは始める前から分かる。** `tailscale_host()` がホスト名を返す。
+    **The URL is known before delivery starts.** `tailscale_host()` returns
+    the host name.
     """
 
     def __init__(self, port: int, command: str | None = None) -> None:
@@ -425,10 +451,11 @@ class Funnel:
         self._error = ""
         self.on_change = None
 
-    # --- 状態 ---------------------------------------------------------------
+    # --- State --------------------------------------------------------------
 
     def base_url(self) -> str:
-        """配信していなくても分かる土台のURL。分からなければ空。"""
+        """The base URL, known even when nothing is being delivered. Empty
+        when it is not known."""
         host, _ = tailscale_host(self.command)
         return f"https://{host}" if host else ""
 
@@ -451,10 +478,11 @@ class Funnel:
         with self._lock:
             return self._url
 
-    # --- 起動と停止 ---------------------------------------------------------
+    # --- Start and stop -----------------------------------------------------
 
     def start(self) -> dict:
-        """配信を始める。**`Tunnel` と違い、戻ったときにはもう繋がっている。**"""
+        """Start delivery. **Unlike `Tunnel`, the connection is already up
+        when this returns.**"""
         exe = find_tailscale(self.command)
         if exe is None:
             with self._lock:
@@ -470,12 +498,13 @@ class Funnel:
             self._state, self._error = "starting", ""
         try:
             out = subprocess.run(
-                # **`--yes` を付けない。** 付けると、tailnet 側の設定
-                # （HTTPS証明書の発行と、ポリシーへの funnel 属性の追加）を
-                # **人の同意なしに書き換えてしまう。** tailnet の設定は、
-                # この機体1台の話ではない。有効化は人が1度だけ行うものとし、
-                # ここでは「まだ有効になっていない」と報せるに留める。
-                # 待ち受けに落ちないよう、標準入力は塞いでおく。
+                # **Do not add `--yes`.** With it, the tailnet settings (the
+                # issuing of the HTTPS certificate and the adding of the
+                # funnel attribute to the policy) **would be changed without
+                # a person's consent.** The tailnet settings are not about
+                # this one machine. Enabling is something a person does once,
+                # and here we only report that it is not enabled yet.
+                # Close standard input so the command cannot sit and wait.
                 [exe, "funnel", "--bg",
                  f"--https={config.FUNNEL_PUBLIC_PORT}", str(self.port)],
                 stdin=subprocess.DEVNULL,
@@ -490,7 +519,8 @@ class Funnel:
             return self.status()
 
         if out.returncode != 0:
-            # **有効化がまだ、という失敗が一番多い。** そのときは手順を出す。
+            # **The most common failure is that it is not enabled yet.**
+            # In that case, print the steps.
             text = ((out.stderr or "") + (out.stdout or "")).strip()
             low = text.lower()
             hint = FUNNEL_SETUP_HINT if ("funnel" in low and
@@ -509,7 +539,8 @@ class Funnel:
         return self.status()
 
     def stop(self) -> dict:
-        """配信を畳む。**設定ごと消す。** URLはその場で死ぬ。"""
+        """Take delivery down. **The settings are removed with it.** The URL
+        dies on the spot."""
         exe = find_tailscale(self.command)
         with self._lock:
             was = self._state
@@ -525,8 +556,9 @@ class Funnel:
                 )
             except (OSError, subprocess.SubprocessError) as exc:
                 with self._lock:
-                    # **`reset` を勧めてはいけない。** `serve` の設定も一緒に消える。
-                    # 操作画面を tailnet に出していると、そこへの経路まで巻き添えになる。
+                    # **Do not suggest `reset`.** It would clear the `serve`
+                    # settings too. If the control page is exposed on the
+                    # tailnet, the path to it would be taken down as well.
                     self._error = (
                         "止められなかった。手で次を打つこと: "
                         f"tailscale funnel --https={config.FUNNEL_PUBLIC_PORT} off"
@@ -541,15 +573,17 @@ class Funnel:
 
 
 # =========================================================================
-# 経路の切り替え
+# Switching the route
 # =========================================================================
 
 
 class Delivery:
-    """配信の経路を1つにまとめる。**操作画面からは、これしか見えない。**
+    """Bring the delivery routes together into one. **This is all the
+    control page sees.**
 
-    2つの経路を両方とも持っておき、選ばれている方に流す。持ち替えるときは、
-    **前の経路を必ず止める。** 止めずに切り替えると、消せないトンネルが残る。
+    Hold both routes, and send to the one that is selected. When switching,
+    **always stop the previous route.** Switching without stopping leaves
+    behind a tunnel that cannot be taken down.
     """
 
     def __init__(self, port: int, kind: str | None = None,
@@ -560,7 +594,7 @@ class Delivery:
         self._kind = kind if kind in config.TUNNEL_KINDS else config.tunnel_kind_selection()
         self._on_change = None
 
-    # --- 経路 ---------------------------------------------------------------
+    # --- Route --------------------------------------------------------------
 
     @property
     def kind(self) -> str:
@@ -581,7 +615,7 @@ class Delivery:
         self.tailscale.on_change = fn
 
     def select(self, kind: str) -> dict:
-        """経路を選び直す。**張ってあるものは先に止める。**"""
+        """Select the route again. **Stop what is already up first.**"""
         kind = str(kind)
         if kind not in config.TUNNEL_KINDS:
             raise ValueError(f"経路が違う: 「{kind}」。{' / '.join(config.TUNNEL_KINDS)} のどちらか。")
@@ -593,10 +627,11 @@ class Delivery:
                 self._on_change()
         return self.status()
 
-    # --- 委譲 ---------------------------------------------------------------
+    # --- Delegation ---------------------------------------------------------
 
     def base_url(self) -> str:
-        """会議のURLを組み立てる土台。**Cloudflare では張るまで空。**"""
+        """The base for building the meeting URL. **With Cloudflare it is
+        empty until the tunnel is up.**"""
         if self._kind == "tailscale":
             return self.tailscale.base_url()
         return self.cloudflare.url
@@ -614,7 +649,7 @@ class Delivery:
         return self.status()
 
     def stop_all(self) -> None:
-        """終了時に呼ぶ。**選んでいない方も止める。**"""
+        """Called on exit. **Stops the route that is not selected too.**"""
         self.cloudflare.stop()
         self.tailscale.stop()
 
@@ -623,6 +658,7 @@ class Delivery:
         st["kind"] = self._kind
         st["kinds"] = list(config.TUNNEL_KINDS)
         st.setdefault("base_url", st.get("url", ""))
-        # **前もってURLを配れるのは Tailscale だけである。** 画面でそう見せる。
+        # **Only Tailscale can give out the URL in advance.** Show that on
+        # the screen.
         st["preannounce"] = self._kind == "tailscale"
         return st

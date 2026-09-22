@@ -1,12 +1,14 @@
-# LiveCaption の箱。**これ1つで完結する。**
+# The LiveCaption box. **It is self-contained.**
 #
-# 入っているもの: 字幕のエンジン（pixi 環境）・Zoom の Linux 版・PulseAudio の
-# 仮想の音声装置・画面を持たない X（Xvfb ＋ openbox）・Tailscale・VNC。
-# **ホストに要るのは Docker だけである。** 音声装置も画面も使わない。
+# What is inside: the caption engine (a pixi environment), Zoom for Linux, a
+# virtual audio device made with PulseAudio, an X server with no screen
+# (Xvfb plus openbox), Tailscale and VNC.
+# **The host needs only Docker.** It uses no audio device and no display.
 #
-# 中身は Windows で動いているものと同じ pixi 環境である（`pixi.lock` の
-# linux-64 の側）。**別の作り方で依存を入れ直さない。** 実会議で測って決めた
-# 組み合わせなので、環境が違えば測り直しになる。
+# The contents are the same pixi environment that runs on Windows (the
+# linux-64 side of `pixi.lock`). **Do not install the dependencies some other
+# way.** The combination was chosen by measuring in real meetings, so a
+# different environment means measuring again.
 
 FROM debian:13-slim
 
@@ -16,24 +18,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl tzdata \
  && rm -rf /var/lib/apt/lists/*
 
-# 音声。**コンテナの中だけで音を作って拾う。ホストの音声装置は使わない。**
-# これがホスト非依存の鍵である。`meeting` という null sink に会議ソフトが
-# 音を出し、本体はその monitor から録る。
+# Audio. **The sound is made and picked up inside the container only. It does
+# not use the host's audio device.** That is the key to not depending on the
+# host. The meeting software plays into a null sink named `meeting`, and the
+# engine records from its monitor.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       pulseaudio pulseaudio-utils libasound2-plugins procps \
  && rm -rf /var/lib/apt/lists/*
 
-# **PortAudio に PulseAudio を見せる。** 段階0では、これで `sounddevice` から
-# `pulse` として見えることを確かめた。本体の `audio.py` は書き直さずに済む。
+# **Show PulseAudio to PortAudio.** In stage 0 this is how we confirmed that
+# `sounddevice` sees it as `pulse`. The engine's `audio.py` needs no changes.
 RUN printf 'pcm.!default { type pulse }\nctl.!default { type pulse }\n' \
       > /etc/asound.conf
 
-# **pixi の alsa-lib は、自分の prefix の下しかプラグインを探さない。**
-# pulse プラグインは Debian 側にあるので、場所を教える。段階0は Debian の
-# python3 で測ったので、ここは新しく要るものである。
+# **The alsa-lib from pixi looks for plugins only under its own prefix.**
+# The pulse plugin lives on the Debian side, so tell it where that is. Stage 0
+# was measured with Debian's python3, so this is a new requirement here.
 ENV ALSA_PLUGIN_DIR=/usr/lib/x86_64-linux-gnu/alsa-lib
 
-# pixi は版を固定する。ホスト側と揃えてある。
+# The pixi version is pinned. It matches the one on the host.
 ENV PIXI_VERSION=v0.72.0 \
     PIXI_HOME=/opt/pixi \
     PATH=/opt/pixi/bin:$PATH
@@ -42,20 +45,24 @@ RUN curl -fsSL https://pixi.sh/install.sh | bash \
 
 WORKDIR /app
 
-# **環境を先に作る。** ソースを直しても、この層は焼き直さずに済む。
-# pixi の取得物は残さない。イメージが倍近くなる。
-# `LICENSE` も要る。`pixi.toml` の `license-file` が指しており、無いと解析で落ちる。
+# **Build the environment first.** Editing the source then does not rebuild
+# this layer.
+# Do not keep what pixi downloads. It almost doubles the image size.
+# `LICENSE` is needed too. `pixi.toml` points at it with `license-file`, and
+# parsing fails without it.
 COPY pixi.toml pixi.lock LICENSE ./
 RUN pixi install --locked \
  && rm -rf /root/.cache/rattler
 
-# Tailscale。**サイドカーにはせず、この箱の中に入れる。**
-# `tunnel.py` は `shutil.which("tailscale")` で CLI を探すので、PATH に置けば
-# 本体のコードは変えずに済む。版はホスト側と揃えてある。
+# Tailscale. **It goes inside this box, not in a sidecar.**
+# `tunnel.py` looks for the CLI with `shutil.which("tailscale")`, so putting it
+# on PATH means the engine's code needs no changes. The version matches the
+# one on the host.
 #
-# **userspace-networking は使えない。** 操作画面を出すには `--control-bind` が
-# 100.x のアドレスを実際のインターフェースに見つける必要があり、userspace では
-# tailscale0 が作られない。だから `/dev/net/tun` と `NET_ADMIN` が要る。
+# **userspace-networking cannot be used.** To serve the control page,
+# `--control-bind` has to find a 100.x address on a real interface, and in
+# userspace mode no tailscale0 is created. That is why `/dev/net/tun` and
+# `NET_ADMIN` are needed.
 ENV TAILSCALE_VERSION=1.102.3
 RUN curl -fsSL -o /tmp/ts.tgz \
       "https://pkgs.tailscale.com/stable/tailscale_${TAILSCALE_VERSION}_amd64.tgz" \
@@ -65,13 +72,14 @@ RUN curl -fsSL -o /tmp/ts.tgz \
  && rm -rf /tmp/ts.tgz "/tmp/tailscale_${TAILSCALE_VERSION}_amd64" \
  && tailscale --version
 
-# 会議ソフト。**A案（Zoom の Linux デスクトップ版）である。**
-# Web版は「Automated bots aren't allowed to join this meeting.」で弾かれる
-# （段階0で8回測って同じ結果）。HANDOFF_ARCHIVE ではなく HANDOFF の
-# 「段階0の実測」を読むこと。
+# The meeting software. **This is option A, the Zoom desktop client for
+# Linux.** The web client is refused with "Automated bots aren't allowed to
+# join this meeting." (measured eight times in stage 0, with the same result
+# every time).
 #
-# 画面を持たない土台なので、GUI の依存は自分で入れる。
-# xdotool / wmctrl / imagemagick は、窓を操作して様子を撮るために要る。
+# The base image has no display, so the GUI dependencies are installed here.
+# xdotool, wmctrl and imagemagick are needed to drive the windows and take
+# pictures of what they show.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libglib2.0-0 libxcb-xtest0 libxcb-xinerama0 libxcb-image0 \
       libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
@@ -80,59 +88,65 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libxcomposite1 libxdamage1 libxrandr2 libatk1.0-0 libatk-bridge2.0-0 \
       libatspi2.0-0 libcups2 libpango-1.0-0 libcairo2 libgtk-3-0 \
       fonts-noto-cjk xvfb openbox xdotool x11-utils wmctrl imagemagick \
-      `# VNC。**x11vnc ではなく TigerVNC の x0vncserver を使う。**` \
-      `# x11vnc が使う古い cut-text は Latin-1 しか運べず、クリップボードの` \
-      `# 日本語が ??? になる（2026-09-21 に実測）。TigerVNC は拡張クリップボードに` \
-      `# 対応していて、双方向で UTF-8 が通る。どちらも既存の画面に貼り付く形で、` \
-      `# 使い方は変わらない。` \
+      `# VNC. **Use x0vncserver from TigerVNC, not x11vnc.**` \
+      `# The old cut-text that x11vnc uses can carry Latin-1 only, so Japanese` \
+      `# on the clipboard turns into ??? (measured 2026-09-21). TigerVNC` \
+      `# supports the extended clipboard, and UTF-8 goes through both ways.` \
+      `# Both attach to an existing display, so they are used the same way.` \
       tigervnc-scraping-server novnc websockify \
-      `# openbox の右クリックは x-terminal-emulator を呼ぶので、xterm が要る。` \
-      `# 実体は uxterm になる。xrdb は x11-xserver-utils にある。` \
+      `# A right-click in openbox calls x-terminal-emulator, so xterm is` \
+      `# needed. What actually runs is uxterm. xrdb is in x11-xserver-utils.` \
       xterm xclip x11-xserver-utils \
  && rm -rf /var/lib/apt/lists/*
 
-# **`latest` のままにする。** Zoom は古いクライアントを会議から締め出すので、
-# 版を固定すると、ある日とつぜん会議に入れなくなる。
+# **Leave this as `latest`.** Zoom locks old clients out of meetings, so
+# pinning a version means that one day you suddenly cannot join.
 RUN curl -fsSL -o /tmp/zoom.deb https://zoom.us/client/latest/zoom_amd64.deb \
  && (dpkg -i /tmp/zoom.deb || (apt-get update && apt-get -y -f install)) \
  && rm -f /tmp/zoom.deb && rm -rf /var/lib/apt/lists/*
 
-# **Zoom の設定とサインインはボリュームに残す。** ここが消えると、
-# サインインのやり直しになる。
+# **Keep the Zoom settings and sign-in on a volume.** If they are lost, you
+# have to sign in again.
 ENV HOME=/home/livecaption
 RUN mkdir -p /home/livecaption/.config
 
 COPY run.py ./
 COPY src/ ./src/
 COPY etc/ ./etc/
-# **復旧の道具も入れる。** `transcript_to_md.py` は、`.md` が書かれないまま
-# 落ちたときに記録を読める形へ戻すためのものである。**それが要る場面は、
-# だいたいコンテナの中に手が届かない場面である。** 入れておかないと使えない。
+# **The recovery tools go in too.** `transcript_to_md.py` turns a record back
+# into a readable form when the engine died before writing the `.md`.
+# **The times you need it are mostly the times you cannot reach into the
+# container.** If it is not in the image, you cannot use it.
 COPY scripts/ ./scripts/
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# 記録の既定の置き場。compose はここにボリュームを重ねず、`/records` を使う。
+# The default place for records. compose does not put a volume over this one;
+# it uses `/records`.
 RUN mkdir -p /app/local/transcripts
 
 ENV TZ=Asia/Tokyo
 
-# **表示言語を固定する。** Zoom の窓の名前で会議中かどうかを見ている
-# （`zoom_join_linux.py`）。locale が変わると名前が変わり、判定が外れる。
-# Qt も「UTF-8 でない」と文句を言う。
+# **Pin the display language.** The Zoom window title is how we tell whether a
+# meeting is running (`zoom_join_linux.py`). A different locale means a
+# different title, and the check fails. Qt also complains that the locale is
+# not UTF-8.
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 
-# **ログを溜めない。** 窓の無い運用では `docker compose logs` だけが手がかりで、
-# Python は端末でないと出力を溜め込む。起動の途中で固まったときに何も見えない。
+# **Do not buffer the log.** With no window to look at, `docker compose logs`
+# is the only clue, and Python buffers its output when it is not on a
+# terminal. If startup hangs halfway, you would see nothing.
 ENV PYTHONUNBUFFERED=1
 
-# `docker compose exec` で入ったときにも音声と画面を触れるようにする。
-# **入口が export しても、あとから exec で入った殻には渡らない。**
-# これが無いと paplay は「Connection refused」、zoom は画面に繋げず黙って落ちる。
+# So that audio and display also work when you come in with `docker compose
+# exec`. **What the entrypoint exports does not reach a shell that attaches
+# later with exec.** Without this, paplay says "Connection refused" and zoom
+# cannot reach the display and dies silently.
 ENV XDG_RUNTIME_DIR=/tmp/xdg
 ENV DISPLAY=:99
 
-# 引数はそのまま run.py に渡る。入口で tailscaled を起こしてから渡す。
+# The arguments are passed straight to run.py. The entrypoint starts
+# tailscaled first, then passes them on.
 #   docker compose run --rm engine --from-file /samples/excerpt75.wav --dry-run
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["--help"]

@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
-"""Deepgram nova-3 の keyterm が日本語で実際に効くかを見る。
+"""See whether the keyterm option of Deepgram nova-3 really works in Japanese.
 
-    pixi run python scripts/deepgram_keyterm_test.py [音声ファイル]
+    pixi run python scripts/deepgram_keyterm_test.py [audio file]
 
-同じ音声を 4 通り（language=ja / multi × keyterm なし / あり）で投げ、出力を並べる。
-既定の音声は data/recordings/tts_jargon.wav（Windows の音声合成で作ったもの。
-再生成は README ではなく HANDOFF.md の手順を見ること）。
+It sends the same audio four ways (language=ja / multi, with and without
+keyterm) and prints the outputs side by side.
+The default audio is data/recordings/tts_jargon.wav, made with the Windows
+speech synthesizer.
 
-Deepgram の発表は「multilingual モデルでの keyterm 対応」だった。
-language=ja（単一言語）では効かず、language=multi でのみ効く可能性があるため、
-両方を比べる。
+What Deepgram announced was "keyterm support on the multilingual model".
+It may not work with language=ja (a single language) and work only with
+language=multi, so both are compared.
 
-注意: 合成音声はきれいすぎる。本番の判断は実会議の録音で行うこと。
-ここで見たいのは「keyterm が出力を変えるか」の一点のみ。
+Note: synthetic speech is too clean. Make the real decision with a recording
+of a real meeting. The only thing to see here is whether keyterm changes the
+output.
 """
 
 import json
@@ -27,7 +29,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_AUDIO = PROJECT_ROOT / "data" / "recordings" / "tts_jargon.wav"
 TIMEOUT = 120.0
 
-# 正しく出てほしい表記。keyterm にもこの文字列を渡す。
+# The spelling we want to see. The same strings are passed as keyterm.
 KEYTERMS = [
     "タイプA",
     "防振系",
@@ -53,7 +55,7 @@ def load_env() -> None:
             continue
         key, _, value = line.partition("=")
         key, value = key.strip(), value.strip().strip('"').strip("'")
-        # .env の値を優先する。環境変数に同じ名前があっても上書きする。
+        # .env wins. It overwrites an environment variable of the same name.
         if value:
             os.environ[key] = value
 
