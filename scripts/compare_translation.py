@@ -67,13 +67,13 @@ def main() -> int:
 
     files = sorted(COMPARE_DIR.glob(pattern))
     if not files:
-        print(f"書き起こしが無い: {COMPARE_DIR / pattern}")
+        print(f"No transcript found: {COMPARE_DIR / pattern}")
         return 1
 
     entries = glossary.load()
     system = build_system(entries)
-    print(f"用語対訳表: {len(entries)} 語")
-    print(f"各書き起こしの先頭 {n} 文字を {MODEL} で英訳する")
+    print(f"Glossary: {len(entries)} entries")
+    print(f"Translating the first {n} characters of each transcript with {MODEL}")
     print()
 
     summary = []
@@ -86,7 +86,7 @@ def main() -> int:
         print("=" * 72)
         print(path.stem.replace("mix.", ""))
         print("=" * 72)
-        print(f"[入力 {len(text)} 文字 / 翻訳 {dt:.1f} 秒]")
+        print(f"[input {len(text)} chars / translated in {dt:.1f} s]")
         print()
         for line in out.splitlines():
             print(f"  {line}")
@@ -96,16 +96,16 @@ def main() -> int:
         return 0
 
     print("=" * 72)
-    print(f"判定（期待語 {len(EXPECTED)} 個）")
+    print(f"Result ({len(EXPECTED)} expected words)")
     print("=" * 72)
     for name, missing, bad in summary:
         hit = len(EXPECTED) - len(missing)
         print(f"  {name}")
-        print(f"    命中 {hit}/{len(EXPECTED)}")
+        print(f"    hit {hit}/{len(EXPECTED)}")
         if missing:
-            print(f"    出なかった: {', '.join(missing)}")
+            print(f"    missing: {', '.join(missing)}")
         if bad:
-            print(f"    出てはいけない語: {', '.join(bad)}")
+            print(f"    must not appear: {', '.join(bad)}")
     return 0
 
 

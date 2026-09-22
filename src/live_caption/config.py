@@ -51,7 +51,7 @@ ASR_LANGUAGES = ("ja", "en")
 # translation of each single term. This tells the model which field to read
 # the words as.
 MEETING_CONTEXT_ENV = "LIVECAPTION_MEETING_CONTEXT"
-MEETING_CONTEXT_DEFAULT = "技術的な内容の定例会議。"
+MEETING_CONTEXT_DEFAULT = "A regular meeting on a technical subject."
 
 
 def meeting_context() -> str:
@@ -65,7 +65,7 @@ def meeting_context() -> str:
 
 def asr_prompt() -> str:
     """The prompt we pass to transcription."""
-    return f"{meeting_context()}日本語と英語が混ざる。"
+    return f"{meeting_context()} Japanese and English are both spoken."
 
 
 # The largest number of words we can pass in keywords.
@@ -817,7 +817,7 @@ def remember_tunnel_kind(kind: str) -> None:
             json.dumps({"kind": kind}, ensure_ascii=False, indent=2), encoding="utf-8"
         )
     except OSError as exc:
-        print(f"  [配信] 経路を覚えられない: {exc}")
+        print(f"  [delivery] cannot remember the route: {exc}")
 
 
 def ui_lang_selection() -> str:
@@ -850,7 +850,7 @@ def remember_ui_lang(name: str) -> None:
             json.dumps({"lang": name}, ensure_ascii=False, indent=2), encoding="utf-8"
         )
     except OSError as exc:
-        print(f"  [言語] 選択を覚えられない: {exc}")
+        print(f"  [language] cannot remember the selection: {exc}")
 
 
 def remember_direction(name: str) -> None:
@@ -862,15 +862,15 @@ def remember_direction(name: str) -> None:
             json.dumps({"name": name}, ensure_ascii=False, indent=2), encoding="utf-8"
         )
     except OSError as exc:
-        print(f"  [向き] 選択を覚えられない: {exc}")
+        print(f"  [direction] cannot remember the selection: {exc}")
 
 
 def tuning_warning() -> str:
     """One line about a bad combination of settings. Empty when there is
     none."""
     if SPECULATE_AFTER_SEC and SPECULATE_AFTER_SEC >= IDLE_FLUSH_SEC:
-        return (f"先回り（{SPECULATE_AFTER_SEC}秒）が確定待ち（{IDLE_FLUSH_SEC}秒）"
-                f"以上なので、先回りは一度も走らない。")
+        return (f"Speculation ({SPECULATE_AFTER_SEC} s) is not shorter than the "
+                f"wait for a final sentence ({IDLE_FLUSH_SEC} s), so it never runs.")
     return ""
 
 
@@ -936,7 +936,7 @@ def apply_env_overrides() -> None:
         try:
             value = coerce_tuning(attr, raw)
         except ValueError as exc:
-            print(f"  [設定の警告] {env_name}: {exc} 既定の {before} を使う。")
+            print(f"  [config warning] {env_name}: {exc} Using the default {before}.")
             continue
         globals()[attr] = value
         _remember_explicit(attr, value)
@@ -955,16 +955,16 @@ def apply_env_overrides() -> None:
             and SPECULATE_AFTER_SEC):
         derived = round(max(0.3, IDLE_FLUSH_SEC - SPECULATE_MARGIN_SEC), 2)
         if derived != SPECULATE_AFTER_SEC:
-            changed.append(f"SPECULATE_AFTER_SEC {SPECULATE_AFTER_SEC} → {derived}（自動）")
+            changed.append(f"SPECULATE_AFTER_SEC {SPECULATE_AFTER_SEC} → {derived} (derived)")
             globals()["SPECULATE_AFTER_SEC"] = derived
 
     if changed:
-        print("  [設定] .env で差し替えた: " + "、".join(changed))
+        print("  [config] replaced by .env: " + ", ".join(changed))
 
     # Speculation is pointless unless it fires before the sentence is final.
     warning = tuning_warning()
     if warning:
-        print(f"  [設定の警告] {warning}")
+        print(f"  [config warning] {warning}")
 
 
 def load_env(path: Path = ENV_PATH) -> None:
@@ -990,5 +990,7 @@ def load_env(path: Path = ENV_PATH) -> None:
 def openai_key() -> str:
     key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not key:
-        raise RuntimeError("OPENAI_API_KEY が無い。.env に書くか、環境変数に設定すること。")
+        raise RuntimeError(
+            "OPENAI_API_KEY is not set. Write it in .env, or set it as an "
+            "environment variable.")
     return key

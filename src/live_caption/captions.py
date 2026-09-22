@@ -49,19 +49,19 @@ def parse_token(url: str) -> tuple[str, str]:
     """
     url = (url or "").strip().strip('"').strip("'")
     if not url:
-        raise TokenError("トークンが空である。")
+        raise TokenError("The token is empty.")
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in ("http", "https"):
-        raise TokenError("http/https のURLではない。")
+        raise TokenError("This is not an http/https URL.")
     if "closedcaption" not in parsed.path:
         raise TokenError(
-            "字幕トークンのURLではない。"
-            "「字幕」→「∧」→「手動字幕の設定」→「APIトークンをコピー」で得たものを貼ること。"
+            "This is not a caption token URL. Paste the one you get from "
+            'Captions -> the caret -> Manual captions setup -> Copy the API token.'
         )
     query = urllib.parse.parse_qs(parsed.query)
     meeting = query.get("id", [""])[0]
     if not meeting:
-        raise TokenError("URLに会議ID（id=）が入っていない。")
+        raise TokenError("The URL holds no meeting ID (id=).")
     return url.rstrip("&"), meeting
 
 
@@ -197,7 +197,7 @@ class CaptionSender:
 
         with self._lock:
             self.failed += 1
-        print(f"  [字幕の送信に失敗] status={status} {body.strip()[:120]}")
+        print(f"  [Zoom] caption send failed: status={status} {body.strip()[:120]}")
         return False
 
     async def warmup(self) -> None:

@@ -221,7 +221,7 @@ LiveCaption is already running, so there is nothing to restart.
 
 ```
 Tailscale:  100.x.x.x  (livecaption.tail1234.ts.net)
-Control     also on https: https://livecaption.tail1234.ts.net:8443
+[10:24:31] control     also open over https: https://livecaption.tail1234.ts.net:8443
 ```
 
 Appendix B covers using it on more than one machine, registering with an auth
@@ -1502,8 +1502,8 @@ pixi run caption --web --control-bind
 ```
 
 ```
-Control page:   http://localhost:8081  (yours alone. Never share it)
-                http://100.x.x.x:8081  (from inside the tailnet. Narrow it with an ACL)
+Control page: http://localhost:8081  (for you only. Do not share it)
+              http://100.x.x.x:8081  (from inside the tailnet. **Narrow it with an ACL**)
 ```
 
 - **127.0.0.1 always stays**, so you can still work at the machine itself when

@@ -66,11 +66,11 @@ URL_RE = re.compile(r"https://[a-z0-9][a-z0-9-]*\.trycloudflare\.com")
 TAIL_LINES = 40
 
 INSTALL_HINT = (
-    "cloudflared が見つからない。次のどちらかで用意すること。\n"
-    "  1. 実行ファイルを1つ置く（管理者権限は要らない）:\n"
+    "cloudflared was not found. Install it in one of these two ways.\n"
+    "  1. Drop in one executable (no administrator rights needed):\n"
     "     https://github.com/cloudflare/cloudflared/releases/latest/download/"
     "cloudflared-windows-amd64.exe\n"
-    f"     を {config.TUNNEL_LOCAL} に置く\n"
+    f"     Put it at {config.TUNNEL_LOCAL}\n"
     "  2. winget install --id Cloudflare.cloudflared"
 )
 
@@ -205,7 +205,7 @@ class Tunnel:
             if self._state != "off":
                 self._state = "error"
                 self._url = ""
-                self._error = "cloudflared が終了した。\n" + "\n".join(self._tail[-8:])
+                self._error = "cloudflared exited.\n" + "\n".join(self._tail[-8:])
         self._changed()
 
     def _watch(self, proc: subprocess.Popen, started: float) -> None:
@@ -217,7 +217,7 @@ class Tunnel:
             elapsed = time.monotonic() - started
             self._state = "error"
             self._error = (
-                f"{elapsed:.0f}秒たってもURLが出てこない。\n" + "\n".join(self._tail[-8:])
+                f"No URL after {elapsed:.0f} s.\n" + "\n".join(self._tail[-8:])
             )
         self._changed()
 
@@ -239,16 +239,18 @@ class Tunnel:
 # =========================================================================
 
 FUNNEL_HINT = (
-    "tailscale が見つからない。字幕PCに Tailscale を入れて、サインインすること。\n"
+    "tailscale was not found. Install Tailscale on the caption PC and sign in.\n"
     "  https://tailscale.com/download/windows"
 )
 # The first time Funnel is used, two things must be enabled on the tailnet
 # side. For both, `tailscale funnel` opens a consent page and guides the user.
 FUNNEL_SETUP_HINT = (
-    "Tailscale Funnel が有効になっていない。字幕PCで一度だけ次を実行し、\n"
-    "ブラウザに出る同意のページを通すこと（tailnet の管理者権限が要る）。\n"
+    "Tailscale Funnel is not enabled. Run this once on the caption PC, and\n"
+    "accept the consent page that opens in the browser (it needs tailnet\n"
+    "administrator rights).\n"
     "  tailscale funnel 8080\n"
-    "有効にするのは HTTPS証明書 と、ポリシーの funnel 属性の2つである。"
+    "It enables two things: the HTTPS certificate, and the funnel attribute "
+    "in the policy."
 )
 
 
@@ -288,7 +290,7 @@ def serve_https(public_port: int, local_port: int) -> str:
     """
     exe = find_tailscale()
     if exe is None:
-        return "tailscale が見つからない。"
+        return "tailscale was not found."
     try:
         out = subprocess.run(
             [exe, "serve", "--bg", f"--https={public_port}", str(local_port)],
@@ -414,20 +416,20 @@ def _tailscale_host_now(command: str | None = None) -> tuple[str, str]:
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (OSError, subprocess.SubprocessError) as exc:
-        return "", f"tailscale status が動かない: {exc}"
+        return "", f"tailscale status does not run: {exc}"
     if out.returncode != 0:
-        return "", f"tailscale status が失敗した: {(out.stderr or out.stdout).strip()}"
+        return "", f"tailscale status failed: {(out.stderr or out.stdout).strip()}"
     try:
         state = json.loads(out.stdout)
     except ValueError as exc:
-        return "", f"tailscale status の中身が読めない: {exc}"
+        return "", f"The output of tailscale status cannot be read: {exc}"
     if state.get("BackendState") != "Running":
-        return "", ("Tailscale が繋がっていない"
-                    f"（{state.get('BackendState', '状態不明')}）。サインインすること。")
+        return "", ("Tailscale is not connected "
+                    f"({state.get('BackendState', 'state unknown')}). Sign in.")
     # Drop the trailing dot. Do not put the formal DNS spelling into a URL.
     name = str((state.get("Self") or {}).get("DNSName", "")).rstrip(".")
     if not name:
-        return "", "tailscale status にホスト名が無い。MagicDNS を有効にすること。"
+        return "", "tailscale status has no host name. Turn MagicDNS on."
     return name, ""
 
 
@@ -560,9 +562,9 @@ class Funnel:
                     # settings too. If the control page is exposed on the
                     # tailnet, the path to it would be taken down as well.
                     self._error = (
-                        "止められなかった。手で次を打つこと: "
+                        "It could not be stopped. Run this by hand: "
                         f"tailscale funnel --https={config.FUNNEL_PUBLIC_PORT} off"
-                        f"（{exc}）")
+                        f" ({exc})")
         if was != "off":
             self._changed()
         return self.status()
@@ -618,7 +620,8 @@ class Delivery:
         """Select the route again. **Stop what is already up first.**"""
         kind = str(kind)
         if kind not in config.TUNNEL_KINDS:
-            raise ValueError(f"経路が違う: 「{kind}」。{' / '.join(config.TUNNEL_KINDS)} のどちらか。")
+            raise ValueError(
+                f"Unknown route: 「{kind}」。{' / '.join(config.TUNNEL_KINDS)} のどちらか。")
         if kind != self._kind:
             self.active.stop()
             self._kind = kind

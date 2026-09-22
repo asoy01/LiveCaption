@@ -24,7 +24,7 @@ def find_device(name_part, hostapi_name, want_output):
         if ch > 0 and name_part.lower() in d["name"].lower():
             if sd.query_hostapis(d["hostapi"])["name"] == hostapi_name:
                 return i
-    raise RuntimeError(f"見つからない: {name_part} / {hostapi_name}")
+    raise RuntimeError(f"Device not found: {name_part} / {hostapi_name}")
 
 
 class Tone:
@@ -86,13 +86,13 @@ async def measure(capture, seconds=4.0):
 
 def main():
     out_dev = find_device("CABLE Input", "Windows WASAPI", want_output=True)
-    print(f"再生先: {out_dev} {sd.query_devices(out_dev)['name']} [WASAPI]")
+    print(f"Playing to: {out_dev} {sd.query_devices(out_dev)['name']} [WASAPI]")
 
     default_idx = audio_mod.find_device("CABLE Output")
     wasapi_idx = find_device("CABLE Output", "Windows WASAPI", want_output=False)
-    targets = [(default_idx, "本体が既定で選ぶもの")]
+    targets = [(default_idx, "what the engine picks by default")]
     if wasapi_idx != default_idx:
-        targets.append((wasapi_idx, "WASAPI 版"))
+        targets.append((wasapi_idx, "the WASAPI one"))
 
     for idx, label in targets:
         dev = sd.query_devices(idx)
@@ -104,20 +104,21 @@ def main():
             with Tone(out_dev) as tone:
                 peaks = asyncio.run(measure(cap))
                 if tone.error:
-                    print(f"  再生側で失敗: {tone.error}")
+                    print(f"  Playback failed: {tone.error}")
         except Exception as exc:  # noqa: BLE001
-            print(f"  開けない: {type(exc).__name__}: {str(exc).splitlines()[0]}")
+            print(f"  Cannot open: {type(exc).__name__}: {str(exc).splitlines()[0]}")
             continue
 
         if not peaks:
-            print("  音声が1区間も来なかった")
+            print("  No audio arrived at all")
             continue
         loud = sum(1 for p in peaks if p > 0.01)
         print(
-            f"  区間 {len(peaks)}、音あり {loud}（{loud / len(peaks):.0%}）"
-            f"  最大 peak {max(peaks):.3f}  取りこぼし {cap.dropped}"
+            f"  blocks {len(peaks)}, with sound {loud} ({loud / len(peaks):.0%})"
+            f"  max peak {max(peaks):.3f}  dropped {cap.dropped}"
         )
-        print("  => 通っている" if loud / len(peaks) > 0.5 else "  => 届いていない")
+        print("  => the sound gets through" if loud / len(peaks) > 0.5
+              else "  => the sound does not arrive")
 
 
 if __name__ == "__main__":

@@ -323,26 +323,26 @@ def check_zoom_token(url: str) -> None:
     """
     text = str(url or "").strip()
     if not text:
-        raise captions_mod.TokenError("トークンが空である。")
+        raise captions_mod.TokenError("The token is empty.")
     if len(text) > 2048:
-        raise captions_mod.TokenError("トークンが長すぎる。")
+        raise captions_mod.TokenError("The token is too long.")
     if any(ord(c) < 32 for c in text):
-        raise captions_mod.TokenError("トークンに使えない文字が入っている。")
+        raise captions_mod.TokenError("The token holds a character it cannot hold.")
 
     parsed = urlparse(text)
     if parsed.scheme != "https":
         # With http, the captions travel in the clear.
-        raise captions_mod.TokenError("https のトークンだけを受け付ける。")
+        raise captions_mod.TokenError("Only an https token is accepted.")
     host = (parsed.hostname or "").lower()
     # **Do not match on a substring.** `evil.com/zoom.us/closedcaption` would
     # pass.
     if host != "zoom.us" and not host.endswith(".zoom.us"):
         raise captions_mod.TokenError(
-            f"Zoom のトークンではない（宛先が {host or '不明'}）。")
+            f"This is not a Zoom token (it points at {host or 'nowhere'}).")
     query = parse_qs(parsed.query)
     meeting = (query.get("id") or [""])[0]
     if not re.fullmatch(r"\d{9,12}", meeting or ""):
-        raise captions_mod.TokenError("会議IDの形がおかしい。")
+        raise captions_mod.TokenError("The meeting ID has the wrong shape.")
     # Finally, run the same check the rest of the app uses.
     captions_mod.parse_token(text)
 
@@ -2645,7 +2645,7 @@ class WebCaptions:
                 # tailscaled may not have handed out an address yet. Failing
                 # to start the caption app just because the control page is
                 # not reachable from outside would defeat the purpose.
-                print(f"  [操作] {addr} では待ち受けられない: {exc}")
+                print(f"  [control] cannot listen on {addr}: {exc}")
         # **Remember only the addresses we really bound.** Both the URLs
         # printed at start and the `Origin` check are built from this. Showing
         # a URL that is not open as if it were would send someone hunting for
@@ -2671,12 +2671,12 @@ class WebCaptions:
             return
         why = tunnel_mod.serve_https(config.CONTROL_HTTPS_PORT, self.control_port)
         if why:
-            print(f"[{time.strftime('%H:%M:%S')}] 操作        "
-                  f"https では出せなかった（{why[:120]}）。http は使える。")
+            print(f"[{time.strftime('%H:%M:%S')}] control     "
+                  f"https was not set up ({why[:120]}). http still works.")
             return
         for name in self.control_names():
-            print(f"[{time.strftime('%H:%M:%S')}] 操作        "
-                  f"https でも開ける: https://{name}:{config.CONTROL_HTTPS_PORT}")
+            print(f"[{time.strftime('%H:%M:%S')}] control     "
+                  f"also open over https: https://{name}:{config.CONTROL_HTTPS_PORT}")
             break
 
     def _retry_control_bind(self) -> None:
@@ -2707,8 +2707,8 @@ class WebCaptions:
             if bound:
                 self.control_extra = tuple(bound)
                 for url in self.control_urls_extra():
-                    print(f"[{time.strftime('%H:%M:%S')}] 操作        "
-                          f"tailnet からも開けるようになった: {url}")
+                    print(f"[{time.strftime('%H:%M:%S')}] control     "
+                          f"now open from the tailnet too: {url}")
                 # **Set it up here as well.** At start, Tailscale may not be
                 # up yet, and neither the name nor the address is available.
                 self.serve_control_https()
@@ -2769,7 +2769,7 @@ class WebCaptions:
         """
         now = time.monotonic()
         if now - self._host_last_try < config.HOST_MIN_INTERVAL_SEC:
-            return 429, "続けて送りすぎ。少し待つこと。"
+            return 429, "Too many tries in a row. Wait a moment."
         self._host_last_try = now
 
         active = self.meetings.active_id
@@ -2780,32 +2780,32 @@ class WebCaptions:
         if meeting is None or meeting_id != active or not meeting.host_id:
             return 404, ""
         if not hmac.compare_digest(str(host_id), str(meeting.host_id)):
-            self._host_note(meeting_id, peer, "経路が違う")
+            self._host_note(meeting_id, peer, "wrong key")
             return 404, ""
         if not self.host_window_open(meeting_id):
-            self._host_note(meeting_id, peer, "受付の時間外")
+            self._host_note(meeting_id, peer, "outside the open window")
             return 404, ""
         if self._host_attempts.get(meeting_id, 0) >= config.HOST_MAX_ATTEMPTS:
-            self._host_note(meeting_id, peer, "失敗が続いたので閉じた")
+            self._host_note(meeting_id, peer, "closed after repeated failures")
             return 404, ""
         if meeting_id in self._host_done:
             # **Once only.** A second attempt is either a mistake or somebody
             # else.
-            return 409, "もう受け取っている。入れ直すなら操作画面から。"
+            return 409, "The token is already in. To replace it, use the control page."
 
         if self.control is None:
-            return 503, "Zoom字幕の受け口が用意できていない。"
+            return 503, "The Zoom caption control is not available."
         try:
             check_zoom_token(token)
             self.control.set_token(token)
             self.control.set_enabled(True)
         except captions_mod.TokenError as exc:
             self._host_attempts[meeting_id] = self._host_attempts.get(meeting_id, 0) + 1
-            self._host_note(meeting_id, peer, f"断った: {exc}")
+            self._host_note(meeting_id, peer, f"refused: {exc}")
             return 400, str(exc)
         self._host_done.add(meeting_id)
-        self._host_note(meeting_id, peer, "受け取った")
-        return 200, "受け取った。字幕をZoomに送り始める。"
+        self._host_note(meeting_id, peer, "received")
+        return 200, "Received. Captions start going to Zoom now."
 
     def host_rearm(self, meeting_id: str) -> None:
         """Open the entry point again, from the control page."""
@@ -2820,10 +2820,11 @@ class WebCaptions:
         with the meeting ID, would be almost enough to reconstruct it.
         """
         line = (f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {what}"
-                f"（会議 {meeting_id[:6]}…, 相手 {peer or '不明'}）")
+                f" (meeting {meeting_id[:6]}…, from {peer or 'unknown'})")
         self.host_log.append(line)
         del self.host_log[:-20]
-        print(f"[{time.strftime('%H:%M:%S')}] ホスト      {what}（相手 {peer or '不明'}）")
+        print(f"[{time.strftime('%H:%M:%S')}] host        "
+              f"{what} (from {peer or 'unknown'})")
 
     def control_urls_extra(self) -> list[str]:
         """URLs, other than 127.0.0.1, where the control page can be opened.
@@ -2965,14 +2966,14 @@ class _Base(BaseHTTPRequestHandler):
         if length <= 0:
             return {}
         if length > cap:
-            raise ValueError("要求が大きすぎる。")
+            raise ValueError("The request is too large.")
         raw = self.rfile.read(length)
         try:
             data = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ValueError("JSONとして読めない。") from exc
+            raise ValueError("This cannot be read as JSON.") from exc
         if not isinstance(data, dict):
-            raise ValueError("JSONのオブジェクトではない。")
+            raise ValueError("This is not a JSON object.")
         return data
 
 
@@ -2981,13 +2982,13 @@ def _host_page(meeting_name: str) -> bytes:
 
     **It is a separate page from the control page.** The reader is the meeting
     host, not the operator. It has nothing to do with the language setting of
-    the control page either, so it shows Japanese and English side by side.
+    the control page either, so it is always in English.
     **Nothing else can be done from here.** There is one input field and one
     send button.
     """
     name = (meeting_name or "").replace("&", "&amp;").replace("<", "&lt;")
     return f"""<!doctype html>
-<html lang="ja">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -3019,19 +3020,17 @@ def _host_page(meeting_name: str) -> bytes:
 </head>
 <body>
 <main>
-  <h1>Zoom字幕トークン <span class="meet">{name}</span></h1>
-  <p class="en">Zoom caption token</p>
+  <h1>Zoom caption token <span class="meet">{name}</span></h1>
+  <p class="en">Captions for this meeting are sent from here.</p>
   <ol>
-    <li>Zoomの<b>「字幕」→「∧」→「手動字幕の設定」</b>で、手動字幕を有効にする<br>
-      <span class="en">Turn manual captions on: Captions → ∧ → Manual captions setup</span></li>
-    <li><b>「APIトークンをコピー」</b>を選ぶ<br>
-      <span class="en">Choose “Copy the API token”</span></li>
-    <li>下に貼って送る<br>
-      <span class="en">Paste it below and send</span></li>
+    <li>In Zoom, turn manual captions on:
+      <b>Captions → ∧ → Manual captions setup</b></li>
+    <li>Choose <b>Copy the API token</b></li>
+    <li>Paste it below and send</li>
   </ol>
   <input id="t" type="text" placeholder="https://....zoom.us/closedcaption?id=..."
          autocomplete="off" spellcheck="false">
-  <button id="go">送信 / Send</button>
+  <button id="go">Send</button>
   <div id="msg"></div>
 </main>
 <script>
@@ -3040,7 +3039,7 @@ def _host_page(meeting_name: str) -> bytes:
   const msg = document.getElementById("msg");
   async function send() {{
     const value = t.value.trim();
-    if (!value) {{ msg.textContent = "トークンを貼ること。/ Paste the token.";
+    if (!value) {{ msg.textContent = "Paste the token first.";
                    msg.className = "ng"; return; }}
     go.disabled = true;
     try {{
@@ -3050,16 +3049,16 @@ def _host_page(meeting_name: str) -> bytes:
       }});
       const d = await r.json().catch(() => ({{}}));
       if (r.ok) {{
-        msg.textContent = d.ok || "受け取った。/ Received.";
+        msg.textContent = d.ok || "Received.";
         msg.className = "ok";
         t.value = "";                      // do not leave it on the screen
       }} else {{
-        msg.textContent = d.error || ("送れない（" + r.status + "）");
+        msg.textContent = d.error || ("Could not send (" + r.status + ")");
         msg.className = "ng";
         go.disabled = false;
       }}
     }} catch (e) {{
-      msg.textContent = "送れない。/ Could not send.";
+      msg.textContent = "Could not send.";
       msg.className = "ng";
       go.disabled = false;
     }}
@@ -3176,7 +3175,7 @@ def _viewer_handler(web: WebCaptions):
 def _meetings_page(web: WebCaptions, lang: str) -> bytes:
     """The meeting management page. **Built on every request**, so that the
     language can be switched."""
-    page = (_head("Live Captions ・ 会議の管理", web.lines)
+    page = (_head("Live Captions · 会議の管理", web.lines)
             + meetings_page.BODY.replace("__COPY_JS__", COPY_JS))
     return i18n.apply(page, lang).encode("utf-8")
 
@@ -3232,9 +3231,9 @@ def _control_handler(web: WebCaptions):
                 return True
             # **Record the reason.** On a machine that runs unattended, the
             # log is the only trace.
-            print(f"[{time.strftime('%H:%M:%S')}] 操作        別のページからの操作を断った"
-                  f"（Origin: {origin[:100]}）")
-            self._send_json(403, {"error": "この画面以外からは操作できない。"})
+            print(f"[{time.strftime('%H:%M:%S')}] control     "
+                  f"refused a command from another page (Origin: {origin[:100]})")
+            self._send_json(403, {"error": "Commands are accepted only from this page."})
             return False
         def do_GET(self) -> None:  # noqa: N802
             u = urlparse(self.path)
@@ -3448,7 +3447,7 @@ def _control_handler(web: WebCaptions):
                     return
                 raw = body.get("names")
                 if not isinstance(raw, list):
-                    self._send_json(400, {"error": "names は配列で渡すこと。"})
+                    self._send_json(400, {"error": "names must be an array."})
                     return
                 try:
                     st = web.glossary.select([str(n) for n in raw])
@@ -3466,7 +3465,7 @@ def _control_handler(web: WebCaptions):
                 # you most want to look inside, "something looks wrong during
                 # a meeting", the only way in would be to rebuild.
                 if web.vnc is None:
-                    self._send_json(503, {"error": "VNCの受け口が用意できていない。"})
+                    self._send_json(503, {"error": "The VNC control is not available."})
                     return
                 st = (web.vnc.start() if bool(body.get("on"))
                       else web.vnc.stop())
@@ -3486,7 +3485,7 @@ def _control_handler(web: WebCaptions):
                     if path.endswith("/upload"):
                         text = body.get("text")
                         if not isinstance(text, str):
-                            self._send_json(400, {"error": "text は文字列で渡すこと。"})
+                            self._send_json(400, {"error": "text must be a string."})
                             return
                         st = web.glossary.upload(name, text)
                     else:
@@ -3495,7 +3494,7 @@ def _control_handler(web: WebCaptions):
                     self._send_json(400, {"error": str(exc)})
                     return
                 except OSError as exc:
-                    self._send_json(500, {"error": f"用語集を書けない: {exc}"})
+                    self._send_json(500, {"error": f"The glossary cannot be written: {exc}"})
                     return
                 self._send_json(200, st)
                 return
@@ -3507,8 +3506,8 @@ def _control_handler(web: WebCaptions):
                     self._send_json(400, {"error": str(exc)})
                     return
                 config.remember_ui_lang(lang)
-                print(f"[{time.strftime('%H:%M:%S')}] 言語        操作画面を "
-                      f"{'日本語' if lang == 'ja' else 'English'} にした")
+                print(f"[{time.strftime('%H:%M:%S')}] language    control page set to "
+                      f"{'Japanese' if lang == 'ja' else 'English'}")
                 # **Return it untranslated.** It is the name of a language.
                 self._send_json(200, {"lang": lang}, translate=False)
                 return
@@ -3535,7 +3534,7 @@ def _control_handler(web: WebCaptions):
                     else:
                         raw = body.get("values")
                         if not isinstance(raw, dict):
-                            self._send_json(400, {"error": "values はオブジェクトで渡すこと。"})
+                            self._send_json(400, {"error": "values must be an object."})
                             return
                         st = web.tuning.set(raw)
                 except ValueError as exc:
@@ -3544,7 +3543,7 @@ def _control_handler(web: WebCaptions):
                 except OSError as exc:
                     # .env cannot be written (read-only, being synced, and so
                     # on). Do not stop the meeting over it.
-                    self._send_json(500, {"error": f".env に書けなかった: {exc}"})
+                    self._send_json(500, {"error": f".env could not be written: {exc}"})
                     return
                 self._send_json(200, st)
                 return
@@ -3562,7 +3561,7 @@ def _control_handler(web: WebCaptions):
                 return
 
             if web.control is None:
-                self._send_json(503, {"error": "操作の受け口がまだ用意できていない。"})
+                self._send_json(503, {"error": "The control is not available yet."})
                 return
             try:
                 if path == "/api/token":
@@ -3631,14 +3630,14 @@ def _control_handler(web: WebCaptions):
                         web.tunnel.stop()
                         done["tunnel"] = True
                 except Exception as exc:  # noqa: BLE001
-                    print(f"[停止] 配信を止められない: {exc}")
+                    print(f"  [stop] the delivery cannot be stopped: {exc}")
             if web.control is not None:
                 try:
                     if web.status().get("active"):
                         web.control.set_enabled(False)
                         done["zoom"] = True
                 except Exception as exc:  # noqa: BLE001
-                    print(f"[停止] Zoom字幕を止められない: {exc}")
+                    print(f"  [stop] the Zoom captions cannot be stopped: {exc}")
             return done
 
         def _tunnel(self, body: dict) -> None:
@@ -3649,7 +3648,7 @@ def _control_handler(web: WebCaptions):
             switch the route and stay stopped.
             """
             if web.tunnel is None:
-                self._send_json(503, {"error": "配信の受け口が用意できていない。"})
+                self._send_json(503, {"error": "The delivery control is not available."})
                 return
             if "kind" in body:
                 try:
@@ -3673,7 +3672,7 @@ def _control_handler(web: WebCaptions):
             """Commands for the scheduler: start now, stop, skip, and clear a
             failure."""
             if web.scheduler is None:
-                self._send_json(503, {"error": "予定の受け口が用意できていない。"})
+                self._send_json(503, {"error": "The schedule control is not available."})
                 return
             action = str(body.get("action", ""))
             try:
@@ -3689,7 +3688,7 @@ def _control_handler(web: WebCaptions):
                 elif action == "ack":
                     web.scheduler.ack()
                 else:
-                    self._send_json(400, {"error": f"知らない操作: 「{action}」。"})
+                    self._send_json(400, {"error": f'Unknown action: "{action}".'})
                     return
             except ValueError as exc:
                 # No meeting selected, one already running, and so on. Report
@@ -3716,14 +3715,14 @@ def _control_handler(web: WebCaptions):
                 elif action == "schedule":
                     fields = body.get("fields")
                     if not isinstance(fields, dict):
-                        raise ValueError("fields はオブジェクトで渡すこと。")
+                        raise ValueError("fields must be an object.")
                     web.meetings.set_schedule(str(body.get("id", "")), **fields)
                 elif action == "host_key":
                     web.meetings.ensure_host_id(str(body.get("id", "")), renew=True)
                 elif action == "host_rearm":
                     web.host_rearm(str(body.get("id", "")))
                 else:
-                    raise ValueError(f"知らない操作: 「{action}」。")
+                    raise ValueError(f'Unknown action: "{action}".')
             except ValueError as exc:
                 self._send_json(400, {"error": str(exc)})
                 return
@@ -3737,9 +3736,9 @@ def _control_handler(web: WebCaptions):
             may never receive the answer.
             """
             if web.on_shutdown is None:
-                self._send_json(503, {"error": "終了の受け口がまだ用意できていない。"})
+                self._send_json(503, {"error": "The quit control is not available yet."})
                 return
             self._send_json(200, {"ok": True})
-            web.on_shutdown("ブラウザの操作画面")
+            web.on_shutdown("the browser control page")
 
     return Handler

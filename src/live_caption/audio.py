@@ -42,11 +42,11 @@ def list_devices() -> list[tuple[int, str, int, str]]:
 def describe_device(index: int | None) -> str:
     """Build "name (host API)" from an index. For showing on screen."""
     if index is None:
-        return "既定の入力"
+        return "Default input"
     for i, name, _, api in list_devices():
         if i == index:
-            return f"{name}（{api}）"
-    return f"番号 {index}（見つからない）"
+            return f"{name} ({api})"
+    return f"device {index} (not found)"
 
 
 def find_device(name: str | None) -> int | None:
@@ -60,8 +60,8 @@ def find_device(name: str | None) -> int | None:
         if lowered in dev_name.lower():
             return i
     raise RuntimeError(
-        f"入力デバイスが見つからない: {name}\n"
-        "  --list-devices で一覧を出して、名前の一部を指定すること。"
+        f"Input device not found: {name}\n"
+        "  Run --list-devices to see the list, then give a part of a name."
     )
 
 
@@ -74,8 +74,8 @@ class Capture:
         self.decim = capture_rate // config.ASR_RATE
         if capture_rate % config.ASR_RATE != 0:
             raise ValueError(
-                f"取り込みレート {capture_rate} が {config.ASR_RATE} の整数倍ではない。"
-                " Windowsのサウンド設定で CABLE Output を 48000 Hz にすること。"
+                f"Capture rate {capture_rate} is not a multiple of {config.ASR_RATE}."
+                " Set CABLE Output to 48000 Hz in the Windows sound settings."
             )
         # Capture runs at the device rate; we send in units of 100 ms.
         self.blocksize = capture_rate * config.CHUNK_MS // 1000
@@ -156,8 +156,8 @@ class Capture:
             self._loop = asyncio.get_running_loop()
         except RuntimeError as exc:
             raise RuntimeError(
-                "Capture.start() はイベントループの中から呼ぶこと"
-                "（asyncio.run(...) の内側）。"
+                "Capture.start() must be called from inside the event loop"
+                " (inside asyncio.run(...))."
             ) from exc
         self._stream = sd.InputStream(
             device=self.device,
@@ -230,8 +230,8 @@ async def check_level(capture, seconds: float = 20.0) -> bool:
     narrowing down a problem.
     """
     capture.start()
-    print(f"{seconds:.0f} 秒間、入力の音量を表示する。Zoomで音が鳴っている状態で見ること。")
-    print("無音のまま動かないなら、Zoomのスピーカー設定と CABLE の配線を疑う。")
+    print(f"Showing the input level for {seconds:.0f} seconds. Play sound in Zoom while you watch.")
+    print("If the meter never moves, check the Zoom speaker setting and the CABLE wiring.")
     print()
 
     loud = 0
@@ -255,14 +255,14 @@ async def check_level(capture, seconds: float = 20.0) -> bool:
     print()
     print()
     ratio = loud / total if total else 0.0
-    print(f"音のあった割合: {ratio:.0%}（{loud} / {total} 区間）")
+    print(f"Chunks with sound: {ratio:.0%} ({loud} / {total})")
     if ratio < 0.02:
-        print("**ほぼ無音。経路が切れている。**")
-        print("  - Zoomのスピーカーが `CABLE Input` になっているか")
-        print("  - このアプリの入力が `CABLE Output` になっているか（--device）")
-        print("  - Windowsのサウンド設定で両方 48000 Hz か")
+        print("**Almost no sound. The audio path is broken.**")
+        print("  - Is the Zoom speaker set to `CABLE Input`?")
+        print("  - Is the input of this app set to `CABLE Output`? (--device)")
+        print("  - Are both set to 48000 Hz in the Windows sound settings?")
         return False
-    print("音は届いている。次の段階に進んでよい。")
+    print("Sound is arriving. You can go on to the next step.")
     return True
 
 
@@ -280,7 +280,7 @@ class FileCapture:
         with wave.open(str(path), "rb") as w:
             if (w.getframerate(), w.getnchannels(), w.getsampwidth()) != (config.ASR_RATE, 1, 2):
                 raise ValueError(
-                    f"{path} は 24000 Hz・モノラル・16 bit ではない。ffmpeg で変換すること。"
+                    f"{path} is not 24000 Hz, mono, 16 bit. Convert it with ffmpeg."
                 )
             self.data = w.readframes(w.getnframes())
         self.bytes_per_chunk = config.ASR_RATE * 2 * config.CHUNK_MS // 1000

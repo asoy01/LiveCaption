@@ -213,8 +213,8 @@ class Store:
             tmp.replace(self.path)
             self._error = ""
         except OSError as exc:
-            self._error = f"会議の一覧を保存できない: {exc}"
-            print(f"  [会議] {self._error}")
+            self._error = f"Cannot save the meeting list: {exc}"
+            print(f"  [meetings] {self._error}")
 
     # --- Reading -------------------------------------------------------------
 
@@ -264,7 +264,7 @@ class Store:
             raise ValueError("会議の名前を入れること。")
         with self._lock:
             if any(m.name == name for m in self._items):
-                raise ValueError(f"同じ名前の会議がある: 「{name}」。")
+                raise ValueError(f"A meeting with this name already exists: {name}")
             self._items.append(Meeting(_new_id(), name, str(date.today()),
                                        auto=True, chat=True))
             self._save_locked()
@@ -279,7 +279,7 @@ class Store:
         meeting_id = str(meeting_id)
         with self._lock:
             if not any(m.id == meeting_id for m in self._items):
-                raise ValueError("その会議は無い。")
+                raise ValueError("There is no such meeting.")
             changed = meeting_id != self._active
             self._active = meeting_id
             self._save_locked()
@@ -300,7 +300,7 @@ class Store:
         meeting_id = str(meeting_id)
         with self._lock:
             if not any(m.id == meeting_id for m in self._items):
-                raise ValueError("その会議は無い。")
+                raise ValueError("There is no such meeting.")
             self._items = [m for m in self._items if m.id != meeting_id]
             changed = meeting_id == self._active
             if not self._items:
@@ -332,28 +332,31 @@ class Store:
             raw = str(fields["start"] or "").strip().replace("T", " ")
             # The browser's datetime-local returns "2026-09-25T09:30".
             if raw and _clean_start(raw) == "":
-                raise ValueError(f"日時の書き方が違う: 「{raw}」。{TIME_FMT} の形で入れること。")
+                raise ValueError(
+                    f"Bad date and time: {raw}. Use the form {TIME_FMT}.")
             clean["start"] = _clean_start(raw)
         if "repeat" in fields:
             rep = str(fields["repeat"] or "")
             if rep not in REPEATS:
-                raise ValueError(f"繰り返しが違う: 「{rep}」。空か weekly のどちらか。")
+                raise ValueError(
+                    f"Bad repeat: {rep}. Use an empty value or weekly.")
             clean["repeat"] = rep
         if "zoom" in fields:
             clean["zoom"] = str(fields["zoom"] or "").strip()[:500]
         if "lead_min" in fields:
             clean["lead_min"] = int(_num(fields["lead_min"], 0, 60, -1))
             if clean["lead_min"] < 0:
-                raise ValueError("何分前に動き出すかは 0〜60 で入れること。")
+                raise ValueError("Minutes before the start must be 0 to 60.")
         if "silence_min" in fields:
             value = _num(fields["silence_min"], 0.5, 240, -1)
             if value < 0:
-                raise ValueError("無音で畳むまでの分は 0.5〜240 で入れること。")
+                raise ValueError("Minutes of silence before stopping must be "
+                                 "0.5 to 240.")
             clean["silence_min"] = value
         if "max_min" in fields:
             value = int(_num(fields["max_min"], 5, 24 * 60, -1))
             if value < 0:
-                raise ValueError("安全上限は 5〜1440 分で入れること。")
+                raise ValueError("The hard cap must be 5 to 1440 minutes.")
             clean["max_min"] = value
         if "auto" in fields:
             clean["auto"] = bool(fields["auto"])
@@ -363,7 +366,7 @@ class Store:
         with self._lock:
             found = [m for m in self._items if m.id == meeting_id]
             if not found:
-                raise ValueError("その会議は無い。")
+                raise ValueError("There is no such meeting.")
             old = found[0]
             # When the schedule changes, clear the "done" mark. After moving the
             # time, the occurrence must not still count as finished.
@@ -381,7 +384,7 @@ class Store:
         with self._lock:
             found = [m for m in self._items if m.id == meeting_id]
             if not found:
-                raise ValueError("その会議は無い。")
+                raise ValueError("There is no such meeting.")
             if found[0].host_id and not renew:
                 return found[0].host_id
             new = replace(found[0], host_id=_new_host_id())
@@ -404,7 +407,7 @@ class Store:
                 self._items = [new if m.id == meeting_id else m for m in self._items]
                 self._save_locked()
         except Exception as exc:  # noqa: BLE001
-            print(f"  [会議] 済ませた印を残せない: {exc}")
+            print(f"  [meetings] Cannot mark the occurrence as done: {exc}")
 
     def next_occurrence(self, m: Meeting, now: datetime) -> datetime | None:
         """The next occurrence. None if there is none.

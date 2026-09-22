@@ -398,7 +398,8 @@ def attach(chat: int, path: Path) -> bool:
     if not dialog:
         # Something else may have opened. **Do not leave it open.**
         _send("ESCAPE")
-        print("  [チャット] 添付の窓が出てこない。QRは送らない。")
+        print("  [chat] the file dialog did not appear. "
+              "The QR code is not sent.")
         return False
 
     edit = user32.GetDlgItem(dialog, DLG_FILENAME)
@@ -423,7 +424,8 @@ def attach(chat: int, path: Path) -> bool:
         # It could not open the file (a wrong path, for example). **Close the
         # dialog before returning.**
         user32.SendMessageW(user32.GetDlgItem(dialog, DLG_CANCEL), BM_CLICK, 0, 0)
-        print("  [チャット] 添付の窓が閉じない。QRは送らない。")
+        print("  [chat] the file dialog does not close. "
+              "The QR code is not sent.")
         return False
 
     if not _raise(chat):
@@ -466,7 +468,7 @@ def qr_file(url: str, name: str = "") -> Path | None:
             str(out), scale=8, border=3, dark="#000000", light="#ffffff")
         return out
     except Exception as exc:  # noqa: BLE001
-        print(f"  [チャット] QRを書けない: {exc}")
+        print(f"  [chat] cannot write the QR code: {exc}")
         return None
 
 

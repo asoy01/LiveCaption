@@ -62,12 +62,12 @@ class Vnc:
         connection; you can still see the screen.
         """
         if not os.environ.get("DISPLAY"):
-            return "画面が無い（DISPLAY が空）。Windows では使わない。"
+            return "There is no screen (DISPLAY is empty). Not used on Windows."
         for cmd in ("x0vncserver", "websockify"):
             if shutil.which(cmd) is None:
-                return f"{cmd} が入っていない。"
+                return f"{cmd} is not installed."
         if not Path(config.NOVNC_ROOT).is_dir():
-            return f"noVNC が {config.NOVNC_ROOT} に無い。"
+            return f"noVNC is not in {config.NOVNC_ROOT}."
         return ""
 
     @property
@@ -160,7 +160,7 @@ class Vnc:
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     stdin=subprocess.DEVNULL))
             except OSError as exc:
-                self._error = f"起こせない: {exc}"
+                self._error = f"Cannot start it: {exc}"
                 self._stop_locked()
                 return self._status_locked()
 
@@ -168,7 +168,7 @@ class Vnc:
             self._reap()
             if len(self._procs) < 2:
                 # Do not report "it is up" when only one of the two died.
-                self._error = "上がらなかった。ポートが空いているか確かめること。"
+                self._error = "It did not come up. Check that the ports are free."
                 self._stop_locked()
                 return self._status_locked()
 

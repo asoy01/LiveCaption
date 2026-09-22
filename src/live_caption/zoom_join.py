@@ -73,20 +73,23 @@ def parse_meeting(text: str) -> tuple[str, str]:
     """
     raw = str(text or "").strip()
     if not raw:
-        raise JoinError("会議の指定が空である。")
+        raise JoinError("The meeting is not given.")
     if len(raw) > 500:
-        raise JoinError("会議の指定が長すぎる。招待URLをそのまま貼ること。")
+        raise JoinError("The meeting text is too long. "
+                        "Paste the invitation URL as it is.")
 
     # If it holds only digits and separators, treat it as the meeting number.
     if re.fullmatch(r"[0-9 \-]+", raw):
         digits = "".join(_DIGITS.findall(raw))
         if not (9 <= len(digits) <= 12):
-            raise JoinError(f"会議番号の桁数がおかしい: 「{raw}」。9〜11桁である。")
+            raise JoinError(f"Wrong number of digits in the meeting number: "
+                            f"{raw}. It has 9 to 11 digits.")
         return digits, ""
 
     parsed = urllib.parse.urlparse(raw)
     if parsed.scheme not in ("http", "https", "zoommtg"):
-        raise JoinError(f"知らない書き方: 「{raw[:80]}」。招待URLか会議番号を入れること。")
+        raise JoinError(f"Unknown form: {raw[:80]}. "
+                        "Give an invitation URL or a meeting number.")
 
     # **Check that the address is a Zoom one.** Not because it is dangerous
     # (we only take the number), but so that a paste mistake is not swallowed
@@ -95,8 +98,8 @@ def parse_meeting(text: str) -> tuple[str, str]:
     host = (parsed.hostname or "").lower()
     if host and host != "zoom.us" and not host.endswith(".zoom.us"):
         raise JoinError(
-            f"Zoom の招待URLではない: 「{raw[:80]}」"
-            f"（宛先が {host}）。zoom.us のURLか、会議番号を入れること。"
+            f"This is not a Zoom invitation URL: {raw[:80]} "
+            f"(the host is {host}). Give a zoom.us URL or a meeting number."
         )
 
     query = urllib.parse.parse_qs(parsed.query)
@@ -107,7 +110,8 @@ def parse_meeting(text: str) -> tuple[str, str]:
     if confno:
         digits = "".join(_DIGITS.findall(confno))
         if not (9 <= len(digits) <= 12):
-            raise JoinError(f"会議番号の桁数がおかしい: 「{confno}」。")
+            raise JoinError(f"Wrong number of digits in the meeting number: "
+                            f"{confno}.")
         return digits, pwd
 
     if _PERSONAL.search(parsed.path or ""):
@@ -115,13 +119,14 @@ def parse_meeting(text: str) -> tuple[str, str]:
         # open a different meeting each time, and the URL holds no number. Do
         # not fail silently; say what to do instead.
         raise JoinError(
-            "個人リンク（/my/…）には対応していない。"
-            "会議を始めたときに出る、番号入りの招待URL（/j/…）を貼ること。"
+            "A personal link (/my/...) is not supported. "
+            "Paste the invitation URL with the meeting number (/j/...) that "
+            "appears when the meeting starts."
         )
 
     found = _JOIN_PATH.search(parsed.path or "")
     if not found:
-        raise JoinError(f"会議番号が見つからない: 「{raw[:80]}」")
+        raise JoinError(f"No meeting number found: {raw[:80]}")
     return found.group(1), pwd
 
 
@@ -258,9 +263,9 @@ def join(text: str, name: str = "") -> str:
             os.startfile(url)  # noqa: S606
     except OSError as exc:
         raise JoinError(
-            f"Zoomを起こせない: {exc}\n"
-            f"  探した場所: {exe or _FALLBACK_EXE}\n"
-            "  Zoomが入っているか確かめること。"
+            f"Cannot start Zoom: {exc}\n"
+            f"  Looked in: {exe or _FALLBACK_EXE}\n"
+            "  Check that Zoom is installed."
         ) from exc
     return url
 

@@ -73,7 +73,7 @@ def transcribe(key: str, audio: bytes, params: list[tuple[str, str]]) -> str:
     except urllib.error.HTTPError as e:
         return f"[HTTP {e.code}] {e.read().decode('utf-8', 'replace')[:200]}"
     except urllib.error.URLError as e:
-        return f"[接続失敗] {e.reason}"
+        return f"[connection failed] {e.reason}"
     return body["results"]["channels"][0]["alternatives"][0]["transcript"]
 
 
@@ -81,15 +81,15 @@ def main() -> int:
     load_env()
     key = os.environ.get("DEEPGRAM_API_KEY", "").strip()
     if not key:
-        print("DEEPGRAM_API_KEY が無い。.env に書くこと。")
+        print("DEEPGRAM_API_KEY is not set. Write it in .env.")
         return 1
 
     path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_AUDIO
     if not path.exists():
-        print(f"音声ファイルが無い: {path}")
+        print(f"No audio file: {path}")
         return 1
     audio = path.read_bytes()
-    print(f"音声: {path.name}  ({len(audio):,} bytes)")
+    print(f"Audio: {path.name}  ({len(audio):,} bytes)")
     print()
 
     kt = [("keyterm", t) for t in KEYTERMS]
@@ -101,20 +101,21 @@ def main() -> int:
             params = params + kt
         text = transcribe(key, audio, params)
         results[(lang, use_kt)] = text
-        print(f"language={lang}  keyterm={'あり' if use_kt else 'なし'}")
-        print(f"  {text or '(空)'}")
+        print(f"language={lang}  keyterm={'on' if use_kt else 'off'}")
+        print(f"  {text or '(empty)'}")
         print()
 
-    print("用語ごとの命中")
-    print(f"  {'用語':<20}  ja  ja+kt  multi  multi+kt")
+    print("Hits for each term")
+    print(f"  {'Term':<20}  ja  ja+kt  multi  multi+kt")
     for term in KEYTERMS:
-        marks = ["○" if term in results[c] else "×" for c in CONFIGS]
+        marks = ["o" if term in results[c] else "x" for c in CONFIGS]
         print(f"  {term:<20}  {marks[0]}    {marks[1]}      {marks[2]}       {marks[3]}")
     print()
 
     for lang in ("ja", "multi"):
         same = results[(lang, False)] == results[(lang, True)]
-        verdict = "出力が同一 → keyterm は作用していない" if same else "出力が変わった → keyterm は作用している"
+        verdict = ("same output -> keyterm has no effect" if same
+                   else "output changed -> keyterm works")
         print(f"  language={lang:<6}: {verdict}")
     return 0
 

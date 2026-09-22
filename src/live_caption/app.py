@@ -89,8 +89,8 @@ class ZoomControl:
     def set_token(self, url: str) -> dict:
         """Set the token. Raise captions.TokenError if it is not valid."""
         meeting = self.sender.set_token(url)
-        print(f"[{now()}] Zoom        トークンを受け取った（会議 {meeting}、"
-              f"seq {self.sender.seq} から）")
+        print(f"[{now()}] Zoom        got the token (meeting {meeting}, "
+              f"seq starts at {self.sender.seq})")
         self._changed()
         return self.status()
 
@@ -106,7 +106,7 @@ class ZoomControl:
 
         was_active = self.sender.active
         self.sender.set_enabled(on)
-        print(f"[{now()}] Zoom        送信を{'開始' if on else '停止'}した")
+        print(f"[{now()}] Zoom        {'started' if on else 'stopped'} sending")
 
         # When we start something that was stopped, begin with the throwaway
         # captions. The receiving side cannot turn on "show captions" until
@@ -144,7 +144,8 @@ class EngineControl:
 
     def set_running(self, on: bool) -> dict:
         self.app.set_generating(on)
-        print(f"[{now()}] 生成        字幕の生成を{'開始' if on else '停止'}した")
+        print(f"[{now()}] engine      caption generation "
+              f"{'started' if on else 'stopped'}")
         return self.status()
 
 
@@ -217,11 +218,13 @@ class AudioControl:
         if index is not None:
             known = {i for i, _n, _c, _a in audio_mod.list_devices()}
             if index not in known:
-                raise ValueError(f"番号 {index} の入力デバイスが無い。一覧を取り直すこと。")
+                raise ValueError(
+                    f"There is no input device {index}. Refresh the list.")
 
         capture.device = index
         self.app.audio_error = ""
-        print(f"[{now()}] 音声        入力を {audio_mod.describe_device(index)} にした")
+        print(f"[{now()}] audio       input set to "
+              f"{audio_mod.describe_device(index)}")
         if self.app.generating:
             # Keep generating, and reopen only the audio device and the
             # recognition connection.
@@ -334,8 +337,8 @@ class TuningControl:
         self.app.segmenter.idle_sec = config.IDLE_FLUSH_SEC
         self.app.segmenter.force_cut = config.FORCE_CUT_CHARS
         if checked:
-            print(f"[{now()}] 設定        " + "、".join(
-                f"{n} を {v} にした" for n, v in checked.items()))
+            print(f"[{now()}] config      " + ", ".join(
+                f"{n} set to {v}" for n, v in checked.items()))
         return self.status()
 
     def save(self) -> dict:
@@ -343,7 +346,7 @@ class TuningControl:
         same values."""
         written = {item["env"]: str(item["value"]) for item in config.tuning()}
         path = config.save_env(written)
-        print(f"[{now()}] 設定        {path} に保存した")
+        print(f"[{now()}] config      saved to {path}")
         st = self.status()
         st["saved"] = str(path)
         return st
@@ -557,10 +560,10 @@ class App:
                     "1", "true", "yes", "on"):
                 st = self.vnc.start()
                 if st["on"]:
-                    print(f"VNC:        起動した（ポート {st['web_port']}）。"
-                          "**認証は無い。**")
+                    print(f"VNC:          started on port {st['web_port']}. "
+                          "**There is no authentication.**")
                 else:
-                    print(f"VNC:        起動できない（{st['error']}）")
+                    print(f"VNC:          cannot start ({st['error']})")
         self.sentences: asyncio.Queue[segmenter_mod.Cut] = asyncio.Queue()
         self.inflight: asyncio.Queue = asyncio.Queue(maxsize=MAX_INFLIGHT)
         self.stats = {"sentences": 0, "lines": 0}
@@ -571,7 +574,7 @@ class App:
         # and starts cleaning up.
         self.stop_requested = asyncio.Event()
 
-    def request_stop(self, reason: str = "外部") -> None:
+    def request_stop(self, reason: str = "outside") -> None:
         """Shut the caption app down. **Called from another thread.**
 
         It comes from the browser control page (a thread of the HTTP
@@ -579,7 +582,7 @@ class App:
         `call_soon_threadsafe`.
         It lands in the same place as Ctrl+C. run.py does the cleanup.
         """
-        print(f"[{now()}] 終了        {reason}から終了を要求された")
+        print(f"[{now()}] shutdown    asked to stop by {reason}")
         loop = self.zoom.loop
         if loop is None:
             self.stop_requested.set()
@@ -629,7 +632,7 @@ class App:
             return None
         done = self.transcript.close()
         if done is not None:
-            print(f"[{now()}] 記録        書いた: {done}")
+            print(f"[{now()}] record      wrote: {done}")
         self.transcript = transcript_mod.Transcript(
             self.settings.transcript_dir, meta=self._transcript_meta(), label=label)
         self.transcript.open()
@@ -690,12 +693,13 @@ class App:
         self.translator.system = translator_mod.build_system(entries)
         glossary.remember(names)
 
-        label = ", ".join(names) or "(なし)"
-        print(f"[{now()}] 用語        用語集を {label} にした"
-              f"（{len(entries)} 語、文字起こしに渡す語 {len(self.keywords)}）")
+        label = ", ".join(names) or "(none)"
+        print(f"[{now()}] glossary    glossary set to {label} "
+              f"({len(entries)} terms, {len(self.keywords)} sent to "
+              "transcription)")
         if self.dropped_keywords:
-            print(f"       **{self.dropped_keywords} 語が上限で切り捨てられた。"
-                  "文字起こしの段には届かない。**")
+            print(f"       **{self.dropped_keywords} terms were cut by the "
+                  "limit. They never reach the transcription stage.**")
         if self.generating:
             # keywords can only be sent when a session starts. Reconnect.
             self.request_restart()
@@ -735,9 +739,9 @@ class App:
         self.segmenter.force_cut = config.FORCE_CUT_CHARS
         self.sender.lang = d.caption_lang
         config.remember_direction(d.name)
-        print(f"[{now()}] 向き        字幕を {d.label} にした"
-              f"（1行 {config.MAX_CAPTION_CHARS} 文字、強制分割 {config.FORCE_CUT_CHARS} 文字、"
-              f"Zoomの lang={d.caption_lang}）")
+        print(f"[{now()}] direction   captions set to {d.label} "
+              f"({config.MAX_CAPTION_CHARS} chars per line, forced cut at "
+              f"{config.FORCE_CUT_CHARS} chars, Zoom lang={d.caption_lang})")
 
     def request_restart(self) -> None:
         """Open the audio device and recognition again. **Called from
@@ -785,8 +789,10 @@ class App:
                 # no reason shown on the page. Catch it, and go back to the
                 # stopped state.
                 self.audio_error = f"{type(exc).__name__}: {exc}"
-                print(f"[{now()}] 音声        入力を開けない: {self.audio_error}")
-                print("       操作画面の「音声の入力」で別のデバイスを選ぶこと。")
+                print(f"[{now()}] audio       cannot open the input: "
+                      f"{self.audio_error}")
+                print("       Pick another device under Audio input on the "
+                      "control page.")
                 self.generating = False
                 self._flip(False)
                 continue
@@ -972,7 +978,7 @@ class App:
             self.last_sentence_at = time.monotonic()
             self.stats["sentences"] += 1
             self.stats[f"cut_{cut.reason}"] = self.stats.get(f"cut_{cut.reason}", 0) + 1
-            print(f"[{now()}] 文字起こし  {cut.text}")
+            print(f"[{now()}] transcript  {cut.text}")
             if self.web is not None:
                 self.web.asr(cut.text)
             # If the speculation hit, use it. The whole translation time
@@ -1015,11 +1021,11 @@ class App:
                 for line in lines:
                     self.web.caption(line)
             # Print the measurements on the first line only. From the second
-            # line on, we line up the columns with spaces of the same width
-            # (the Japanese labels are full width, so we need two extra
-            # characters).
-            head = f"(総 {total:.1f}s / 訳 {took:.1f}s{' 先' if used_spec else ''})"
-            cont = " " * (len(head) + 2 + (1 if used_spec else 0))
+            # line on, we line up the columns with spaces of the same width.
+            # Every character here is half width, so the count of characters
+            # is the width.
+            head = f"(total {total:.1f}s / trans {took:.1f}s{' spec' if used_spec else ''})"
+            cont = " " * len(head)
             sent = 0
             for i, line in enumerate(lines):
                 if i:
@@ -1033,9 +1039,9 @@ class App:
                 if await self.sender.send(line):
                     self.stats["lines"] += 1
                     sent += 1
-                    print(f"[{now()}] 字幕        {mark} {line}")
+                    print(f"[{now()}] caption     {mark} {line}")
                 else:
-                    print(f"[{now()}] 字幕        {mark} {line}   (Zoomへは送っていない)")
+                    print(f"[{now()}] caption     {mark} {line}   (not sent to Zoom)")
             # Record it even when translation failed and lines is empty. The
             # recognized text alone is worth keeping.
             if self.transcript is not None:
@@ -1055,65 +1061,72 @@ class App:
         print("=" * 70)
         print("LiveCaption")
         print("=" * 70)
-        print(f"字幕の向き: {self.direction.label}"
-              f"（1行 {config.MAX_CAPTION_CHARS} 文字、強制分割 {config.FORCE_CUT_CHARS} 文字）")
-        print(f"用語対訳表: {', '.join(self.glossary_names) or '**選ばれていない**'}"
-              f"  {len(self.entries)} 語"
-              f"（文字起こしに渡す語 {len(self.keywords)}、上限 {config.ASR_KEYWORD_LIMIT}）")
+        print(f"Direction:    {self.direction.label} "
+              f"({config.MAX_CAPTION_CHARS} chars per line, forced cut at "
+              f"{config.FORCE_CUT_CHARS} chars)")
+        print(f"Glossary:     {', '.join(self.glossary_names) or '**none selected**'}"
+              f"  {len(self.entries)} terms"
+              f" ({len(self.keywords)} sent to transcription, "
+              f"limit {config.ASR_KEYWORD_LIMIT})")
         if self.dropped_keywords:
-            print(f"  **{self.dropped_keywords} 語が上限で切り捨てられた。"
-                  "文字起こしの段には届かない。**")
-            print("  config.ASR_KEYWORD_LIMIT を上げること。")
-        print(f"音声認識:   {config.ASR_MODEL}  delay={self.settings.delay}"
+            print(f"  **{self.dropped_keywords} terms were cut by the limit. "
+                  "They never reach the transcription stage.**")
+            print("  Raise config.ASR_KEYWORD_LIMIT.")
+        print(f"Recognition:  {config.ASR_MODEL}  delay={self.settings.delay}"
               f"  languages={list(self.settings.languages)}")
-        print(f"翻訳:       {self.settings.translate_model}")
-        print(f"音声の入力: {self.audio.status()['name']}")
+        print(f"Translation:  {self.settings.translate_model}")
+        print(f"Audio input:  {self.audio.status()['name']}")
         if self.settings.dry_run:
-            print("**--dry-run: Zoomには送らない。**")
+            print("**--dry-run: nothing is sent to Zoom.**")
         elif self.sender.base_url:
-            print(f"字幕の送信先: {self.sender.base_url[:55]}...")
-            print(f"seq は {self.sender.seq} から始める")
+            print(f"Caption POST: {self.sender.base_url[:55]}...")
+            print(f"              seq starts at {self.sender.seq}")
         else:
-            print("Zoomへの送信: **停止中**（トークンが無い）")
+            print("Zoom output:  **stopped** (no token)")
             if self.web is not None:
-                print("  ブラウザの操作画面（右上の歯車）からトークンを入れて開始できる。")
+                print("  Enter the token on the control page "
+                      "(the gear at the top right) and start it there.")
         if self.web is not None:
-            print(f"操作画面:   {self.web.control_url()}  （自分だけ。共有しないこと）")
+            print(f"Control page: {self.web.control_url()}  "
+                  "(for you only. Do not share it)")
             # **If it is being served, always show it.** The worst case is
             # a page being served when you did not think it was. There is no
             # authentication, so whoever can reach it can use it.
             for extra in self.web.control_urls_extra():
-                print(f"            {extra}  "
-                      "（tailnet の中から。**ACLで絞ること**）")
-            print(f"閲覧画面:   {self.web.viewer_url()}"
-                  f"  （{self.web.lines}行。外には出ない）")
+                print(f"              {extra}  "
+                      "(from inside the tailnet. **Narrow it with an ACL**)")
+            print(f"Viewer page:  {self.web.viewer_url()}"
+                  f"  ({self.web.lines} lines. It stays inside)")
             state = self.web.tunnel.status()["state"] if self.web.tunnel else "off"
             if state == "on":
-                print(f"配信URL:    {self.web.public_url()}  （参加者に配る）")
+                print(f"Delivery URL: {self.web.public_url()}  "
+                      "(hand this to the participants)")
             elif state == "starting":
                 # The URL appears a few seconds later. When it does, run.py
                 # prints it to the terminal.
-                print("配信URL:    起動中（URLが出たらここに表示する）")
+                print("Delivery URL: starting (it appears here once it is ready)")
             else:
-                print("配信URL:    **停止中**"
-                      "（操作画面の「配信を開始」で、参加者に配るURLが出る）")
+                print("Delivery URL: **stopped** (press Start delivering on "
+                      "the control page to get a URL for the participants)")
         if self.transcript is not None:
             # We create the file here, so you learn before the meeting
             # starts whether the location can be written to.
             self.transcript.open()
-            print(f"記録:       {self.transcript.path}")
-            print("  文字起こしと字幕を対にして、確定するたびに書く。")
+            print(f"Record:       {self.transcript.path}")
+            print("  Each sentence is written as it becomes final, "
+                  "with the transcript and the caption as a pair.")
         else:
-            print("記録:       **残さない**（--no-save）")
+            print("Record:       **not kept** (--no-save)")
         if start_now:
-            print("字幕の生成: すぐ始める")
+            print("Captions:     starting now")
         else:
-            print("字幕の生成: **停止中**"
-                  "（操作画面の「開始」を押すまで、録音も文字起こしも翻訳もしない）")
+            print("Captions:     **stopped** (until you press Start on the "
+                  "control page, nothing is recorded, transcribed or "
+                  "translated)")
         if self.web is not None:
-            print("Ctrl+C か、ブラウザの操作画面の「終了」で終わる。")
+            print("Press Ctrl+C, or press Quit on the control page, to stop.")
         else:
-            print("Ctrl+C で終了する。")
+            print("Press Ctrl+C to stop.")
         print("-" * 70)
 
         # Hand over the loop, so that a start from the browser can send the
@@ -1182,7 +1195,7 @@ class App:
         # Room for the last sentence to be recognized, translated and sent
         await asyncio.sleep(12)
         for cut in self.segmenter.flush():
-            print(f"[{now()}] 文字起こし  {cut.text}")
+            print(f"[{now()}] transcript  {cut.text}")
             heard_at = time.time()
             if self.web is not None:
                 self.web.asr(cut.text)
@@ -1192,7 +1205,7 @@ class App:
                 if await self.sender.send(line):
                     self.stats["lines"] += 1
                     sent += 1
-                print(f"[{now()}] 字幕        {line}")
+                print(f"[{now()}] caption     {line}")
                 if self.web is not None:
                     self.web.caption(line)
             if self.transcript is not None:
@@ -1206,43 +1219,44 @@ class App:
         """The summary printed at the end. Written synchronously, so it can
         be called after Ctrl+C."""
         print("-" * 70)
-        print(f"確定した文: {self.stats['sentences']}")
+        print(f"Final sentences: {self.stats['sentences']}")
         # A breakdown by the reason a sentence became final. **The share of
         # the silence wait is where you start when tuning the delay.**
         breakdown = [
             (label, self.stats.get(f"cut_{key}", 0))
             for key, label in (
-                ("punct", "文末記号"), ("force", "強制分割"),
-                ("idle", "無音待ち"), ("flush", "終了時"),
+                ("punct", "end mark"), ("force", "forced cut"),
+                ("idle", "silence"), ("flush", "at exit"),
             )
         ]
         total_cuts = sum(n for _, n in breakdown) or 1
         print("  " + "  ".join(
-            f"{label} {n}（{100 * n / total_cuts:.1f}%）" for label, n in breakdown if n
+            f"{label} {n} ({100 * n / total_cuts:.1f}%)" for label, n in breakdown if n
         ))
         fired = self.stats.get("spec_fired", 0)
         if fired:
             used = self.stats.get("spec_used", 0)
             # **What we threw away is money spent for nothing.** This is
             # where you see whether it pays off.
-            print(f"先回りの翻訳: {fired} 回投げて {used} 回当たった"
-                  f"（捨てた {fired - used}）")
-        print(f"Zoomへ送った行: {self.sender.sent}（失敗 {self.sender.failed}）")
-        print(f"文字起こしの再接続: {self.asr.reconnects} 回")
+            print(f"Speculative translations: {fired} sent, {used} used "
+                  f"({fired - used} thrown away)")
+        print(f"Lines sent to Zoom: {self.sender.sent} "
+              f"({self.sender.failed} failed)")
+        print(f"Transcription reconnects: {self.asr.reconnects}")
         if capture is not None:
-            print(f"音声の取りこぼし: {getattr(capture, 'dropped', 0)} 回")
+            print(f"Dropped audio blocks: {getattr(capture, 'dropped', 0)}")
         if self.web is not None:
-            print(f"ブラウザ字幕を見ていた画面: {self.web.viewers} 個")
+            print(f"Browser caption viewers: {self.web.viewers}")
         if self.segmenter.buffer.strip():
-            print(f"未送信の文字列: {self.segmenter.buffer.strip()[:80]}")
+            print(f"Text never sent: {self.segmenter.buffer.strip()[:80]}")
         if self.transcript is not None:
             # **This is where the `.md` is written for the first time.** The
             # `.jsonl` has been on disk all along.
             md = self.transcript.close()
             if md is not None:
-                print(f"記録: {self.transcript.path}")
-                print(f"      {md}")
+                print(f"Record: {self.transcript.path}")
+                print(f"        {md}")
             elif self.transcript.error:
-                print(f"記録: 残せなかった（{self.transcript.error}）")
+                print(f"Record: could not be kept ({self.transcript.error})")
             else:
-                print("記録: 確定した文が無かったので、何も残していない。")
+                print("Record: no sentence became final, so nothing was kept.")

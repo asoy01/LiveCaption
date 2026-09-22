@@ -168,13 +168,13 @@ docker compose logs -f
 初回は、次のように Tailscale のURLが出て止まります。**次の 2.5 に進んでください。**
 
 ```
-Tailscale:  TS_AUTHKEY が無い。下のURLを開いて手で繋ぐこと。
+Tailscale:  TS_AUTHKEY is not set. Open the URL below to connect by hand.
 
 To authenticate, visit:
 
 	https://login.tailscale.com/a/110e718b012a76
 
-Tailscale:  アドレスがまだ無い。本体は背景で取り直す。
+Tailscale:  No address yet. LiveCaption keeps trying in the background.
 ```
 
 ログの表示を抜けるには Ctrl+C を押します。LiveCaption は止まりません。
@@ -208,7 +208,7 @@ Funnel という機能を使います。
 
 ```
 Tailscale:  100.x.x.x  (livecaption.tail1234.ts.net)
-操作        https でも開ける: https://livecaption.tail1234.ts.net:8443
+[10:24:31] control     also open over https: https://livecaption.tail1234.ts.net:8443
 ```
 
 2台以上で使う、auth key で無人登録する、Tailnet Lock を使っている、tailnet に他の人を
@@ -1392,8 +1392,8 @@ pixi run caption --web --control-bind
 ```
 
 ```
-操作画面:   http://localhost:8081  （自分だけ。共有しないこと）
-            http://100.x.x.x:8081  （tailnet の中から。ACLで絞ること）
+Control page: http://localhost:8081  (for you only. Do not share it)
+              http://100.x.x.x:8081  (from inside the tailnet. **Narrow it with an ACL**)
 ```
 
 - **127.0.0.1 は必ず残ります。** Tailscale が落ちていても、そのマシンの前からは操作

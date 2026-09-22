@@ -29,24 +29,24 @@ from live_caption import transcript as transcript_mod  # noqa: E402
 def convert(path: Path, force: bool = False) -> bool:
     md_path = path.with_suffix(".md")
     if md_path.exists() and not force:
-        print(f"  飛ばす（既にある）: {md_path.name}")
+        print(f"  Skipped (the .md is already there): {md_path.name}")
         return False
     meta, records = transcript_mod.load(path)
     if not records:
-        print(f"  飛ばす（確定した文が無い）: {path.name}")
+        print(f"  Skipped (no final sentences): {path.name}")
         return False
     md_path.write_text(transcript_mod.render(meta, records), encoding="utf-8")
-    print(f"  書いた: {md_path}  （{len(records)} 文）")
+    print(f"  Wrote: {md_path}  ({len(records)} sentences)")
     return True
 
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("path", nargs="?", help="変換する .jsonl（省略すると最新のもの）")
-    p.add_argument("--all", action="store_true", help=".md が無いものを全部変換する")
-    p.add_argument("--force", action="store_true", help="既に .md があっても書き直す")
-    p.add_argument("--dir", default=config.TRANSCRIPT_DIR, help="記録の置き場")
+    p.add_argument("path", nargs="?", help="the .jsonl to convert (default: the newest one)")
+    p.add_argument("--all", action="store_true", help="convert every record that has no .md")
+    p.add_argument("--force", action="store_true", help="rewrite the .md even if it is already there")
+    p.add_argument("--dir", default=config.TRANSCRIPT_DIR, help="where the meeting records are kept")
     args = p.parse_args()
 
     if args.path:
@@ -56,13 +56,13 @@ def main() -> int:
         # changed, so unrelated .jsonl files may sit in the same folder.
         found = sorted(Path(args.dir).glob(f"{config.TRANSCRIPT_PREFIX}*.jsonl"))
         if not found:
-            print(f"記録が無い: {args.dir}")
+            print(f"No meeting records in: {args.dir}")
             return 1
         targets = found if args.all else found[-1:]
 
-    print(f"{len(targets)} 件")
+    print(f"{len(targets)} files")
     done = sum(convert(t, force=args.force or bool(args.path)) for t in targets)
-    print(f"変換した: {done}")
+    print(f"Converted: {done}")
     return 0
 
 

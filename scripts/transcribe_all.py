@@ -110,8 +110,8 @@ def openai_transcribe(path: Path, model: str, prompt: str | None) -> str:
     content = path.read_bytes()
     if len(content) > OPENAI_MAX_BYTES:
         raise ValueError(
-            f"{path.name} は {len(content)/1024/1024:.1f} MB で、OpenAI の上限 25 MB を超える。"
-            " 圧縮済みのファイルを第2引数に渡すこと。"
+            f"{path.name} is {len(content)/1024/1024:.1f} MB, over the OpenAI limit of 25 MB."
+            " Pass a compressed file as the second argument."
         )
     fields = {"model": model, "response_format": "json"}
     if prompt:
@@ -136,7 +136,7 @@ def main() -> int:
     load_env()
     for key in ("DEEPGRAM_API_KEY", "OPENAI_API_KEY"):
         if not os.environ.get(key):
-            print(f"{key} が無い。")
+            print(f"{key} is not set.")
             return 1
 
     if len(sys.argv) < 2:
@@ -145,7 +145,7 @@ def main() -> int:
     wav = Path(sys.argv[1])
     small = Path(sys.argv[2]) if len(sys.argv) > 2 else wav
     if not wav.exists():
-        print(f"音声ファイルが無い: {wav}")
+        print(f"No audio file: {wav}")
         return 1
 
     audio = wav.read_bytes()
@@ -154,9 +154,9 @@ def main() -> int:
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     stem = wav.stem
-    print(f"音声: {wav.name} ({len(audio)/1024/1024:.1f} MB)")
-    print(f"OpenAI用: {small.name} ({small.stat().st_size/1024/1024:.1f} MB)")
-    print(f"用語プロンプト: {len(terms)} 語")
+    print(f"Audio: {wav.name} ({len(audio)/1024/1024:.1f} MB)")
+    print(f"For OpenAI: {small.name} ({small.stat().st_size/1024/1024:.1f} MB)")
+    print(f"Term prompt: {len(terms)} terms")
     print()
 
     runs = [
@@ -186,7 +186,7 @@ def main() -> int:
     only = os.environ.get("ONLY", "").strip()
     if only:
         runs = [(n, r) for n, r in runs if only in n]
-        print(f"ONLY={only} で {len(runs)} 件に絞った")
+        print(f"ONLY={only} narrowed it down to {len(runs)} runs")
         print()
 
     for name, run in runs:
@@ -200,15 +200,15 @@ def main() -> int:
             print(f"   {detail}")
             continue
         except Exception as e:  # noqa: BLE001 - one failure must not stop the rest
-            print(f"失敗: {type(e).__name__}: {e}")
+            print(f"Failed: {type(e).__name__}: {e}")
             continue
         dt = time.perf_counter() - t0
         path = OUT_DIR / f"{stem}.{name}.txt"
         path.write_text(text, encoding="utf-8")
-        print(f"{dt:.0f} 秒  {len(text):,} 文字  -> {path.name}")
+        print(f"{dt:.0f} s  {len(text):,} chars  -> {path.name}")
 
     print()
-    print(f"保存先: {OUT_DIR}")
+    print(f"Saved to: {OUT_DIR}")
     return 0
 
 

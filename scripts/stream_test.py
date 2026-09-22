@@ -64,8 +64,8 @@ def read_wav(path: Path) -> bytes:
     with wave.open(str(path), "rb") as w:
         if w.getframerate() != RATE or w.getnchannels() != 1 or w.getsampwidth() != 2:
             raise ValueError(
-                f"{path.name} は {w.getframerate()} Hz / {w.getnchannels()} ch / "
-                f"{w.getsampwidth()*8} bit。24000 Hz・モノラル・16 bit にすること。"
+                f"{path.name} is {w.getframerate()} Hz / {w.getnchannels()} ch / "
+                f"{w.getsampwidth()*8} bit. It must be 24000 Hz, mono, 16 bit."
             )
         return w.readframes(w.getnframes())
 
@@ -76,9 +76,9 @@ async def run(path: Path, seconds: int, delay: str) -> int:
     total_chunks = min(len(audio) // bytes_per_chunk, seconds * 1000 // CHUNK_MS)
 
     kw = keywords()
-    print(f"音声: {path.name}  送る長さ {total_chunks * CHUNK_MS / 1000:.0f} 秒")
-    print(f"delay={delay}  keywords={len(kw)} 語  languages=['ja','en']")
-    print("実時間で送るので、送る長さと同じだけかかる。")
+    print(f"Audio: {path.name}  sending {total_chunks * CHUNK_MS / 1000:.0f} s")
+    print(f"delay={delay}  keywords={len(kw)} terms  languages=['ja','en']")
+    print("It is sent in real time, so it takes as long as the audio.")
     print()
 
     session = {
@@ -159,15 +159,15 @@ async def run(path: Path, seconds: int, delay: str) -> int:
                     last_delta_at[0] = now
                 elif kind.endswith("input_audio_transcription.completed"):
                     text = (ev.get("transcript") or "").strip()
-                    print(f"  [completed {now:6.1f}s / {len(text):3d}字]  {text[:80]}")
+                    print(f"  [completed {now:6.1f}s / {len(text):3d} chars]  {text[:80]}")
                 elif kind == "error":
-                    print(f"  エラー: {json.dumps(ev, ensure_ascii=False)[:400]}")
+                    print(f"  Error: {json.dumps(ev, ensure_ascii=False)[:400]}")
 
         sender = asyncio.create_task(send_audio())
         receiver = asyncio.create_task(receive())
         await sender
         audio_done = time.perf_counter() - t0
-        print(f"  音声の送信を終えた: {audio_done:.1f}s")
+        print(f"  Finished sending the audio: {audio_done:.1f}s")
 
         # The time from the end of the sending to the last delta is how far
         # behind real time it runs.
@@ -186,22 +186,22 @@ async def run(path: Path, seconds: int, delay: str) -> int:
 
     print()
     print("=" * 66)
-    print("受け取ったイベントの種類:")
+    print("Kinds of event received:")
     for kind, count in sorted(seen.items(), key=lambda x: -x[1]):
         print(f"  {count:5d}  {kind}")
     print()
 
     if not order:
-        print("文字列が1つも返らなかった。session の設定を疑うこと。")
+        print("No text came back at all. Check the session settings.")
         return 1
 
-    print(f"実時間からの遅れ: **{lag:.2f} 秒**")
-    print(f"  （音声を送り終えた {audio_done:.1f}s から、最後の delta が届いた {last_delta_at[0]:.1f}s まで）")
+    print(f"Delay behind real time: **{lag:.2f} s**")
+    print(f"  (from {audio_done:.1f}s, when the audio was sent, to {last_delta_at[0]:.1f}s, when the last delta arrived)")
     print()
 
     lens = [len(items[i]["text"]) for i in order]
-    print(f"item の数: {len(order)}")
-    print(f"1 item の長さ: 最小 {min(lens)}字  中央 {sorted(lens)[len(lens)//2]}字  最大 {max(lens)}字")
+    print(f"Number of items: {len(order)}")
+    print(f"Length of one item: min {min(lens)}  median {sorted(lens)[len(lens)//2]}  max {max(lens)} chars")
     print()
 
     # **This is what sets the lower limit for IDLE_FLUSH_SEC.**
@@ -213,33 +213,33 @@ async def run(path: Path, seconds: int, delay: str) -> int:
         def pct(p: float) -> float:
             return gaps[min(len(gaps) - 1, int(p * len(gaps)))]
 
-        print("同じ item の中での delta の間隔（＝話し続けている間の間隔）:")
+        print("Gaps between deltas inside one item (gaps while the person keeps talking):")
         print(
-            f"  件数 {len(gaps)}  中央 {pct(0.5):.2f}s  p95 {pct(0.95):.2f}s"
-            f"  p99 {pct(0.99):.2f}s  最大 {gaps[-1]:.2f}s"
+            f"  count {len(gaps)}  median {pct(0.5):.2f}s  p95 {pct(0.95):.2f}s"
+            f"  p99 {pct(0.99):.2f}s  max {gaps[-1]:.2f}s"
         )
         print()
         # How often a sentence is finished on silence for each threshold.
         # **Whatever you take off the threshold becomes that many more cuts in
         # the middle of a sentence.**
         minutes = max(audio_done, 1.0) / 60.0
-        print("  閾値ごとの、無音で確定させる回数:")
-        print("    閾値     件数   1分あたり")
+        print("  How often a sentence is finished on silence, for each threshold:")
+        print("   thresh  count  per min")
         for th in (1.0, 1.2, 1.5, 1.8, 2.0, 2.5, 3.0):
             n = sum(1 for g in gaps if g >= th)
-            mark = "  <- いまの設定" if abs(th - config_idle()) < 0.01 else ""
+            mark = "  <- current setting" if abs(th - config_idle()) < 0.01 else ""
             print(f"    {th:4.1f}s  {n:5d}   {n / minutes:6.1f}{mark}")
         print()
-        print("  **IDLE_FLUSH_SEC は、この p99 より上に置くこと。** 下げると、")
-        print("  まだ話している途中で文を確定させてしまう。")
+        print("  **Set IDLE_FLUSH_SEC above this p99.** If you lower it, a sentence")
+        print("  is finished while the person is still talking.")
         print()
-        print("  注意: item が長いと、この間隔には話者の交代や本当の沈黙も混ざる。")
-        print("  「話し続けている間の間隔」の上限としては、やや大きめに出る。")
+        print("  Note: when an item is long, these gaps also hold speaker changes")
+        print("  and real silence, so they come out a little too large.")
         print()
-    print("item ごとの中身:")
+    print("Contents of each item:")
     for i in order:
         it = items[i]
-        print(f"  [{it['first']:6.1f}s → {it['last']:6.1f}s / {len(it['text']):4d}字]")
+        print(f"  [{it['first']:6.1f}s -> {it['last']:6.1f}s / {len(it['text']):4d} chars]")
         print(f"    {it['text'].strip()}")
     return 0
 
@@ -250,7 +250,7 @@ def main() -> int:
     # it prints would differ from the real one.
     config_mod.load_env()
     if not os.environ.get("OPENAI_API_KEY"):
-        print("OPENAI_API_KEY が無い。")
+        print("OPENAI_API_KEY is not set.")
         return 1
     if len(sys.argv) < 2:
         print(__doc__)

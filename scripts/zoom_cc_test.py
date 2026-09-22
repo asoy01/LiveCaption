@@ -142,11 +142,11 @@ def burst(sender: CaptionSender, n: int, interval: float, prefix: str):
 def cmd_rate(sender: CaptionSender, args: list[str]) -> None:
     n = int(args[0]) if args else 20
     interval = float(args[1]) if len(args) > 1 else 0.0
-    print(f"  {n} 回送信 (間隔 {interval} 秒)")
+    print(f"  Sending {n} times (interval {interval} s)")
     ok, ng, lat, total = burst(sender, n, interval, "rate test")
-    print(f"  成功 {ok} / 失敗 {ng} / 合計 {total:.2f} 秒 ({n / total:.1f} 回/秒)")
-    print(f"  1回あたり  最小 {min(lat)*1000:.0f} ms"
-          f"  平均 {sum(lat)/len(lat)*1000:.0f} ms  最大 {max(lat)*1000:.0f} ms")
+    print(f"  ok {ok} / failed {ng} / total {total:.2f} s ({n / total:.1f}/s)")
+    print(f"  per call  min {min(lat)*1000:.0f} ms"
+          f"  mean {sum(lat)/len(lat)*1000:.0f} ms  max {max(lat)*1000:.0f} ms")
 
 
 def make_text(n: int) -> str:
@@ -170,76 +170,77 @@ def make_text(n: int) -> str:
 
 def cmd_long(sender: CaptionSender, args: list[str]) -> None:
     n = int(args[0]) if args else 1000
-    print(f"  {n} 文字を送信")
+    print(f"  Sending {n} characters")
     show(*sender.post(make_text(n)))
 
 
 def auto(sender: CaptionSender) -> int:
     print("=" * 62)
-    print("Zoom 字幕API 一括測定")
+    print("Zoom caption API: all measurements")
     print("=" * 62)
-    print("2台目の端末で「字幕を表示」をオンにして、画面を見ながら実行すること。")
+    print("Turn on \"Show Captions\" on a second device, and watch that screen.")
     print()
 
     # 1. Does it reach Zoom
-    print("1. 疎通確認")
+    print("1. Does it reach Zoom")
     status, body, dt = sender.post("Hello. This is a caption API test.")
     show(status, body, dt)
     if status != 200:
-        print("\n   疎通しない。以降の測定は行わない。")
-        print("   Webポータルで「手動字幕」と「字幕APIトークンの使用を許可する」を確認すること。")
+        print("\n   It does not reach Zoom. The rest is not measured.")
+        print("   In the web portal, check \"Manual captions\" and \"Allow use of caption API token\".")
         return 1
-    print("   => Zoomの画面に英文が出ているか目で確認すること。")
+    print("   => Look at the Zoom screen and check that the English line appears.")
     print()
 
     # 2. How long a caption stays on screen
-    print("2. 表示時間の確認")
-    print("   目印を1つ送る。Zoomの画面から消えるまでの秒数を数えること。")
+    print("2. How long a caption stays on screen")
+    print("   One marker is sent. Count the seconds until it leaves the Zoom screen.")
     sender.post("=== WATCH THIS LINE. Count seconds until it disappears. ===")
     for i in range(10, 0, -1):
-        print(f"\r   {i} 秒経過待ち...", end="", flush=True)
+        print(f"\r   waiting {i} s...", end="", flush=True)
         time.sleep(1)
-    print("\r   (待機終了)                ")
+    print("\r   (done waiting)              ")
     print()
 
     # 3. Rate
-    print("3. 送信レートの上限")
-    print("   間隔を変えて連投する。実測が下回るのは往復時間のため。")
-    print(f"   {'間隔':>10}  {'成功':>4} {'失敗':>4}  {'実測':>10}  {'平均遅延':>9}")
+    print("3. The upper limit of the sending rate")
+    print("   It sends repeatedly at several intervals. The measured rate is lower")
+    print("   than the interval because of the round trip time.")
+    print(f"   {'interval':>10}  {'ok':>4} {'fail':>4}  {'rate':>9}  {'avg delay':>9}")
     for label, n, interval in [
-        ("1.0 秒", 10, 1.0),
-        ("0.5 秒", 10, 0.5),
-        ("0.2 秒", 15, 0.2),
-        ("0.1 秒", 20, 0.1),
-        ("なし", 20, 0.0),
+        ("1.0 s", 10, 1.0),
+        ("0.5 s", 10, 0.5),
+        ("0.2 s", 15, 0.2),
+        ("0.1 s", 20, 0.1),
+        ("none", 20, 0.0),
     ]:
         ok, ng, lat, total = burst(sender, n, interval, f"rate {label}")
-        print(f"   {label:>10}  {ok:>4} {ng:>4}  {n/total:>7.1f}回/秒  {sum(lat)/len(lat)*1000:>6.0f} ms")
+        print(f"   {label:>10}  {ok:>4} {ng:>4}  {n/total:>7.1f}/s  {sum(lat)/len(lat)*1000:>6.0f} ms")
         time.sleep(1.0)
-    print("   => 失敗が出た行から上が、使える上限。")
+    print("   => The rows above the first failure are the usable limit.")
     print()
 
     # 4. Number of characters
-    print("4. 1回に送れる文字数")
+    print("4. How many characters one call can send")
     for n in (100, 500, 1000, 2000, 4000, 8000):
         status, body, dt = sender.post(make_text(n))
         mark = "OK" if status == 200 else f"NG ({status})"
         note = f"  {body.strip()[:80]}" if status != 200 and body.strip() else ""
-        print(f"   {n:>5} 文字  {mark}{note}")
+        print(f"   {n:>5} chars  {mark}{note}")
         time.sleep(0.5)
-    print("   => Zoomの画面で、末尾まで表示されているかも目で確認すること。")
-    print("      POSTが通っても、表示が途中で切れている場合がある。")
+    print("   => On the Zoom screen, also check that the text is shown to the end.")
+    print("      The POST can succeed while the display is cut off partway.")
     print()
 
     print("=" * 62)
-    print("測定終了。結果と、画面で見えた様子をあわせて記録すること。")
+    print("Measurement done. Record the results together with what you saw on screen.")
     return 0
 
 
 def interactive(sender: CaptionSender) -> int:
-    print(f"送信先: {sender.base_url[:60]}...")
-    print(f"言語:   {sender.lang}")
-    print("文字列を入力すると字幕として送信する。/quit で終了。")
+    print(f"Sending to: {sender.base_url[:60]}...")
+    print(f"Language:   {sender.lang}")
+    print("Type a line and it is sent as a caption. /quit to stop.")
     print()
     while True:
         try:
@@ -265,7 +266,7 @@ def interactive(sender: CaptionSender) -> int:
             elif cmd == "/long":
                 cmd_long(sender, args)
             else:
-                print(f"  未知のコマンド: {cmd}")
+                print(f"  Unknown command: {cmd}")
             continue
         show(*sender.post(line))
 
@@ -274,65 +275,68 @@ def display_test(sender: CaptionSender) -> int:
     """A mode for watching how the captions behave. It sends slowly, taking
     its time."""
     print("=" * 62)
-    print("Zoom 字幕 表示挙動の確認")
+    print("Zoom captions: how the display behaves")
     print("=" * 62)
-    print("2台目の端末の画面だけを見ること。この画面は見なくてよい。")
-    print("所要 約2分。")
+    print("Watch only the screen of the second device. You need not look at this one.")
+    print("It takes about 2 minutes.")
     print()
 
-    input("準備ができたら Enter を押す > ")
+    input("Press Enter when you are ready > ")
     print()
 
-    print("--- 試験0: seq を飛ばしても届くか ---")
-    print("  2行送る。2行目は seq を 500 飛ばす。")
+    print("--- Test 0: does a line arrive when seq jumps ---")
+    print("  Two lines are sent. The second one jumps seq by 500.")
     sender.post("TEST 0a ... normal seq. You should see this line.")
     time.sleep(4)
     sender.seq += 500
     sender.post("TEST 0b ... seq jumped by 500. Do you see this line too?")
     time.sleep(4)
-    print("  => 0b が見えたか。見えれば、seq は飛ばしてもよい（再起動からの復帰が楽になる）。")
-    print("     見えなければ、seq は 1 ずつ増やすしかない。")
+    print("  => Did you see 0b? If you did, seq may jump (coming back after a")
+    print("     restart is then easier). If not, seq must go up by 1 each time.")
     print()
 
-    print("--- 試験A: 字幕が消えるまでの時間 ---")
-    print("  1行だけ送る。画面から消えるまでの秒数を数えること。")
+    print("--- Test A: how long until a caption disappears ---")
+    print("  One line is sent. Count the seconds until it leaves the screen.")
     sender.post("TEST A ... count the seconds until this line disappears")
     for i in range(1, 31):
-        print(f"  {i} 秒", end="  ", flush=True)
+        print(f"  {i} s", end="  ", flush=True)
         if i % 10 == 0:
             print()
         time.sleep(1)
     print()
-    print("  => 消えた秒数を記録すること。30秒たっても残っていればそう記録する。")
+    print("  => Record the number of seconds. If it is still there after 30 s,")
+    print("     record that instead.")
     print()
 
-    print("--- 試験B: 新しい字幕は前の字幕をどうするか ---")
-    print("  3行を3秒おきに送る。前の行が上に流れるか、消えて置き換わるかを見ること。")
+    print("--- Test B: what a new caption does to the previous one ---")
+    print("  Three lines are sent, 3 seconds apart. See whether the previous line")
+    print("  scrolls up, or disappears and is replaced.")
     for i, line in enumerate(
         ["TEST B ... line ONE of three",
          "TEST B ... line TWO of three",
          "TEST B ... line THREE of three"], 1):
         sender.post(line)
-        print(f"  {i} 行目を送った")
+        print(f"  sent line {i}")
         time.sleep(3)
     time.sleep(2)
-    print("  => 画面に何行見えているか。ONE はまだ見えるか。")
+    print("  => How many lines are on the screen? Is ONE still there?")
     print()
 
-    print("--- 試験C: 長い文はどこまで表示されるか ---")
-    print("  末尾に番号が入っている。どこまで見えたかを記録すること。")
+    print("--- Test C: how much of a long line is shown ---")
+    print("  The position is written as a number every 10 characters.")
+    print("  Record how far you can see.")
     for n in (200, 500, 1000, 2000):
         sender.post(make_text(n))
-        print(f"  {n} 文字を送った")
+        print(f"  sent {n} characters")
         time.sleep(8)
-    print("  => 各回、画面に見えた最後の数字を記録すること。")
+    print("  => For each one, record the last number you could see on the screen.")
     print()
 
     print("=" * 62)
-    print("記録すること:")
-    print("  A. 字幕が消えるまでの秒数")
-    print("  B. 前の行は流れるか、置き換わるか。同時に何行見えるか")
-    print("  C. 何文字まで表示されたか")
+    print("What to record:")
+    print("  A. The seconds until a caption disappears")
+    print("  B. Does the previous line scroll or get replaced? How many lines show at once")
+    print("  C. How many characters were shown")
     return 0
 
 
@@ -352,7 +356,7 @@ def main() -> int:
         print(__doc__)
         return 1
     sender = CaptionSender(args[0], seq=seq)
-    print(f"seq は {sender.seq} から始める（{STATE_PATH.name} の続き）")
+    print(f"seq starts at {sender.seq} (continuing from {STATE_PATH.name})")
     if auto_mode:
         return auto(sender)
     if disp_mode:

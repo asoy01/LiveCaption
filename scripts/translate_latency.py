@@ -41,12 +41,12 @@ def main() -> int:
     config.load_env()
     entries = glossary.load()
     system = build_system(entries)
-    print(f"用語対訳表: {len(entries)} 語")
+    print(f"Glossary: {len(entries)} entries")
     print()
 
     times: dict[str, list[float]] = {m: [] for m in MODELS}
     for i, ja in enumerate(SENTENCES, 1):
-        print(f"--- {i}. ({len(ja)}字) {ja[:60]}...")
+        print(f"--- {i}. ({len(ja)} chars) {ja[:60]}...")
         for model in MODELS:
             out, dt = chat(model, system, ja)
             times[model].append(dt)
@@ -59,7 +59,7 @@ def main() -> int:
     print("=" * 66)
     for model in MODELS:
         ts = times[model]
-        print(f"{model:<14} 最小 {min(ts):.1f}s  中央 {sorted(ts)[len(ts)//2]:.1f}s  最大 {max(ts):.1f}s")
+        print(f"{model:<14} min {min(ts):.1f}s  median {sorted(ts)[len(ts)//2]:.1f}s  max {max(ts):.1f}s")
     return 0
 
 

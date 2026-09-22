@@ -89,7 +89,7 @@ class Asr:
                     # Resume from the present.
                     capture.drain()
                     backoff = 1.0
-                    print("  [文字起こし] 接続した")
+                    print("  [transcription] connected")
 
                     sender = asyncio.create_task(self._send_audio(ws, capture))
                     try:
@@ -102,7 +102,8 @@ class Asr:
                 if self._stop.is_set():
                     break
                 self.reconnects += 1
-                print(f"  [文字起こし] 切断した（{type(e).__name__}: {e}）。{backoff:.0f} 秒後に繋ぎ直す")
+                print(f"  [transcription] disconnected ({type(e).__name__}: {e}). "
+                      f"Reconnecting in {backoff:.0f} s")
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 15.0)
 
@@ -122,4 +123,4 @@ class Asr:
             if kind.endswith("input_audio_transcription.delta"):
                 on_delta(ev.get("delta", ""))
             elif kind == "error":
-                print(f"  [文字起こしのエラー] {json.dumps(ev, ensure_ascii=False)[:300]}")
+                print(f"  [transcription error] {json.dumps(ev, ensure_ascii=False)[:300]}")

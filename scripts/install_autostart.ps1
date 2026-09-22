@@ -42,18 +42,18 @@ if ($Remove) {
     if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
         Write-Host ''
-        Write-Host "  タスクを消した: $TaskName"
+        Write-Host "  Removed the task: $TaskName"
         Write-Host ''
     } else {
         Write-Host ''
-        Write-Host "  タスクは無い: $TaskName"
+        Write-Host "  There is no such task: $TaskName"
         Write-Host ''
     }
     exit 0
 }
 
 if (-not (Test-Path -LiteralPath $target)) {
-    throw "起動するファイルが無い: $target"
+    throw "The file to start is missing: $target"
 }
 
 # Hand the .vbs to wscript.exe. //B also keeps dialogs from appearing.
@@ -85,17 +85,17 @@ Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
     -Principal $principal -Settings $settings -Force | Out-Null
 
 Write-Host ''
-Write-Host "  登録した: $TaskName"
-Write-Host "    起動するもの: $target"
-Write-Host '    ログオンの20秒後に起動する。窓は出ない。'
-Write-Host '    状態はタスクトレイのアイコンで分かる。'
+Write-Host "  Registered: $TaskName"
+Write-Host "    It starts: $target"
+Write-Host '    It runs 20 seconds after logon. No window opens.'
+Write-Host '    The task tray icon shows you the state.'
 Write-Host ''
-Write-Host '  いま試すなら:'
+Write-Host '  To try it now:'
 Write-Host "    Start-ScheduledTask -TaskName $TaskName"
 Write-Host ''
-Write-Host '  消すなら:'
+Write-Host '  To remove it:'
 Write-Host '    powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -Remove'
 Write-Host ''
-Write-Host '  注意: この機体はログオンしたままにしておくこと。画面のロックは構わない。'
-Write-Host '        ログオフすると動けない。'
+Write-Host '  Note: leave this machine logged on. A locked screen is fine.'
+Write-Host '        If you log off, the task cannot run.'
 Write-Host ''

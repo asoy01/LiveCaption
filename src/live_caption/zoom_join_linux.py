@@ -247,16 +247,16 @@ def _label(name: str, geo: tuple[int, int, int, int] | None) -> str:
     """
     low = name.lower()
     if low in {n.lower() for n in HOME_WINDOW_NAMES}:
-        return "常駐の窓口"
+        return "home window"
     if low in {n.lower() for n in MEETING_WINDOW_NAMES}:
-        return "会議の窓"
+        return "meeting window"
     if AUDIO_DIALOG_HINT in low:
-        return "音声ダイアログ"
+        return "audio dialog"
     if geo is None:
-        return "大きさが取れない（候補外）"
+        return "no size (not a candidate)"
     if geo[2] < MIN_PREVIEW_W or geo[3] < MIN_PREVIEW_H:
-        return f"小さいので候補外（{MIN_PREVIEW_W}x{MIN_PREVIEW_H} 未満）"
-    return "★プレビュー窓の候補"
+        return f"too small (under {MIN_PREVIEW_W}x{MIN_PREVIEW_H}), not a candidate"
+    return "* preview window candidate"
 
 
 def _log_windows(stage: str) -> None:
@@ -269,16 +269,16 @@ def _log_windows(stage: str) -> None:
     try:
         wins = _windows()
     except Exception as exc:  # noqa: BLE001
-        print(f"  [参加] 窓を見られない（{stage}）: {exc}")
+        print(f"  [join] cannot list the windows ({stage}): {exc}")
         return
     if not wins:
-        print(f"  [参加] 窓（{stage}）: 無し")
+        print(f"  [join] windows ({stage}): none")
         return
-    print(f"  [参加] 窓（{stage}）: {len(wins)}個")
+    print(f"  [join] windows ({stage}): {len(wins)}")
     for win_id, _pid, name in wins:
         geo = _geometry(win_id)
-        size = f"{geo[2]}x{geo[3]}+{geo[0]}+{geo[1]}" if geo else "大きさ不明"
-        print(f"  [参加]   {name!r} {size}  {_label(name, geo)}")
+        size = f"{geo[2]}x{geo[3]}+{geo[0]}+{geo[1]}" if geo else "size unknown"
+        print(f"  [join]   {name!r} {size}  {_label(name, geo)}")
 
 
 def _watch_windows_later() -> None:
@@ -297,7 +297,7 @@ def _watch_windows_later() -> None:
         while watched < WATCH_AFTER_JOIN_SEC:
             time.sleep(WATCH_STEP_SEC)
             watched += WATCH_STEP_SEC
-            _log_windows(f"参加の{int(watched)}秒後")
+            _log_windows(f"{int(watched)} s after joining")
 
     threading.Thread(
         target=run, name="zoom-window-watch", daemon=True).start()
@@ -317,8 +317,8 @@ def join(text: str, name: str = "") -> str:
     exe = shutil.which(config.ZOOM_CMD)
     if exe is None:
         raise JoinError(
-            f"Zoom が見つからない（{config.ZOOM_CMD}）。\n"
-            "  コンテナに Zoom が入っているか確かめること。")
+            f"Zoom was not found ({config.ZOOM_CMD}).\n"
+            "  Check that Zoom is installed in the container.")
 
     # **Throw away the crash reports first.** If the last run ended badly,
     # "Zoom quit unexpectedly" comes to the front the moment Zoom starts, and
@@ -335,16 +335,16 @@ def join(text: str, name: str = "") -> str:
             [exe, url], stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except OSError as exc:
-        raise JoinError(f"Zoom を起こせない: {exc}") from exc
+        raise JoinError(f"Cannot start Zoom: {exc}") from exc
 
     # --- The "Join" on the preview window ------------------------------------
     # **`enableShowPreviewWndToJoin=false` has no effect** (stage 0).
     win = _wait(_preview_window, PREVIEW_WAIT_SEC)
-    _log_windows("プレビュー窓を待った後")
+    _log_windows("after waiting for the preview window")
     if win is None:
-        print("  [参加] プレビュー窓が出てこなかった。Joinは押していない。")
+        print("  [join] the preview window never appeared. Join was not pressed.")
     else:
-        print(f"  [参加] プレビュー窓として {win[2]!r} を押す")
+        print(f"  [join] pressing {win[2]!r} as the preview window")
         geo = _geometry(win[0])
         if geo is not None:
             x, y, w, h = geo
@@ -355,7 +355,8 @@ def join(text: str, name: str = "") -> str:
     # audio arrives until this is pressed.
     dlg = _wait(_audio_dialog, AUDIO_DIALOG_WAIT_SEC)
     if dlg is None:
-        print("  [参加] 音声ダイアログが出てこなかった。音は来ない見込み。")
+        print("  [join] the audio dialog never appeared. "
+              "No sound is expected.")
     else:
         geo = _geometry(dlg[0])
         if geo is not None:
@@ -366,7 +367,7 @@ def join(text: str, name: str = "") -> str:
     # just be held in the waiting room. The scheduler (schedule.py) closes
     # things down on silence.
     _wait(_audio_attached, AUDIO_READY_WAIT_SEC)
-    _log_windows("音に入った後")
+    _log_windows("after joining the audio")
 
     # **The AI Companion dialog appears after this point.** Hand it to
     # another thread and do not make the main work wait (read the note on

@@ -38,15 +38,15 @@ def main() -> int:
     config.load_env()
     entries = glossary.load()
     system = build_system(entries)
-    print(f"用語対訳表: {len(entries)} 語")
+    print(f"Glossary: {len(entries)} entries")
     print()
 
     for i, text in enumerate(SAMPLES, 1):
-        print(f"--- 入力 {i} (音声認識の生出力) ---")
+        print(f"--- Input {i} (raw output of speech recognition) ---")
         print(f"  {text}")
         for model in MODELS:
             out, dt = chat(model, system, text)
-            print(f"  [{model}]  {dt:.1f} 秒")
+            print(f"  [{model}]  {dt:.1f} s")
             for line in out.splitlines():
                 print(f"    {line}")
         print()

@@ -16,7 +16,7 @@ The format of `etc/glossary/*.tsv` is:
 
 The third column is the important one. Collecting the misrecognitions that
 actually appeared is what makes it work. Put English misrecognitions in as well
-(for example, "people" is a misrecognition of "p-pol").
+(for example, the acronym "PID" heard as the ordinary word "peed").
 
 The glossary is used in two places.
 
@@ -74,8 +74,8 @@ def check_name(name: str) -> str:
     stem = stem.strip()
     if not stem or not _NAME_OK.match(stem) or stem in {".", ".."}:
         raise ValueError(
-            f"用語集の名前として使えない: 「{name}」\n"
-            "  英数字・かな・漢字・` _ - . `だけ、64文字までにすること。"
+            f'Not usable as a glossary name: "{name}"\n'
+            "  Use letters, digits, kana, kanji and ` _ - . ` only, up to 64 characters."
         )
     return stem
 
@@ -105,7 +105,7 @@ def read_text(name: str) -> str:
     """Return the content of a glossary as it is. Used for downloading."""
     path = path_of(name)
     if not path.is_file():
-        raise ValueError(f"そういう名前の用語集は無い: 「{name}」")
+        raise ValueError(f'No glossary with that name: "{name}"')
     return path.read_text(encoding="utf-8")
 
 
@@ -121,11 +121,11 @@ def save_text(name: str, text: str) -> str:
     raw = text.encode("utf-8")
     if len(raw) > MAX_UPLOAD_BYTES:
         raise ValueError(
-            f"用語集が大きすぎる（{len(raw)} バイト）。"
-            f"{MAX_UPLOAD_BYTES} バイトまでにすること。"
+            f"The glossary is too large ({len(raw)} bytes). "
+            f"The limit is {MAX_UPLOAD_BYTES} bytes."
         )
     if "\x00" in text:
-        raise ValueError("テキストではない。.tsv を渡すこと。")
+        raise ValueError("This is not text. Give a .tsv file.")
 
     # **Do not accept a glossary in the wrong format.** A `.csv` saved with
     # commas reads as one Japanese term per whole line. It becomes a broken
@@ -136,10 +136,11 @@ def save_text(name: str, text: str) -> str:
     entries = parse_text(text)
     if not entries or not any("\t" in ln for ln in lines):
         raise ValueError(
-            "用語集として読めない。書式を確かめること:\n"
-            "  日本語(正しい表記) <TAB> English <TAB> よくある誤認識(カンマ区切り)\n"
-            "  **区切りはタブである。カンマではない。**\n"
-            "  Excel から出すときは「テキスト (タブ区切り)」を選ぶこと。"
+            "This cannot be read as a glossary. Check the format:\n"
+            "  Japanese (correct spelling) <TAB> English <TAB> "
+            "common misrecognitions (separated by commas)\n"
+            "  **The separator is a tab, not a comma.**\n"
+            '  When you export from Excel, choose "Text (Tab delimited)".'
         )
 
     root = config.glossary_dir()
@@ -162,7 +163,7 @@ def delete_file(name: str) -> str:
     """Delete a glossary. Return the name that was deleted."""
     path = path_of(name)
     if not path.is_file():
-        raise ValueError(f"そういう名前の用語集は無い: 「{name}」")
+        raise ValueError(f'No glossary with that name: "{name}"')
     path.unlink()
     return path.stem
 
@@ -213,10 +214,10 @@ def load(names: list[str] | tuple[str, ...] | None = None) -> list[Entry]:
         except ValueError:
             # **Do not crash while loading.** Even when the remembered
             # selection is broken, the meeting has to be able to start.
-            print(f"  [用語集] 「{name}」は名前として使えない。飛ばす")
+            print(f'  [glossary] "{name}" is not a usable name. Skipped')
             continue
         if not path.exists():
-            print(f"  [用語集] {path.name} が無い。飛ばす")
+            print(f"  [glossary] {path.name} is missing. Skipped")
             continue
         for e in load_file(path):
             old = merged.get(e.ja)
@@ -224,8 +225,8 @@ def load(names: list[str] | tuple[str, ...] | None = None) -> list[Entry]:
                 merged[e.ja] = e
                 continue
             if old.en and e.en and old.en != e.en:
-                print(f"  [用語集] 「{e.ja}」の英語が食い違う: "
-                      f"{old.en!r} を使い、{e.en!r}（{name}）は使わない")
+                print(f'  [glossary] "{e.ja}" has two English terms: '
+                      f"using {old.en!r}, not {e.en!r} (from {name})")
             wrong = tuple(dict.fromkeys(old.wrong + e.wrong))
             merged[e.ja] = Entry(old.ja, old.en or e.en, wrong)
     return list(merged.values())
@@ -270,7 +271,7 @@ def remember(names: list[str] | tuple[str, ...]) -> None:
             encoding="utf-8",
         )
     except OSError as exc:
-        print(f"  [用語集] 選択を覚えられない: {exc}")
+        print(f"  [glossary] cannot remember the selection: {exc}")
 
 
 def keywords(
@@ -288,6 +289,30 @@ def keywords(
         if e.en and e.en != e.ja:
             out.append(e.en)
     return out if limit is None else out[:limit]
+
+
+def _examples(entries: list[Entry], direction: str) -> list[str]:
+    """Build the worked examples from the glossary itself.
+
+    **Do not write examples into the prompt by hand.** Hand-written ones name
+    the terms of one field, and every user of this program then gets that
+    field's vocabulary pushed into the model, whatever their own meetings are
+    about. Taking the examples from the glossary that is loaded keeps them
+    relevant to the meeting at hand.
+
+    Returns an empty list when no entry carries a misrecognition. The
+    instructions above the examples stand on their own, so an empty glossary
+    simply gets no examples.
+    """
+    picked = [e for e in entries if e.en and e.wrong][:2]
+    out = []
+    for e in picked:
+        wrong = e.wrong[0]
+        right = e.ja if direction == "en2ja" else f"「{e.ja}」= {e.en}"
+        out.append(f"  例:「{wrong}」は「{e.ja}」の誤認識であることが多い。"
+                   if direction == "en2ja"
+                   else f"  例:「{wrong}」が現れたら、{right} の誤認識と考える。")
+    return out
 
 
 def prompt_block(entries: list[Entry], direction: str | None = None) -> str:
@@ -312,10 +337,9 @@ def prompt_block(entries: list[Entry], direction: str | None = None) -> str:
                  for e in entries if e.en for w in e.wrong]
         examples = [
             "- **左の語がこの分野で意味を成さないなら、必ず右の語として訳すこと。**",
-            "  例:「people」は「p-pol」（p偏光）の誤認識であることが多い。",
             "- **日本語の誤認識も含まれる。** 日本語で話している部分にも同じ規則を適用すること。",
-            "  例:「間食系」「感傷系」は日本語として意味を成さない。必ず「干渉計」の話である。",
-            "  **「防振系」や「懸架系」と取り違えてはいけない。音が近いだけの別の語である。**",
+            "- **音が近いだけの別の語と取り違えてはいけない。**",
+            *_examples(entries, "en2ja"),
         ]
     else:
         header = "## 用語対訳表（この英語を必ず使う）"
@@ -323,10 +347,9 @@ def prompt_block(entries: list[Entry], direction: str | None = None) -> str:
         rules = [f"- 「{w}」 → 「{e.ja}」 = {e.en}" for e in entries for w in e.wrong]
         examples = [
             "- **左の語がこの分野で意味を成さないなら、必ず右の語として訳すこと。**",
-            "  例:「間食系」「感傷系」は日本語として意味を成さない。必ず「干渉計」= interferometer とする。",
-            "  **「防振系」や「懸架系」と取り違えてはいけない。音が近いだけの別の語である。**",
+            "- **音が近いだけの別の語と取り違えてはいけない。**",
             "- **英語の誤認識も含まれる。** 英語で話している部分にも同じ規則を適用すること。",
-            "  例:「people」は「p-pol」（p偏光）の誤認識であることが多い。",
+            *_examples(entries, "ja2en"),
         ]
 
     return "\n".join([
@@ -340,9 +363,9 @@ def prompt_block(entries: list[Entry], direction: str | None = None) -> str:
         "左の語が入力に現れたら、右の語の誤認識だと考えること。",
         "",
         *examples,
-        "- 左の語が普通の語としても成立する場合（例:「変更」「反射」「people」「サークル」）は、文脈で判断する。",
-        "  装置や測定の話をしている最中なら、右の語を優先する。",
-        "  人や組織の話をしているなら、そのままの意味で訳す。",
+        "- 左の語が普通の語としても成立する場合は、文脈で判断する。",
+        "  この分野の話をしている最中なら、右の語を優先する。",
+        "  関係のない話をしているなら、そのままの意味で訳す。",
         "",
         *rules,
     ])

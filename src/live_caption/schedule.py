@@ -244,11 +244,12 @@ class Scheduler:
         # loop, so during the few seconds before that the scheduler could start
         # another occurrence.
         self.state = JOINING
-        self.note = f"「{meeting.name}」をいま始める"
+        self.note = f"Starting now: {meeting.name}"
         occurrence = store.occurrence_key(datetime.now())
         asyncio.run_coroutine_threadsafe(
             self._begin_guarded(meeting, occurrence), loop)
-        print(f"[{now_str()}] 予定        操作画面から「{meeting.name}」を始める")
+        print(f"[{now_str()}] schedule    starting {meeting.name} "
+              "from the control page")
         return self.status()
 
     def skip_next(self) -> dict:
@@ -265,8 +266,8 @@ class Scheduler:
             return self.status()
         store.mark_fired(nxt[0]["id"], nxt[0]["at"])
         self.note = "次の予定を飛ばした。"
-        print(f"[{now_str()}] 予定        {nxt[0]['at']} の"
-              f"「{nxt[0]['name']}」を飛ばした")
+        print(f"[{now_str()}] schedule    skipped {nxt[0]['name']} "
+              f"at {nxt[0]['at']}")
         return self.status()
 
     async def _begin_guarded(self, meeting, occurrence: str) -> None:  # noqa: ANN001
@@ -283,9 +284,9 @@ class Scheduler:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
-            self._fail(f"いま始められない: {type(exc).__name__}: {exc}")
+            self._fail(f"Cannot start now: {type(exc).__name__}: {exc}")
             try:
-                self._teardown("始められなかったので片付けた")
+                self._teardown("Could not start, so the meeting was shut down")
             except Exception:  # noqa: BLE001
                 self.state = IDLE
 
@@ -331,8 +332,8 @@ class Scheduler:
             # join an empty room 40 minutes late.
             other_key = self.app.web.meetings.occurrence_key(other_when)
             self.app.web.meetings.mark_fired(other.id, other_key)
-            print(f"[{now_str()}] 予定        {other_key} の「{other.name}」は飛ばした"
-                  f"（「{meeting.name}」と重なっている）")
+            print(f"[{now_str()}] schedule    skipped {other.name} at {other_key} "
+                  f"(it overlaps {meeting.name})")
         await self._begin(meeting, key)
 
     # --- Starting -------------------------------------------------------------
@@ -358,7 +359,7 @@ class Scheduler:
         self._joined_zoom = bool(meeting.zoom)
         self._saw_audio = False
         self._chat_todo = []
-        print(f"[{now_str()}] 予定        「{meeting.name}」を始める（{occurrence}）")
+        print(f"[{now_str()}] schedule    starting {meeting.name} ({occurrence})")
 
         # 1. Switch the meeting that is delivered.
         try:
@@ -382,7 +383,8 @@ class Scheduler:
                 if st["state"] == "error":
                     # Carry on even without a delivery. Screen sharing and the
                     # Zoom captions still work.
-                    print(f"[{now_str()}] 予定        配信を始められない: {st['error']}")
+                    print(f"[{now_str()}] schedule    cannot start the delivery: "
+                          f"{st['error']}")
                     self.note = "配信を始められなかった"
                 else:
                     self.note = "配信を始めた"
@@ -405,7 +407,7 @@ class Scheduler:
             return
         self.state = RUNNING
         self.note = "字幕を出している"
-        print(f"[{now_str()}] 予定        「{meeting.name}」の字幕を出している")
+        print(f"[{now_str()}] schedule    captions are running for {meeting.name}")
 
         # 6. Posting to the Zoom chat comes later. **Nothing is posted here.**
         #
@@ -460,7 +462,7 @@ class Scheduler:
         # Which round this is. **Keep it in the log.** There are two posts, so
         # you need to know which one failed.
         which = self._chat_total - len(self._chat_todo) + 1
-        round_ = f"（{which}/{self._chat_total}回目）"
+        round_ = f" ({which}/{self._chat_total})"
 
         # **The implementation differs per machine.** Windows uses window
         # classes and the clipboard API. Linux (the container) uses windows on
@@ -474,8 +476,8 @@ class Scheduler:
         if not zoom_chat.meeting_window():
             if late:
                 self._chat_todo.pop(0)
-                print(f"[{now_str()}] 予定        チャットに投げられない{round_}: "
-                      "Zoomの会議の窓が出てこない")
+                print(f"[{now_str()}] schedule    cannot post to the chat{round_}: "
+                      "the Zoom meeting window never appeared")
             return
 
         web = self.app.web
@@ -483,7 +485,7 @@ class Scheduler:
         if not url:
             if late:
                 self._chat_todo.pop(0)
-                print(f"[{now_str()}] 予定        チャットに投げる先のURLが無い{round_}")
+                print(f"[{now_str()}] schedule    no URL to post to the chat{round_}")
             return
 
         name = self.meeting_name
@@ -491,26 +493,28 @@ class Scheduler:
             done = await asyncio.to_thread(self._post_chat_now, url, name)
         except Exception as exc:  # noqa: BLE001
             self._chat_todo.pop(0)
-            print(f"[{now_str()}] 予定        チャットに投げられない{round_}: "
+            print(f"[{now_str()}] schedule    cannot post to the chat{round_}: "
                   f"{type(exc).__name__}: {exc}")
             return
 
         if done["text"]:
             self._chat_todo.pop(0)
             self._space_out_next()
-            extra = "（QRも）" if done["files"] else ""
-            print(f"[{now_str()}] 予定        チャットにURLを投げた{round_}{extra}")
+            extra = " (with the QR code)" if done["files"] else ""
+            print(f"[{now_str()}] schedule    posted the URL to the chat"
+                  f"{round_}{extra}")
             if not done["files"]:
                 # This happens when the host has turned file sending off.
                 # **The URL did arrive.**
-                print(f"[{now_str()}] 予定        QRは送れなかった。URLだけ届いている。")
+                print(f"[{now_str()}] schedule    the QR code did not go. "
+                      "Only the URL arrived.")
             return
         # Another window came to the front while pasting, and so on.
         # **Come back and try once more.**
         if late:
             self._chat_todo.pop(0)
             why = done["why"]
-            print(f"[{now_str()}] 予定        チャットに投げられない{round_}: {why}")
+            print(f"[{now_str()}] schedule    cannot post to the chat{round_}: {why}")
 
     def _space_out_next(self) -> None:
         """Move the next round at least `SCHEDULE_CHAT_GAP_SEC` into the future.
@@ -570,10 +574,10 @@ class Scheduler:
             return
         self._we_launched_zoom = not already
         self.note = "Zoomに入った"
-        print(f"[{now_str()}] 予定        Zoomに入る: {url[:90]}")
+        print(f"[{now_str()}] schedule    joining Zoom: {url[:90]}")
         if already:
-            print(f"[{now_str()}] 予定        Zoomは既に会議に入っていた。"
-                  "終わっても終了させない")
+            print(f"[{now_str()}] schedule    Zoom was already in a meeting. "
+                  "It will not be quit at the end")
 
     async def _arm(self) -> str:
         """Check that captions really started. Return the reason if they did not.
@@ -669,11 +673,11 @@ class Scheduler:
         if elapsed > self._max_limit():
             # **Stop even when it is not silent.** This is the last guard
             # against a bill that never stops.
-            self._teardown("安全上限で止めた", detail=f"{self._max_min}分")
+            self._teardown("安全上限で止めた", detail=f"{self._max_min} min")
             return
         quiet, limit, why = self._quiet_state()
         if quiet > limit:
-            self._teardown(why, detail=f"{limit / 60:g}分")
+            self._teardown(why, detail=f"{limit / 60:g} min")
 
     # --- Cleaning up --------------------------------------------------------
 
@@ -687,12 +691,12 @@ class Scheduler:
         """
         self.state = STOPPING
         name = self.meeting_name
-        extra = f"（{detail}）" if detail else ""
-        print(f"[{now_str()}] 予定        「{name}」を畳む: {why}{extra}")
+        extra = f" ({detail})" if detail else ""
+        print(f"[{now_str()}] schedule    shutting {name} down: {why}{extra}")
         try:
             self.app.engine.set_running(False)
         except Exception as exc:  # noqa: BLE001
-            print(f"[{now_str()}] 予定        生成を止められない: {exc}")
+            print(f"[{now_str()}] schedule    cannot stop the captions: {exc}")
         self._leave_zoom()
         # Drop the Zoom caption token. **Each meeting has its own token.**
         # Keeping it would send the next meeting's captions to the old meeting.
@@ -705,7 +709,7 @@ class Scheduler:
             try:
                 tunnel.stop()
             except Exception as exc:  # noqa: BLE001
-                print(f"[{now_str()}] 予定        配信を止められない: {exc}")
+                print(f"[{now_str()}] schedule    cannot stop the delivery: {exc}")
         self.app.roll_transcript()
         self.state = IDLE
         self.note = why
@@ -732,9 +736,9 @@ class Scheduler:
         self._we_launched_zoom = False
         try:
             if zoom_join.leave():
-                print(f"[{now_str()}] 予定        Zoomを終了させた")
+                print(f"[{now_str()}] schedule    Zoom was quit")
         except Exception as exc:  # noqa: BLE001
-            print(f"[{now_str()}] 予定        Zoomを終了させられない: {exc}")
+            print(f"[{now_str()}] schedule    cannot quit Zoom: {exc}")
 
     # --- Failures -----------------------------------------------------------
 
@@ -746,4 +750,4 @@ class Scheduler:
         """
         self.failure = why
         self.failure_at = time.strftime("%Y-%m-%d %H:%M:%S")
-        print(f"[{now_str()}] 予定        失敗: {why}")
+        print(f"[{now_str()}] schedule    failed: {why}")

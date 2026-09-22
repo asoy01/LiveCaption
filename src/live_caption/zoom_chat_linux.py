@@ -277,27 +277,34 @@ def post(text: str, files: list[Path] | None = None) -> dict:
 
     This is a tool that runs unattended, so a failure must not drag the caller
     down with it.
+
+    It returns `{"text": bool, "files": int, "why": str}`. **The key for the
+    reason has to be `why`, the same as on the Windows side**
+    (`zoom_chat.py`). `schedule.py` and the control page both read `why`, so
+    naming it anything else means the reason never reaches either of them.
     """
-    done = {"text": False, "files": 0, "error": ""}
+    done = {"text": False, "files": 0, "why": ""}
     win_id = open_chat()
     if not win_id:
-        done["error"] = "会議のチャットを開けない。会議に入っているか確かめること。"
+        done["why"] = ("Cannot open the meeting chat. "
+                         "Check that you are in a meeting.")
         return done
 
     saved = clip_get_text()
     try:
         if not _raise(win_id):
-            done["error"] = "会議の窓を前面に出せない。"
+            done["why"] = "Cannot bring the meeting window to the front."
             return done
         if not clip_set_text(text):
-            done["error"] = "クリップボードに入れられない。"
+            done["why"] = "Cannot write to the clipboard."
             return done
         time.sleep(PASTE_SEC)
         # **Check once more before typing into the front window.** If we type
         # during the moment the front window changes, there is no telling
         # where the input goes.
         if not _focused(win_id):
-            done["error"] = "打ち込む直前に、別の窓が前面に出た。中止した。"
+            done["why"] = ("Another window came to the front just before "
+                             "typing. Stopped.")
             return done
         _run(["xdotool", "key", "--window", win_id, "ctrl+v"], timeout=8)
         time.sleep(PASTE_SEC)
@@ -315,7 +322,8 @@ def post(text: str, files: list[Path] | None = None) -> dict:
             else:
                 # **Do not lie and say it was sent.** The message text did
                 # arrive, so the URL reached the readers.
-                done["error"] = "QRを載せられなかった。文面は投げた。"
+                done["why"] = ("The QR code could not be posted. "
+                                 "The message text was sent.")
     finally:
         # **Give back the clipboard we took.** Only text can be restored.
         if saved is not None:

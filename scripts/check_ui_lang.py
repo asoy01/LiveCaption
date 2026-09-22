@@ -83,7 +83,7 @@ def check_syntax(page: str) -> list[str]:
     """Check that the scripts parse in each language."""
     node = shutil.which("node")
     if node is None:
-        print("node が無いので、スクリプトの構文検査は飛ばした。")
+        print("node is not installed, so the script syntax check was skipped.")
         return []
 
     bad = []
@@ -134,7 +134,7 @@ def check_ascii_launchers() -> list[str]:
         if offenders:
             where = offenders[0]
             line = raw[:where].count(b"\n") + 1
-            bad.append(f"{name}: {len(offenders)} バイトがASCII外（最初は {line} 行目）")
+            bad.append(f"{name}: {len(offenders)} bytes are not ASCII (the first is on line {line})")
     return bad
 
 
@@ -143,48 +143,48 @@ def main() -> int:
 
     launchers = check_ascii_launchers()
     if launchers:
-        print("起動用の .vbs に ASCII 以外が混ざっている。"
-              "このままでは、ダブルクリックしても何も起きない。")
+        print("The launcher .vbs contains non-ASCII characters. "
+              "As it is, a double-click does nothing at all.")
         for item in launchers:
             print(f"    {item}")
         print()
-        print("Windows Script Host は .vbs を ANSI として読む。日本語のコメントは"
-              "書けない。説明は docs/manual.ja.md に置くこと。")
+        print("Windows Script Host reads .vbs as ANSI. You cannot write Japanese "
+              "comments in it. Put the explanation in docs/manual.ja.md.")
         return 1
 
     meets = build_meetings_page()
 
     broken = check_syntax(page) + check_syntax(meets)
     if broken:
-        print("操作画面のスクリプトが構文エラーになる。このままでは全部のボタンが効かない。")
+        print("The control page script has a syntax error. As it is, no button works.")
         for item in broken:
             print()
             print(item)
         print()
-        print("訳文に \" を入れていないか、JavaScript の文字列に 「」 を書いていないか"
-              "（訳表で \" に化ける）を見ること。")
+        print("Check that no translation contains a \" , and that no JavaScript "
+              "string contains 「」 (the translation table turns them into \").")
         return 1
-    print("スクリプトの構文: 日本語・英語ともに通る。")
+    print("Script syntax: both Japanese and English parse.")
 
     left = i18n.remaining_japanese(strip_comments(i18n.apply(page, "en")))
     left += [w for w in i18n.remaining_japanese(
         strip_comments(i18n.apply(meets, "en"))) if w not in left]
     notes = check_scheduler_strings()
     if not left and not notes:
-        print("訳し残しは無い。")
+        print("Nothing is left untranslated.")
         return 0
 
     if left:
-        print(f"画面の訳し残し: {len(left)} 件")
+        print(f"Untranslated on the page: {len(left)} items")
         for word in left:
             print(f"    {word}")
     if notes:
-        print(f"見張りの一言の訳し残し: {len(notes)} 件"
-              "（schedule.UI_STRINGS）")
+        print(f"Untranslated scheduler notes: {len(notes)} items"
+              " (schedule.UI_STRINGS)")
         for word in notes:
             print(f"    {word}")
     print()
-    print("src/live_caption/i18n.py の EN に足すこと。")
+    print("Add them to EN in src/live_caption/i18n.py.")
     return 1
 
 

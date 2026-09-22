@@ -181,14 +181,14 @@ class Tray:
         try:
             import pystray
         except ImportError:
-            print("  [トレイ] pystray が入っていないので、アイコンは出さない。")
+            print("  [tray] pystray is not installed, so no icon is shown.")
             return False
 
         menu = pystray.Menu(
-            pystray.MenuItem("操作画面を開く", self._open_control, default=True),
-            pystray.MenuItem("ログを開く", self._open_log),
+            pystray.MenuItem("Open the control page", self._open_control, default=True),
+            pystray.MenuItem("Open the log", self._open_log),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("終了", self._quit),
+            pystray.MenuItem("Quit", self._quit),
         )
         self._icon = pystray.Icon(
             "LiveCaption", _icon_image(COLORS["idle"]), "LiveCaption", menu)
@@ -229,14 +229,14 @@ class Tray:
 
         parts = ["LiveCaption"]
         if state == "running":
-            parts.append(f"字幕: {sc.get('meeting') or ''}")
+            parts.append(f"Captions: {sc.get('meeting') or ''}")
         elif sc.get("upcoming"):
             nxt = sc["upcoming"][0]
-            parts.append(f"次: {nxt['name']} {nxt['at'][-5:]}")
+            parts.append(f"Next: {nxt['name']} {nxt['at'][-5:]}")
         else:
-            parts.append("待機中")
+            parts.append("Waiting")
         if sc.get("failure"):
-            parts.append("失敗あり")
+            parts.append("A failure is pending")
         # **The tooltip shows 128 characters at most** (a Windows limit).
         tip = "\n".join(parts)[:127]
 

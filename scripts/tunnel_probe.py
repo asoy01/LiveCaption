@@ -82,9 +82,9 @@ async function loop() {
       const d = await r.json();
       since = d.next;
       for (const l of d.lines) { out.textContent += "[lp " + (Date.now()-t) + "ms] " + l + "\\n"; }
-      document.getElementById("lp").textContent = "届いている（" + (++n) + "回）";
+      document.getElementById("lp").textContent = "arriving (" + (++n) + ")";
     } catch (e) {
-      document.getElementById("lp").textContent = "失敗: " + e;
+      document.getElementById("lp").textContent = "failed: " + e;
       await new Promise((r) => setTimeout(r, 1000));
     }
   }
@@ -93,10 +93,10 @@ loop();
 let m = 0;
 const es = new EventSource("/sse");
 es.onmessage = (e) => {
-  document.getElementById("sse").textContent = "届いている（" + (++m) + "回）";
+  document.getElementById("sse").textContent = "arriving (" + (++m) + ")";
   out.textContent += "[sse] " + e.data + "\\n";
 };
-es.onerror = () => { if (!m) { document.getElementById("sse").textContent = "届かない"; } };
+es.onerror = () => { if (!m) { document.getElementById("sse").textContent = "not arriving"; } };
 </script>
 </body>
 """
@@ -150,11 +150,11 @@ class Handler(BaseHTTPRequestHandler):
 def measure(base: str) -> int:
     """Measure, from outside, how long polling and SSE arrive."""
     base = base.rstrip("/")
-    print(f"測る先: {base}")
+    print(f"Measuring: {base}")
     print()
 
     # --- long polling ---
-    print("長ポーリング")
+    print("Long polling")
     ok = 0
     try:
         with urllib.request.urlopen(f"{base}/lines?since=0", timeout=WAIT + 15) as r:
@@ -168,13 +168,13 @@ def measure(base: str) -> int:
             dt = time.monotonic() - t
             got = len(d["lines"])
             since = d["next"]
-            verdict = "**溜め込まれている**" if got == 0 else "通る"
-            print(f"  {i + 1}回目: {dt:5.2f}秒で {got} 行  → {verdict}")
+            verdict = "**buffered**" if got == 0 else "passes"
+            print(f"  try {i + 1}: {got} lines in {dt:5.2f} s  -> {verdict}")
             if got:
                 ok += 1
     except Exception as exc:  # noqa: BLE001
-        print(f"  失敗: {exc}")
-    print(f"  判定: {'通る' if ok >= 2 else '**使えない**'}")
+        print(f"  Failed: {exc}")
+    print(f"  Result: {'passes' if ok >= 2 else '**unusable**'}")
     print()
 
     # --- SSE ---
@@ -185,16 +185,16 @@ def measure(base: str) -> int:
         with urllib.request.urlopen(req, timeout=WAIT + 5) as r:
             line = r.readline()
             dt = time.monotonic() - t
-        print(f"  最初の1行が {dt:5.2f}秒で届いた: {line[:60]!r}")
-        print(f"  判定: {'通る' if dt < WAIT else '**溜め込まれている**'}")
+        print(f"  the first line arrived in {dt:5.2f} s: {line[:60]!r}")
+        print(f"  Result: {'passes' if dt < WAIT else '**buffered**'}")
     except Exception as exc:  # noqa: BLE001
-        print(f"  判定: **使えない**（{type(exc).__name__}: {exc}）")
+        print(f"  Result: **unusable** ({type(exc).__name__}: {exc})")
     return 0
 
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--measure", metavar="URL", help="外から測る（トンネルのURL）")
+    p.add_argument("--measure", metavar="URL", help="measure from outside (the tunnel URL)")
     p.add_argument("--port", type=int, default=PORT)
     args = p.parse_args()
 
@@ -204,10 +204,10 @@ def main() -> int:
     threading.Thread(target=_grow, daemon=True).start()
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     server.daemon_threads = True
-    print(f"http://127.0.0.1:{args.port}  （1秒ごとに1行増える）")
-    print("次に、別の窓で:")
+    print(f"http://127.0.0.1:{args.port}  (one line is added every second)")
+    print("Then, in another window:")
     print(f"  local/bin/cloudflared.exe tunnel --url http://127.0.0.1:{args.port}")
-    print("Ctrl+C で終了する。")
+    print("Press Ctrl+C to stop.")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -73,11 +73,11 @@ def request(url: str, key: str, body: dict | None = None):
 
 
 def check_auth(key: str) -> bool:
-    print("1. キーの確認 (/v1/projects, 課金なし)")
+    print("1. Check the key (/v1/projects, not billed)")
     status, body = request("https://api.deepgram.com/v1/projects", key)
     if status == 200:
         names = [p.get("name", "?") for p in body.get("projects", [])]
-        print(f"   OK   プロジェクト: {', '.join(names) or '(なし)'}\n")
+        print(f"   OK   Projects: {', '.join(names) or '(none)'}\n")
         return True
     print(f"   NG   status={status}  {json.dumps(body, ensure_ascii=False)[:200]}\n")
     return False
@@ -92,7 +92,7 @@ def check_combo(key: str, label: str, params: list[tuple[str, str]]) -> None:
         # the request went through.
         alts = body["results"]["channels"][0]["alternatives"][0]
         n = len(alts.get("transcript", ""))
-        print(f"   OK   {label}  (transcript {n} 文字)")
+        print(f"   OK   {label}  (transcript {n} chars)")
     else:
         msg = body.get("err_msg") or body.get("reason") or json.dumps(body, ensure_ascii=False)
         print(f"   NG   {label}  status={status}")
@@ -103,8 +103,8 @@ def main() -> int:
     load_env()
     key = os.environ.get("DEEPGRAM_API_KEY", "").strip()
     if not key:
-        print("DEEPGRAM_API_KEY が無い。")
-        print(f".env.example を .env にコピーして、キーを書くこと: {PROJECT_ROOT / '.env'}")
+        print("DEEPGRAM_API_KEY is not set.")
+        print(f"Copy .env.example to .env and write the key there: {PROJECT_ROOT / '.env'}")
         return 1
 
     if not check_auth(key):
@@ -112,14 +112,14 @@ def main() -> int:
 
     kt = [("keyterm", t) for t in KEYTERMS]
 
-    print("2. nova-3 のパラメータの組み合わせ")
+    print("2. nova-3 parameter combinations")
     check_combo(key, "language=ja                     ", [("model", "nova-3"), ("language", "ja")])
-    check_combo(key, "language=ja   + keyterm (本命)  ", [("model", "nova-3"), ("language", "ja")] + kt)
+    check_combo(key, "language=ja   + keyterm (main)  ", [("model", "nova-3"), ("language", "ja")] + kt)
     check_combo(key, "language=multi                  ", [("model", "nova-3"), ("language", "multi")])
     check_combo(key, "language=multi + keyterm        ", [("model", "nova-3"), ("language", "multi")] + kt)
 
-    print("\n本命の行が NG なら、Deepgram を選ぶ理由（用語指定）が消える。")
-    print("その場合は HANDOFF.md の構成比較を見直すこと。")
+    print("\nIf the main line is NG, the reason to choose Deepgram (naming the terms) is gone.")
+    print("In that case, review the comparison of designs in HANDOFF.md.")
     return 0
 
 

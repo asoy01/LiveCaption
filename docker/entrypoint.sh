@@ -38,7 +38,7 @@ i=0
 while ! pactl info >/dev/null 2>&1; do
   i=$((i + 1))
   if [ "$i" -gt 100 ]; then
-    echo "音声:       PulseAudio が上がらない。/var/log/pulseaudio.log を見ること。"
+    echo "Audio:      PulseAudio did not start. See /var/log/pulseaudio.log."
     break
   fi
   sleep 0.1
@@ -60,7 +60,7 @@ if pactl info >/dev/null 2>&1; then
   # PULSE_SOURCE=mic.monitor separately (the microphone it sees may be
   # silent).
   pactl set-default-source meeting.monitor
-  echo "音声:       meeting / mic を作った。本体は meeting.monitor から録る"
+  echo "Audio:      Created meeting / mic. The engine records from meeting.monitor."
 fi
 
 # **Keep the state on a volume.** If it is lost, you start again from the
@@ -75,7 +75,7 @@ i=0
 while [ ! -S "$SOCK" ]; do
   i=$((i + 1))
   if [ "$i" -gt 100 ]; then
-    echo "tailscaled: ソケットが開かない。/var/log/tailscaled.log を見ること。"
+    echo "tailscaled: The socket did not open. See /var/log/tailscaled.log."
     tail -20 /var/log/tailscaled.log || true
     break
   fi
@@ -83,20 +83,20 @@ while [ ! -S "$SOCK" ]; do
 done
 
 if tailscale --socket="$SOCK" status >/dev/null 2>&1; then
-  echo "Tailscale:  ログイン済み（状態はボリュームに残っている）"
+  echo "Tailscale:  Already logged in. The state is kept in the volume."
 elif [ -n "${TS_AUTHKEY:-}" ]; then
   # **Use a signed key** if your tailnet has Tailnet Lock enabled. A node that
   # joins with an unsigned key is registered, but it cannot talk to the other
   # nodes.
-  echo "Tailscale:  auth key で参加する（hostname=$HOSTNAME_TS）"
+  echo "Tailscale:  Joining with an auth key (hostname=$HOSTNAME_TS)."
   tailscale --socket="$SOCK" up \
             --authkey="$TS_AUTHKEY" \
             --hostname="$HOSTNAME_TS" \
-            --accept-dns=false || echo "Tailscale:  参加に失敗した。鍵と署名を確認すること。"
+            --accept-dns=false || echo "Tailscale:  Could not join. Check the key and its signature."
 else
   # The default for the distributed version. **No secret has to go in .env.**
   # A URL appears in the log.
-  echo "Tailscale:  TS_AUTHKEY が無い。下のURLを開いて手で繋ぐこと。"
+  echo "Tailscale:  TS_AUTHKEY is not set. Open the URL below to connect by hand."
   tailscale --socket="$SOCK" up --hostname="$HOSTNAME_TS" --accept-dns=false &
 fi
 
@@ -113,7 +113,7 @@ while [ "$i" -lt 60 ]; do
   i=$((i + 1))
   sleep 0.5
 done
-[ -z "${ADDR:-}" ] && echo "Tailscale:  アドレスがまだ無い。本体は背景で取り直す。"
+[ -z "${ADDR:-}" ] && echo "Tailscale:  No address yet. LiveCaption keeps trying in the background."
 
 # --- Glossary ----------------------------------------------------------------
 # **Keep the tables on a volume.** They are user data that can be uploaded,
@@ -127,9 +127,9 @@ GLOSS_DIR="${LIVECAPTION_GLOSSARY_DIR:-/app/local/glossary}"
 mkdir -p "$GLOSS_DIR"
 if [ -z "$(ls -A "$GLOSS_DIR" 2>/dev/null)" ] && [ -d /app/etc/glossary ]; then
   cp -n /app/etc/glossary/*.tsv "$GLOSS_DIR"/ 2>/dev/null || true
-  echo "用語集:     $GLOSS_DIR に種を置いた（$(ls -1 "$GLOSS_DIR" | wc -l) 個）"
+  echo "Glossary:   Seeded $GLOSS_DIR ($(ls -1 "$GLOSS_DIR" | wc -l) files)"
 else
-  echo "用語集:     $GLOSS_DIR（$(ls -1 "$GLOSS_DIR"/*.tsv 2>/dev/null | wc -l) 個）"
+  echo "Glossary:   $GLOSS_DIR ($(ls -1 "$GLOSS_DIR"/*.tsv 2>/dev/null | wc -l) files)"
 fi
 
 # --- Display ----------------------------------------------------------------
@@ -148,7 +148,7 @@ i=0
 while ! xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; do
   i=$((i + 1))
   if [ "$i" -gt 100 ]; then
-    echo "画面:       Xvfb が上がらない。/var/log/xvfb.log を見ること。"
+    echo "Display:    Xvfb did not start. See /var/log/xvfb.log."
     break
   fi
   sleep 0.1
@@ -183,7 +183,7 @@ UXTerm*VT100.geometry: 110x32
 XRES
 xrdb -merge "$HOME/.Xresources" 2>/dev/null || true
 
-echo "画面:       $DISPLAY (${LIVECAPTION_SCREEN:-1600x1200x24})"
+echo "Display:    $DISPLAY (${LIVECAPTION_SCREEN:-1600x1200x24})"
 
 # **The Zoom settings.** If they already exist, leave them alone, so that the
 # settings made after signing in are not lost.
@@ -203,7 +203,7 @@ enableStartVideoWhenJoin=false
 speaker_volume=255
 system.audio.type=default
 CONF
-  echo "Zoom:       設定を書いた（speaker_volume=255）"
+  echo "Zoom:       Wrote the settings (speaker_volume=255)."
 fi
 
 # **VNC is not started here. The engine owns it.**

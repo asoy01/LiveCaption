@@ -279,8 +279,8 @@ class Transcript:
         during a meeting."""
         if not self.error:
             self.error = f"{type(exc).__name__}: {exc}"
-            print(f"  [記録の失敗] {self.error}")
-            print("  以後はメモリにだけ溜める。字幕は続く。")
+            print(f"  [record] cannot write: {self.error}")
+            print("  From now on the record is kept in memory only. Captions go on.")
         self._fh = None
 
 
@@ -294,36 +294,38 @@ def render(meta: dict, records: list[dict], ended: str = "", final: bool = True)
     started = str(meta.get("started", ""))
     lines.append(f"# Live captions {started[:16]}".rstrip())
     lines.append("")
-    lines.append(f"- 開始: {started}")
+    lines.append(f"- Started: {started}")
     if ended:
-        lines.append(f"- 終了: {ended}" if final else f"- ここまで: {ended}（会議はまだ続いている）")
-    lines.append(f"- 確定した文: {len(records)}")
+        lines.append(f"- Ended: {ended}" if final
+                     else f"- Up to: {ended} (the meeting is still running)")
+    lines.append(f"- Sentences: {len(records)}")
     if meta.get("asr"):
         lines.append(
-            f"- 音声認識: {meta['asr']}"
-            f"（delay={meta.get('delay', '?')}、languages={meta.get('languages', '?')}）"
+            f"- Speech recognition: {meta['asr']}"
+            f" (delay={meta.get('delay', '?')}, languages={meta.get('languages', '?')})"
         )
     if meta.get("translate"):
-        lines.append(f"- 翻訳: {meta['translate']}")
+        lines.append(f"- Translation: {meta['translate']}")
     # The direction is recorded per sentence, because it can be switched in
     # the middle of a meeting.
     used = [d for d in dict.fromkeys(str(r.get("dir", "")) for r in records) if d]
     if not used and meta.get("direction"):
         used = [str(meta["direction"])]
     if used:
-        labels = {"ja2en": "日本語 → 英語", "en2ja": "英語 → 日本語"}
-        lines.append("- 字幕の向き: " + "、".join(labels.get(d, d) for d in used))
+        labels = {"ja2en": "Japanese → English", "en2ja": "English → Japanese"}
+        lines.append("- Caption direction: " + ", ".join(labels.get(d, d) for d in used))
         if len(used) > 1:
-            lines.append("  **会議の途中で向きを変えている。**")
+            lines.append("  **The direction was changed during the meeting.**")
     if meta.get("glossary") is not None:
-        lines.append(f"- 用語対訳表: {meta['glossary']} 語")
+        lines.append(f"- Glossary: {meta['glossary']} terms")
     if meta.get("glossary_sets"):
-        lines.append(f"- 使った用語集: {meta['glossary_sets']}")
+        lines.append(f"- Glossary tables used: {meta['glossary_sets']}")
     if meta.get("dry_run"):
-        lines.append("- **--dry-run。Zoomへは送っていない。**")
+        lines.append("- **--dry-run. Nothing was sent to Zoom.**")
     lines.append("")
-    lines.append("文字起こし（上）と、字幕として出した行（下）を並べてある。")
-    lines.append("**上の行の誤りは `etc/glossary/` の表の第3列に足すこと。**")
+    lines.append("Each pair is the transcript (above) and the caption that was shown (below).")
+    lines.append("**Add errors in the upper line to the third column of "
+                 "the tables in `etc/glossary/`.**")
     lines.append("")
     lines.append("---")
     lines.append("")
@@ -334,7 +336,7 @@ def render(meta: dict, records: list[dict], ended: str = "", final: bool = True)
         # The two trailing spaces are a Markdown line break. They make the
         # pair read as one block.
         lines.append(f"**{record.get('at', '')}**　{ja}  ")
-        lines.append("\n".join(en) if en else "*（翻訳に失敗した）*")
+        lines.append("\n".join(en) if en else "*(translation failed)*")
         lines.append("")
     return "\n".join(lines)
 
