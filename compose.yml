@@ -8,11 +8,12 @@
 #   docker compose up -d --build
 #   docker compose logs -f  # 操作画面のURLが出る
 #
-# 手順は docs/manual.ja.md の「2. インストール（Docker）」にある。
+# 手順は docs/manual.ja.md の「2. インストール（Windows + Docker）」にある。
+# Linux との違いは付録A。
 #
 # **ConnMan を使っているホストでは、除外一覧を先に直しておくこと。**
 # 直っていないと、コンテナ起動から数十秒遅れてホストの外向き通信が死ぬ。
-# マニュアルの「2.6 ConnMan の除外設定」を見ること。
+# マニュアルの「付録A.2 ConnMan を使っているホストの設定」を見ること。
 
 name: livecaption
 
