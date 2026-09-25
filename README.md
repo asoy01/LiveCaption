@@ -80,10 +80,10 @@ You can use all three at the same time.
 |---|---|---|---|
 | Zoom caption API | Required | Each person turns on "Show Captions" | Through Zoom |
 | Screen share | Not required | You share the viewer page full screen | No |
-| Give people a URL | Not required | People open a URL on their own device | Through Tailscale Funnel, or Cloudflare on Windows |
+| Give people a URL | Not required | People open a URL on their own device | Through Cloudflare, or through Tailscale Funnel for a meeting whose URL you give out in advance |
 
 Section 3.4 of [the manual](docs/manual.md) covers all three, including how to
-set up Cloudflare on the Windows native version.
+choose the delivery route for each meeting.
 
 ## How it works
 

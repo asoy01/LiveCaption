@@ -51,7 +51,7 @@ schedule, the glossary and the meeting record do not differ.
 | One Windows PC | An Intel or AMD CPU. **It does not run on an Apple Silicon Mac**, because Zoom publishes no arm64 build for Linux. 16 GB of memory or more is recommended |
 | Docker Desktop | You install it in 2.1. It uses WSL2 |
 | An OpenAI API key | Used for both transcription and translation. Create one at [platform.openai.com](https://platform.openai.com) |
-| A Tailscale account | Used to reach the control page, and to give the viewer URL to people. The free tier is enough. **Appendix B.1 covers how to create one** |
+| A Tailscale account | Used to reach the control page. Also used for a meeting whose viewer URL you give out in advance (3.4 C). The free tier is enough. **Appendix B.1 covers how to create one** |
 | A Zoom meeting | LiveCaption itself needs no Zoom account. It joins without signing in, unless the meeting is set to "authenticated users only" (4.6) |
 
 **To put captions in the Zoom caption area, you need the meeting host or a
@@ -193,8 +193,9 @@ Press Ctrl+C to stop watching the log. LiveCaption keeps running.
 ### 2.5 Approve the container on Tailscale
 
 **The LiveCaption container is a machine on your Tailscale network (your
-tailnet).** The control page can only be opened from inside that tailnet, and
-the viewer URL is delivered through Tailscale Funnel.
+tailnet).** The control page can only be opened from inside that tailnet. For
+a meeting whose viewer URL you give out in advance, the viewer URL is delivered
+through Tailscale Funnel (3.4 C).
 
 **Do step 2 before step 3.** In the other order the control page gets no https
 URL (run `docker compose restart` if that happens).
@@ -204,14 +205,15 @@ URL (run `docker compose restart` if that happens).
    have no account, create one first: see Appendix B.1.** Changing which account
    a tailnet belongs to is difficult later
 2. In the admin console, turn on **DNS** → **HTTPS Certificates** →
-   **Enable HTTPS**. Both the https control page and the viewer delivery need
-   it. **You do this once per tailnet**
+   **Enable HTTPS**. Both the https control page and delivery through the
+   Tailscale route need it. **You do this once per tailnet**
 3. Open the URL from the log in 2.4 and approve the machine with your Tailscale
    account. **You do this once.** The state is kept in a Docker volume
 4. `livecaption` appears under **Machines** in the admin console. Open the "..."
    menu on the right and choose **Disable key expiry**. Without this the
-   container disconnects from the tailnet after 180 days and **the viewer URL
-   stops working without warning**
+   container disconnects from the tailnet after 180 days and **the control page
+   stops opening without warning**. Viewer URLs given out in advance through
+   the Tailscale route stop working too
 
 **Install Tailscale on the machine you open the control page from, and sign in
 with the same account.** That machine can be the host itself
@@ -413,7 +415,7 @@ There are three ways, and you can use all three at the same time.
 |---|---|---|---|
 | A. Zoom captions | **Required** | Turns manual captions on | Through Zoom |
 | B. Screen share | Not required | Watches the viewer page you share | **No** |
-| C. Give people a URL | Not required | Opens a URL on their own device | Through Tailscale |
+| C. Give people a URL | Not required | Opens a URL on their own device | Through Cloudflare (through Tailscale for a meeting set to the Tailscale route) |
 
 #### A. Zoom captions (needs the host or a co-host to help)
 
@@ -457,28 +459,49 @@ to read.** Check on a second device that the text is readable.
 #### C. Give people a URL
 
 This needs no host rights. You give people the viewer URL and a QR code, and
-they open it on their own phone or laptop. **The viewer URL belongs to the
-meeting and never changes, so you can give it out in advance**: it appears as
-soon as you add the meeting on the Manage meetings tab, and you can put it in
-the invitation next to the Zoom link.
+they open it on their own phone or laptop.
 
 1. Select the meeting on the **This meeting** tab and open **How people see it**
    → **In a browser**
 2. Press **Start delivering**. (If you used "Start this meeting now", it is
    already delivering.) The status shows `delivering`
 3. Copy the URL, or press **Save the QR code** to get a PNG, and put it in the
-   chat or the invitation. If you ticked the box on the Manage meetings tab,
-   LiveCaption posts it to the Zoom chat by itself (4.4)
+   chat. If you ticked the box on the Manage meetings tab, LiveCaption posts it
+   to the Zoom chat by itself (4.4)
+
+**There are two delivery routes, and each meeting has its own.** Choose the
+**Delivery route** of each meeting on the Manage meetings tab. **For most
+meetings, keep the usual route, Cloudflare.**
+
+| | Cloudflare (usual) | Tailscale |
+|---|---|---|
+| Preparation | none | one setting on the tailnet (Appendix B.6) |
+| Viewer URL | **changes every time you start delivering** | belongs to the meeting and never changes |
+| Can you give it out in advance? | no. You give it out after delivery starts | **yes**. The URL and the QR code appear on the Manage meetings tab before delivery starts |
+| Relay the captions pass through | Cloudflare | Tailscale |
+
+**Giving out the URL during the meeting is enough.** With the chat posting in
+4.4, the URL and the QR code reach the Zoom chat after delivery starts.
+
+**Use the Tailscale route only for a meeting whose viewer URL you give out in
+advance**, for example in the Zoom invitation or an e-mail. **With the
+Tailscale route, some people may fail to open the URL** (Appendix B.7).
 
 - **Only the selected meeting is delivered.** The other meetings' URLs do not
-  open that day
-- **A URL that never changes is also easier to leak.** Only the random text at
-  the end protects it. If it leaks, delete that meeting and make a new one
+  open that day. When you select another meeting, delivery moves to it, and the
+  delivery route changes to that meeting's route
+- **You cannot change the route of a meeting while it is delivering.** Stop
+  delivering first
+- Changing **Route** under **How people see it** also saves it as the route of
+  the selected meeting. It is the same as choosing it on the Manage meetings tab
+- **A Tailscale URL never changes, so a leaked URL keeps working.** Only the
+  random text at the end protects it. If it leaks, delete that meeting and make
+  a new one
 - **Do not give people a URL for meetings whose content must not leave your
-  organisation.** The captions pass through Tailscale's relay. Use screen share
-  instead
-- If Start delivering fails the first time, Funnel is not enabled yet. See
-  Appendix B.6
+  organisation.** On both routes, the captions pass through a relay. Use screen
+  share instead
+- If Start delivering fails the first time on the Tailscale route, Funnel is
+  not enabled yet. See Appendix B.6
 
 ### 3.5 Tell the audience
 
@@ -536,6 +559,7 @@ Fill in the meeting row on the **Manage meetings** tab.
 | Start | When the meeting starts |
 | Weekly | Repeat on the same weekday at the same time |
 | Zoom | The invitation URL (`https://zoom.us/j/...`) or the meeting number. Empty: it does not join |
+| Delivery route | Cloudflare (usual) or Tailscale. Choose Tailscale to give the viewer URL out in advance (3.4 C) |
 | Minutes before | Start delivering and join Zoom this many minutes early. Default 2 |
 | Stop after silence | If no transcript appears for this many minutes, the meeting is treated as over. Default 10 |
 | Hard cap | Stop after this many minutes even if sound continues. Default 180 |
@@ -587,9 +611,13 @@ direction, between `Japanese to English` and `English to Japanese`.
 
 ```
 Live captions for this meeting (Japanese to English):
-https://livecaption.<your-tailnet>.ts.net/v/xxxxxxxx
+https://xxxx-xxxx-xxxx.trycloudflare.com/v/xxxxxxxx
 Open the link in any browser. No app or sign-in needed.
 ```
+
+The URL depends on the delivery route. The example above is for Cloudflare.
+For a meeting on the Tailscale route, it is
+`https://livecaption.<your-tailnet>.ts.net/v/xxxxxxxx`.
 
 **It posts twice: at the start time and three minutes later** (for "Start this
 meeting now", when you press it and three minutes later). **Zoom does not show
@@ -599,9 +627,9 @@ everyone already there.
 
 **Anyone who joins more than three minutes late gets nothing.** That is Zoom's
 behaviour, and LiveCaption cannot change it. For a meeting where people
-arrive late, put the viewer URL in the Zoom invitation as well, or press
-**Post to the Zoom chat** by hand under **How people see it** → **In a
-browser**.
+arrive late, press **Post to the Zoom chat** by hand under **How people see
+it** → **In a browser** during the meeting. Or set that meeting to the
+Tailscale route and put the viewer URL in the Zoom invitation (3.4 C).
 
 The posting works by driving the Zoom window on screen, so there is no way to
 confirm that the message arrived. Appendix E.3 has the details and the
@@ -615,6 +643,11 @@ helps.**
 Each meeting has a **separate secret URL** for the host. Press **Show the host
 URL** on the Manage meetings tab.
 
+**The host URL exists only for a meeting on the Tailscale route.** With
+Cloudflare, the Zoom token would pass through Cloudflare's relay. For a meeting
+on the Cloudflare route, get the token from the host and paste it on the
+control page yourself (3.4 A).
+
 **Give the host URL to the host only.** Do not confuse it with the viewer URL.
 Anyone holding the host URL can push captions into that meeting.
 
@@ -624,6 +657,7 @@ Once they send it, LiveCaption starts sending captions to Zoom.
 The host URL is accepted only:
 
 - for the meeting being delivered now
+- while the delivery route is Tailscale
 - within 30 minutes of the scheduled time, or while that meeting is running
 - once (after that it is refused; press "Accept once more" on the control page
   to reopen it)
@@ -841,7 +875,11 @@ is reported at start-up and ignored, and the default is used.
 | Transcript appears but no captions | The translation error is shown on the page |
 | Nothing in the Zoom caption area | **Are you looking at the host's screen?** (the host never sees them). Did the reader turn manual captions on? Is the token from this meeting? Check the failure count in the top right |
 | A different set of captions appears | **Zoom's automatic captions are running.** Ask the host to turn them off |
-| Start delivering fails | Funnel is not enabled (Appendix B.6) |
+| Start delivering fails (Cloudflare) | If it says `cloudflared was not found`, the image is old. Rebuild the image (Appendix C.1) |
+| Start delivering fails (Tailscale) | Funnel is not enabled (Appendix B.6) |
+| Some people can open the viewer URL and others cannot (Tailscale) | The problem is on Tailscale's relay side. Stop delivering, start again, and wait one minute before you check (Appendix B.7) |
+| The Manage meetings tab shows no viewer URL or QR code | That meeting's route is Cloudflare. A Cloudflare URL is not decided until delivery starts. To give it out in advance, set the route to Tailscale (3.4 C) |
+| No host URL appears | That meeting's route is Cloudflare. The host URL exists only for a meeting on the Tailscale route (4.5) |
 | A term in the table is still translated wrongly | Are the words past the limit (section 5)? Is that subject's table ticked? |
 | The captions go by too fast to read | Ask people to make the caption area taller. Lower `LIVECAPTION_FORCE_CUT_CHARS` (Appendix E.4) |
 | A scheduled meeting does not start | **Is "Start this meeting automatically" ticked?** It is off by default. Check that the schedule is listed under Right now |
@@ -954,7 +992,9 @@ scheduled meeting depends on.
 **If you do not have an account yet, read B.1 first.**
 
 B.2 onwards are for the cases 2.5 does not cover. The steps in 2.5 assume one
-machine on a tailnet of your own.
+machine on a tailnet of your own. **The parts about Funnel (`nodeAttrs` in B.3
+and B.5, B.6 and B.7) are needed only if some meeting uses the Tailscale
+route.**
 
 ### B.1 Creating an account
 
@@ -1124,14 +1164,42 @@ instead of `autogroup:member`.
 
 ### B.6 If Funnel will not start
 
-When "Start delivering" fails, one of these two is not enabled on the tailnet
-side. The reason is printed under the button.
+When "Start delivering" fails for a meeting on the Tailscale route, one of
+these two is not enabled on the tailnet side. The reason is printed under the
+button.
 
 1. **HTTPS certificates.** Admin console → DNS → HTTPS Certificates → Enable
    HTTPS (2.5)
 2. **The `funnel` node attribute.** The default ACL gives it to
    `autogroup:member`, but a tailnet with a rewritten ACL, or a tagged node, may
    not have it (`nodeAttrs` in B.5)
+
+### B.7 If some people cannot open the viewer URL through Funnel
+
+**With the Tailscale route, some people may open the viewer URL and others may
+not, with the same URL.** The people who cannot open it see a connection or
+certificate error.
+
+When LiveCaption delivers through Funnel, the name in the viewer URL points to
+Tailscale's relay servers. There are two relay servers, and the viewer cannot
+choose which one to connect to. **Sometimes one of the two relay servers cannot
+reach LiveCaption, and only the people who connect to that one fail.**
+Tailscale runs the relay servers, so no setting on your side fixes this.
+
+If it happens during a meeting, try these steps in order.
+
+1. Under **How people see it** → **In a browser**, press **Stop**, then
+   **Start delivering**. The viewer URL does not change, so the URL and the QR
+   code you gave out still work
+2. **Wait about one minute before you check.** Just after the start, one of
+   the relay servers may not connect yet. If you press again and again, the
+   wait starts over each time
+3. If some people still cannot open it, change that meeting's route to
+   Cloudflare and start delivering again. The viewer URL changes, so post it to
+   the chat again (4.4)
+
+**If a meeting does not need its viewer URL in advance, use the Cloudflare
+route.**
 
 ---
 
@@ -1427,8 +1495,9 @@ works.
 it from the PC you attend the meeting on, use `--control-bind` (D.13) or give
 people a URL.
 
-**Giving people a URL.** There are two routes, chosen under **Route** in **How
-people see it** → **In a browser**.
+**Giving people a URL.** There are two routes. As with Docker, each meeting has
+its own route (3.4 C). **On Windows native, the Cloudflare route needs
+`cloudflared` to be installed.**
 
 | | Cloudflare | Tailscale |
 |---|---|---|
