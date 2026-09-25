@@ -72,6 +72,16 @@ RUN curl -fsSL -o /tmp/ts.tgz \
  && rm -rf /tmp/ts.tgz "/tmp/tailscale_${TAILSCALE_VERSION}_amd64" \
  && tailscale --version
 
+# cloudflared, for the other delivery route (a TryCloudflare temporary
+# tunnel). It needs no account and no tailnet settings, so it is the route
+# for people who cannot use Funnel. `tunnel.py` finds it with
+# `shutil.which("cloudflared")`. One static binary; the version is pinned.
+ENV CLOUDFLARED_VERSION=2026.9.3
+RUN curl -fsSL -o /usr/local/bin/cloudflared \
+      "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64" \
+ && chmod 755 /usr/local/bin/cloudflared \
+ && cloudflared --version
+
 # The meeting software. **This is option A, the Zoom desktop client for
 # Linux.** The web client is refused with "Automated bots aren't allowed to
 # join this meeting." (measured eight times in stage 0, with the same result

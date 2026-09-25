@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -65,14 +66,25 @@ URL_RE = re.compile(r"https://[a-z0-9][a-z0-9-]*\.trycloudflare\.com")
 # How many output lines to show when it fails.
 TAIL_LINES = 40
 
-INSTALL_HINT = (
-    "cloudflared was not found. Install it in one of these two ways.\n"
-    "  1. Drop in one executable (no administrator rights needed):\n"
-    "     https://github.com/cloudflare/cloudflared/releases/latest/download/"
-    "cloudflared-windows-amd64.exe\n"
-    f"     Put it at {config.TUNNEL_LOCAL}\n"
-    "  2. winget install --id Cloudflare.cloudflared"
-)
+if os.name == "nt":
+    INSTALL_HINT = (
+        "cloudflared was not found. Install it in one of these two ways.\n"
+        "  1. Drop in one executable (no administrator rights needed):\n"
+        "     https://github.com/cloudflare/cloudflared/releases/latest/download/"
+        "cloudflared-windows-amd64.exe\n"
+        f"     Put it at {config.TUNNEL_LOCAL}\n"
+        "  2. winget install --id Cloudflare.cloudflared"
+    )
+else:
+    # **The Docker image carries cloudflared.** Seeing this there means the
+    # container was built from an older tree; rebuilding fixes it.
+    INSTALL_HINT = (
+        "cloudflared was not found.\n"
+        "  In Docker: rebuild the image (docker compose up -d --build).\n"
+        "  Otherwise: put the cloudflared-linux-amd64 binary on PATH as "
+        "cloudflared:\n"
+        "     https://github.com/cloudflare/cloudflared/releases/latest"
+    )
 
 
 def find_cloudflared(explicit: str | None = None) -> str | None:
