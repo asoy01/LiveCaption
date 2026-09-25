@@ -201,6 +201,7 @@ BODY = """</style>
       ? (it.repeat === "weekly" ? "毎週 " : "") + it.start
         + (it.auto ? "　自動で開始" : "")
       : "予定なし";
+    when.textContent += it.route === "tailscale" ? "　経路: Tailscale" : "　経路: Cloudflare";
     head.appendChild(when);
 
     const made = document.createElement("span");
@@ -269,6 +270,19 @@ BODY = """</style>
     zoom.value = it.zoom || "";
     zoom.addEventListener("input", mark);
     row("Zoomのリンク", zoom);
+
+    // **The route belongs to the meeting.** A meeting whose QR code is handed
+    // out in advance needs Tailscale, because only its URL does not change.
+    const route = document.createElement("select");
+    for (const [v, text] of [["cloudflare", "Cloudflare（その場で配る）"],
+                             ["tailscale", "Tailscale（前もって配る）"]]) {
+      const o = document.createElement("option");
+      o.value = v; o.textContent = text;
+      route.appendChild(o);
+    }
+    route.value = it.route || "cloudflare";
+    route.addEventListener("change", mark);
+    row("配信の経路", route);
     body.appendChild(grid);
 
     const nums = document.createElement("div");
@@ -339,9 +353,10 @@ BODY = """</style>
     line.appendChild(tag);
     const u = document.createElement("span");
     u.className = "url"; u.id = "u-" + it.id;
-    u.textContent = it.url || (t.preannounce
+    u.textContent = it.url || (it.route === "tailscale"
       ? "URLがまだ決まらない。Tailscale に繋がっているか確かめること。"
-      : "Cloudflare ではURLが毎回変わる。配信を始めると出る。");
+      : "Cloudflare ではURLが配信のたびに変わる。配信を始めると出る。"
+        + "前もって配るなら、経路を Tailscale にする。");
     line.appendChild(u);
     if (it.url) {
       const cp = document.createElement("button");
@@ -373,7 +388,7 @@ BODY = """</style>
       const hu = document.createElement("span");
       hu.className = "url"; hu.id = "h-" + it.id;
       hu.textContent = it.host_url
-        || "経路を Tailscale にすると出る（Cloudflare では出さない）。";
+        || "この会議の経路を Tailscale にすると出る（Cloudflare では出さない）。";
       hostLine.appendChild(hu);
       if (it.host_url) {
         const cp = document.createElement("button");
@@ -408,6 +423,7 @@ BODY = """</style>
           max_min: Number(cap.value),
           auto: auto.checked,
           chat: chat.checked,
+          route: route.value,
         }});
         // **Clear the "edited" mark only after the request goes through.**
         // Clearing it first would redraw the card when the request is refused,

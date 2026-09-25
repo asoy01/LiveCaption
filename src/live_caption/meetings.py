@@ -6,11 +6,17 @@ A viewer URL looks like `https://<host name>/v/<path>`. This module holds the
 **Each meeting uses a different path.** The people who join differ from meeting
 to meeting, so the URL of last week's meeting must not show today's captions.
 
-**The URL can be made in advance.** The host name of Tailscale Funnel does not
-change, so the URL is already fixed the day before the meeting. This is what
-lets you put it in the invitation next to the Zoom link. The host name of a
-Cloudflare temporary tunnel changes every time, so even when the path is ready,
-the whole URL is not known until the day itself.
+**Each meeting has its own delivery route** (`route`, added 2026-09-25).
+Selecting a meeting switches the delivery to that route (`web.sync_route`).
+
+- **Tailscale: the URL can be made in advance.** The host name of Tailscale
+  Funnel does not change, so the URL is already fixed the day before the
+  meeting. This is what lets you put it in the invitation next to the Zoom
+  link.
+- **Cloudflare: the URL is known only while delivering.** The host name of a
+  temporary tunnel changes every time. It is the usual route, because
+  Funnel's public entry sometimes fails (2026-09-25), and the URL is posted
+  to the Zoom chat anyway.
 
 **Only the one selected meeting is delivered.** On that day, the URLs of the
 other meetings return 404. The viewer server in `web.py` looks at a single
@@ -79,6 +85,9 @@ class Meeting:
                                # **It records the occurrence, not a clock time**
     host_id: str = ""          # The path of the URL where the host pastes the
                                # token (Phase 6)
+    # **The delivery route of this meeting.** One of `config.TUNNEL_KINDS`.
+    # A meeting saved before this field existed is read as the usual route.
+    route: str = config.TUNNEL_KIND
 
     def as_dict(self) -> dict:
         return {
@@ -87,6 +96,7 @@ class Meeting:
             "lead_min": self.lead_min, "silence_min": self.silence_min,
             "max_min": self.max_min, "auto": self.auto, "chat": self.chat,
             "last_fired": self.last_fired, "host_id": self.host_id,
+            "route": self.route,
         }
 
     @property
@@ -151,6 +161,8 @@ def _meeting_from(m: dict) -> Meeting:
         chat=bool(m.get("chat", False)),
         last_fired=str(m.get("last_fired", "")),
         host_id=str(m.get("host_id", "")),
+        route=(str(m.get("route")) if m.get("route") in config.TUNNEL_KINDS
+               else config.TUNNEL_KIND),
     )
 
 
@@ -230,6 +242,15 @@ class Store:
 
     def path_of(self, meeting_id: str) -> str:
         return f"/v/{meeting_id}"
+
+    def route_of(self, meeting_id: str) -> str:
+        """The delivery route of that meeting. The usual route when there is
+        no such meeting."""
+        with self._lock:
+            for m in self._items:
+                if m.id == meeting_id:
+                    return m.route
+        return config.TUNNEL_KIND
 
     def items(self) -> list[Meeting]:
         with self._lock:
@@ -362,6 +383,13 @@ class Store:
             clean["auto"] = bool(fields["auto"])
         if "chat" in fields:
             clean["chat"] = bool(fields["chat"])
+        if "route" in fields:
+            route = str(fields["route"] or "")
+            if route not in config.TUNNEL_KINDS:
+                raise ValueError(
+                    f"Unknown route: {route}. Use "
+                    f"{' or '.join(config.TUNNEL_KINDS)}.")
+            clean["route"] = route
 
         with self._lock:
             found = [m for m in self._items if m.id == meeting_id]

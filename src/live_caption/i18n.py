@@ -162,8 +162,15 @@ EN: dict[str, str] = {
         "Send it to the host only. Do not confuse it with the participants' URL.",
     "このURLを持つ人は、この会議の字幕をZoomに流し込める。":
         "Whoever holds this URL can push this meeting's captions into Zoom.",
-    "経路を Tailscale にすると出る（Cloudflare では出さない）。":
-        "It appears when the route is Tailscale (never with Cloudflare).",
+    "この会議の経路を Tailscale にすると出る（Cloudflare では出さない）。":
+        "It appears when this meeting's route is Tailscale (never with "
+        "Cloudflare).",
+    "配信の経路": "Delivery route",
+    "経路は会議ごとに覚える。会議の管理でも選べる。":
+        "Each meeting keeps its own route. You can also choose it under "
+        "Meetings.",
+    "　経路: Tailscale": "  route: Tailscale",
+    "　経路: Cloudflare": "  route: Cloudflare",
     "もう一度受け付ける": "Accept one more",
     "ホスト用の受け口をもう一度開いた。": "The host page accepts a token again.",
 
@@ -435,8 +442,9 @@ EN: dict[str, str] = {
         "Starting the delivery. The URL takes a few seconds.",
     "配信を止めた。閲覧URLは死んだ。":
         "The delivery is stopped. The viewer URL is dead.",
-    "経路を選んだ。「配信を開始」で始める。":
-        "Route selected. Press Start delivering to begin.",
+    "経路を選び、この会議の設定として保存した。配信を開始のボタンで始める。":
+        "Route selected and saved for this meeting. Press Start delivering to "
+        "begin.",
     "tailscale に設定させている": "letting tailscale set it up",
     "tailscale が使えない": "tailscale is not usable",
 
@@ -461,9 +469,11 @@ EN: dict[str, str] = {
         ". Its URL stops working. Are you sure?",
     "URLがまだ決まらない。Tailscale に繋がっているか確かめること。":
         "No URL yet. Check that Tailscale is connected.",
-    "Cloudflare ではURLが毎回変わる。配信を始めると出る。":
-        "With Cloudflare the URL changes every time. It appears once you start "
-        "delivering.",
+    "Cloudflare ではURLが配信のたびに変わる。配信を始めると出る。":
+        "With Cloudflare the URL changes every time you deliver. It appears "
+        "once you start delivering.",
+    "前もって配るなら、経路を Tailscale にする。":
+        " To hand it out in advance, set the route to Tailscale.",
     "クリップボードに書けない。選んであるので Ctrl+C を押すこと。":
         "Cannot write to the clipboard. The text is selected, so press Ctrl+C.",
     "コピーした": "Copied",

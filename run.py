@@ -299,8 +299,10 @@ def main() -> int:
             web.control_retry = True
         # Prepare only the delivery endpoint. Whether to expose it is a
         # separate matter (off by default). The route (Cloudflare /
-        # Tailscale) carries over the previous selection.
-        web.tunnel = tunnel_mod.Delivery(args.web, command=args.cloudflared)
+        # Tailscale) is the setting of the selected meeting.
+        web.tunnel = tunnel_mod.Delivery(
+            args.web, kind=web.meetings.route_of(web.meetings.active_id),
+            command=args.cloudflared)
 
         def announce() -> None:
             """Print changes in the delivery state to the terminal too.

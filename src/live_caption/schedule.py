@@ -364,6 +364,8 @@ class Scheduler:
         # 1. Switch the meeting that is delivered.
         try:
             store.select(meeting.id)
+            # The delivery follows the route of this meeting.
+            self.app.web.sync_route()
         except ValueError as exc:
             # **Go back to idle.** If this returned with JOINING still set, no
             # meeting would ever start again.

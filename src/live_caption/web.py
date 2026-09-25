@@ -1389,9 +1389,10 @@ __FEED_JS__
     // while a tunnel is up leaves a tunnel that cannot be closed.
     if (document.activeElement !== tkind && t.kind) { tkind.value = t.kind; }
     tkind.disabled = (st === "on" || st === "starting");
-    tkindHint.innerHTML = ts
+    tkindHint.innerHTML = (ts
       ? "ホスト名が変わらないので、<b>会議のURLを前もって配れる。</b>tailnet 側の設定が1回だけ要る。"
-      : "準備は要らないが、<b>URLは起動のたびに変わる。</b>前もって配ることはできない。";
+      : "準備は要らないが、<b>URLは起動のたびに変わる。</b>前もって配ることはできない。")
+      + "<br>経路は会議ごとに覚える。会議の管理でも選べる。";
     tstate.textContent = st === "on" ? "参加者が閲覧URLを開ける"
                        : st === "starting" ? (ts ? "tailscale に設定させている" : "cloudflared を起こしている")
                        : t.available ? "" : (ts ? "tailscale が使えない" : "cloudflared が無い");
@@ -2019,7 +2020,7 @@ __FEED_JS__
   tkind.addEventListener("change", async () => {
     try {
       showStatus(await post("/api/tunnel", { kind: tkind.value }));
-      say("経路を選んだ。「配信を開始」で始める。", true);
+      say("経路を選び、この会議の設定として保存した。配信を開始のボタンで始める。", true);
     } catch (e) { say(String(e.message), false); }
   });
 
@@ -2430,13 +2431,41 @@ class WebCaptions:
     def meeting_url(self, meeting_id: str) -> str:
         """The viewer URL of that meeting. Empty when the base URL is unknown.
 
-        **With Tailscale it works even when nothing is being delivered.** That
-        is how you fix the URL the day before a meeting and put it in the
-        announcement. With Cloudflare the host name changes every time, so the
-        URL exists only while the tunnel is up.
+        **It follows the meeting's own route, not the route delivering now.**
+
+        - Tailscale: **it works even when nothing is being delivered.** That
+          is how you fix the URL the day before a meeting and put it in the
+          announcement.
+        - Cloudflare: the host name changes every time, so the URL exists
+          only while the tunnel is up, and only for the meeting being
+          delivered (the other paths return 404).
         """
-        base = self.tunnel.base_url() if self.tunnel is not None else ""
+        if self.tunnel is None:
+            return ""
+        if self.meetings.route_of(meeting_id) == "tailscale":
+            base = self.tunnel.tailscale.base_url()
+        elif (meeting_id == self.meetings.active_id
+              and self.tunnel.kind == "cloudflare"):
+            base = self.tunnel.cloudflare.url
+        else:
+            base = ""
         return f"{base}{self.meetings.path_of(meeting_id)}" if base else ""
+
+    def sync_route(self) -> None:
+        """Switch the delivery to the route of the meeting being delivered.
+
+        **Call this whenever the selected meeting or its route may have
+        changed** (selecting, deleting, saving a meeting, and when the
+        scheduler starts one). `Delivery.select` stops the old route first,
+        so a tunnel is never left up on the route that is no longer used.
+        """
+        if self.tunnel is None:
+            return
+        route = self.meetings.route_of(self.meetings.active_id)
+        if route != self.tunnel.kind:
+            self.tunnel.select(route)
+            print(f"[{time.strftime('%H:%M:%S')}] delivery    route: {route} "
+                  "(the setting of the selected meeting)")
 
     # --- Called from the main app -------------------------------------------
 
@@ -2727,9 +2756,12 @@ class WebCaptions:
         **It is not created with Cloudflare.** TLS ends at the Cloudflare
         edge, so the Zoom credential would pass through there in the clear.
         """
-        if self.tunnel is None or self.tunnel.kind not in config.HOST_TOKEN_KINDS:
+        if (self.tunnel is None
+                or self.meetings.route_of(meeting_id) not in config.HOST_TOKEN_KINDS):
             return ""
-        base = self.tunnel.base_url()
+        # The meeting's own route decides, so the URL can be handed to the
+        # host in advance, just like the viewer URL.
+        base = self.tunnel.tailscale.base_url()
         if not base:
             return ""
         try:
@@ -2745,7 +2777,13 @@ class WebCaptions:
         meeting is running, and for `HOST_TOKEN_WINDOW_MIN` minutes around its
         scheduled time. **This is the strongest limit in the design.** It
         narrows the endpoint to about one hour per meeting.
+
+        **It is closed while delivering through Cloudflare.** The host page is
+        on the viewer port, so it would otherwise be reachable through the
+        Cloudflare tunnel, where TLS ends at the Cloudflare edge.
         """
+        if self.tunnel is None or self.tunnel.kind not in config.HOST_TOKEN_KINDS:
+            return False
         sched = self.scheduler
         if sched is not None and sched.meeting_id == meeting_id and sched.state != "idle":
             return True
@@ -3651,8 +3689,13 @@ def _control_handler(web: WebCaptions):
                 self._send_json(503, {"error": "The delivery control is not available."})
                 return
             if "kind" in body:
+                # **The route belongs to the meeting.** Choosing it here saves
+                # it as the setting of the meeting being delivered, then
+                # switches to it.
                 try:
-                    web.tunnel.select(str(body["kind"]))
+                    web.meetings.set_schedule(web.meetings.active_id,
+                                              route=str(body["kind"]))
+                    web.sync_route()
                 except ValueError as exc:
                     self._send_json(400, {"error": str(exc)})
                     return
@@ -3716,13 +3759,27 @@ def _control_handler(web: WebCaptions):
                     fields = body.get("fields")
                     if not isinstance(fields, dict):
                         raise ValueError("fields must be an object.")
-                    web.meetings.set_schedule(str(body.get("id", "")), **fields)
+                    mid = str(body.get("id", ""))
+                    # **Do not change the route under a running delivery.**
+                    # Switching stops the tunnel, and the URL the
+                    # participants hold dies without anyone pressing Stop.
+                    if (web.tunnel is not None and "route" in fields
+                            and mid == web.meetings.active_id
+                            and fields["route"] != web.tunnel.kind
+                            and web.tunnel.status()["state"] in ("on", "starting")):
+                        raise ValueError(
+                            "The route of this meeting cannot change while "
+                            "delivering. Stop the delivery first.")
+                    web.meetings.set_schedule(mid, **fields)
                 elif action == "host_key":
                     web.meetings.ensure_host_id(str(body.get("id", "")), renew=True)
                 elif action == "host_rearm":
                     web.host_rearm(str(body.get("id", "")))
                 else:
                     raise ValueError(f'Unknown action: "{action}".')
+                # Selecting, deleting or saving may change the route of the
+                # meeting being delivered.
+                web.sync_route()
             except ValueError as exc:
                 self._send_json(400, {"error": str(exc)})
                 return
