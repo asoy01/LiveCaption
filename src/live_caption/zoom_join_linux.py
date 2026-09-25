@@ -66,6 +66,17 @@ AUDIO_DIALOG_WAIT_SEC = 45.0
 AUDIO_READY_WAIT_SEC = 20.0
 _POLL_SEC = 0.5
 
+#: How many times to press "Join with Computer Audio", and how long to wait
+#: for audio after each press.
+#: **One press is not enough.** On 2026-09-25 a 600x165 notification window
+#: ('Zoom Workplace' at +500+517) lay over the audio dialog, right on the
+#: button. The click went to the notification, the dialog stayed, and no
+#: audio came until a person pressed it through VNC. Which notifications
+#: Zoom shows on joining changes from run to run, so check that audio came,
+#: and press again while the dialog is still there.
+AUDIO_PRESS_TRIES = 4
+AUDIO_PRESS_WAIT_SEC = 6.0
+
 #: Where crash reports are kept. **Empty it before starting Zoom.**
 #: If the last run ended badly, "Zoom quit unexpectedly" comes to the front
 #: and the steps that press by coordinates stop there.
@@ -197,6 +208,19 @@ def in_meeting() -> bool:
 
 def _click(x: int, y: int) -> None:
     _run(["xdotool", "mousemove", str(x), str(y), "click", "1"])
+
+
+def _raise(win_id: str) -> None:
+    """Bring the window to the front before pressing in it.
+
+    **A click at a screen position lands on whatever window is on top
+    there.** Zoom opens notification windows over its dialogs (the AI
+    Companion notice and others), so press only after raising the target.
+    `--sync` waits for the window manager (openbox); `_run` has a timeout, so
+    this cannot hang.
+    """
+    _run(["xdotool", "windowraise", win_id])
+    _run(["xdotool", "windowactivate", "--sync", win_id], timeout=5)
 
 
 def _wait(predicate, limit: float):  # noqa: ANN001
@@ -348,6 +372,7 @@ def join(text: str, name: str = "") -> str:
         geo = _geometry(win[0])
         if geo is not None:
             x, y, w, h = geo
+            _raise(win[0])
             _click(x + w - JOIN_FROM_RIGHT, y + h - JOIN_FROM_BOTTOM)
 
     # --- The "Join with Computer Audio" on the audio dialog ------------------
@@ -357,11 +382,28 @@ def join(text: str, name: str = "") -> str:
     if dlg is None:
         print("  [join] the audio dialog never appeared. "
               "No sound is expected.")
-    else:
+    for attempt in range(1, AUDIO_PRESS_TRIES + 1):
+        if dlg is None:
+            break
         geo = _geometry(dlg[0])
-        if geo is not None:
-            x, y, w, h = geo
-            _click(x + w // 2, y + AUDIO_FROM_TOP)
+        if geo is None:
+            break
+        x, y, w, h = geo
+        _raise(dlg[0])
+        _click(x + w // 2, y + AUDIO_FROM_TOP)
+        if _wait(_audio_attached, AUDIO_PRESS_WAIT_SEC):
+            break
+        # **The dialog gone without audio is not a missed click.** We may be
+        # held in the waiting room. Do not press anything else then.
+        dlg = _audio_dialog()
+        if dlg is not None:
+            print(f"  [join] no audio after pressing 'Join with Computer Audio' "
+                  f"({attempt}/{AUDIO_PRESS_TRIES}). The dialog is still there.")
+            _log_windows(f"audio press {attempt} missed")
+    else:
+        if dlg is not None:
+            print("  [join] gave up pressing 'Join with Computer Audio'. "
+                  "Press it through VNC.")
 
     # Wait until audio arrives. **Do not raise when it does not.** We may
     # just be held in the waiting room. The scheduler (schedule.py) closes
