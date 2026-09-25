@@ -280,8 +280,8 @@ Double-click it to go back to the default. The width is remembered.
    the right one from the list. **The change takes effect as soon as you pick it**
 3. Press **開始** (start) under **字幕の生成** (caption generation).
    **Check that the level meter moves**
-4. Press **閲覧画面を開く** (open the viewer page) under **画面共有で見せる**
-   (show by screen share), then press **F11** for full screen
+4. Press **閲覧画面を開く** (open the viewer page) under **閲覧画面を自分で開く**
+   (open the viewer yourself), then press **F11** for full screen
 5. Share that browser window in Zoom
 
 The viewer page has a path you cannot guess (`/v/<random>`).

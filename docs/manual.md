@@ -447,8 +447,8 @@ expired or the meeting changed. Get a new token and register it again.
 
 Screen share needs no host rights, and the captions never leave your network.
 
-1. On the control page, open **How people see it** → **Show it by screen share**
-   → **Open the viewer page**
+1. On the control page, open **How people see it** → **Open the viewer
+   yourself** → **Open the viewer page**
 2. Press **F11** to make the viewer page full screen
 3. Share that browser window from the PC you attend the meeting on
 
