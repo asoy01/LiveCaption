@@ -442,6 +442,8 @@ EN: dict[str, str] = {
         "Starting the delivery. The URL takes a few seconds.",
     "配信を止めた。閲覧URLは死んだ。":
         "The delivery is stopped. The viewer URL is dead.",
+    "配信を止めた。閲覧URLには待ちの画面が出る。":
+        "The delivery is stopped. The viewer URL now shows the waiting page.",
     "経路を選び、この会議の設定として保存した。配信を開始のボタンで始める。":
         "Route selected and saved for this meeting. Press Start delivering to "
         "begin.",
@@ -541,6 +543,8 @@ EN: dict[str, str] = {
         "Stopped caption generation, delivery and the Zoom captions.",
     "字幕の生成と配信を止めた。閲覧URLは死んだ。":
         "Stopped caption generation and delivery. The viewer URL is dead.",
+    "字幕の生成と配信を止めた。閲覧URLには待ちの画面が出る。":
+        "Stopped caption generation and delivery. The viewer URL now shows the waiting page.",
     "字幕の生成とZoom字幕を止めた。":
         "Stopped caption generation and the Zoom captions.",
 

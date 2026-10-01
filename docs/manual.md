@@ -494,6 +494,12 @@ Tailscale route, some people may fail to open the URL** (Appendix B.7).
   delivering first
 - Changing **Route** under **How people see it** also saves it as the route of
   the selected meeting. It is the same as choosing it on the Manage meetings tab
+- **A Tailscale viewer URL opens even when you are not delivering.** Until
+  delivery starts, it shows a page that says "Captions are not being delivered
+  right now" and reloads itself every 10 seconds. When delivery starts, the
+  page changes to the captions by itself. People who open the QR code early
+  can simply wait. Neither the captions nor the meeting name are visible
+  before delivery starts
 - **A Tailscale URL never changes, so a leaked URL keeps working.** Only the
   random text at the end protects it. If it leaks, delete that meeting and make
   a new one
@@ -877,7 +883,7 @@ is reported at start-up and ignored, and the default is used.
 | A different set of captions appears | **Zoom's automatic captions are running.** Ask the host to turn them off |
 | Start delivering fails (Cloudflare) | If it says `cloudflared was not found`, the image is old. Rebuild the image (Appendix C.1) |
 | Start delivering fails (Tailscale) | Funnel is not enabled (Appendix B.6) |
-| Some people can open the viewer URL and others cannot (Tailscale) | The problem is on Tailscale's relay side. Stop delivering, start again, and wait one minute before you check (Appendix B.7) |
+| Some people can open the viewer URL and others cannot (Tailscale) | The problem is on Tailscale's relay side. Change that meeting's route to Cloudflare and start delivering again (Appendix B.7) |
 | The Manage meetings tab shows no viewer URL or QR code | That meeting's route is Cloudflare. A Cloudflare URL is not decided until delivery starts. To give it out in advance, set the route to Tailscale (3.4 C) |
 | No host URL appears | That meeting's route is Cloudflare. The host URL exists only for a meeting on the Tailscale route (4.5) |
 | A term in the table is still translated wrongly | Are the words past the limit (section 5)? Is that subject's table ticked? |
@@ -1186,17 +1192,22 @@ choose which one to connect to. **Sometimes one of the two relay servers cannot
 reach LiveCaption, and only the people who connect to that one fail.**
 Tailscale runs the relay servers, so no setting on your side fixes this.
 
-If it happens during a meeting, try these steps in order.
+**It happens most often just after Funnel is turned on.** In our
+measurements, the relay servers answered about 1.5 minutes after Funnel was
+turned on for the first time, and 16 to 30 seconds after it was turned on
+again. So when at least one meeting uses the Tailscale route, **LiveCaption
+turns Funnel on when it starts and keeps it on.** **Stop** does not turn
+Funnel off. Instead, the viewer URL shows the "not being delivered" page
+(3.4 C). By the time the meeting starts, the relay servers are ready.
 
-1. Under **How people see it** → **In a browser**, press **Stop**, then
-   **Start delivering**. The viewer URL does not change, so the URL and the QR
-   code you gave out still work
-2. **Wait about one minute before you check.** Just after the start, one of
-   the relay servers may not connect yet. If you press again and again, the
-   wait starts over each time
-3. If some people still cannot open it, change that meeting's route to
-   Cloudflare and start delivering again. The viewer URL changes, so post it to
-   the chat again (4.4)
+**For one or two minutes after the container starts, some people may fail
+to open the URL.** If you start the container just before a meeting, start it
+a few minutes before.
+
+If it happens during a meeting, change that meeting's route to Cloudflare and
+start delivering again. The viewer URL changes, so post it to the chat again
+(4.4). Pressing **Stop** and **Start delivering** again does not help, because
+it does not turn Funnel off and on.
 
 **If a meeting does not need its viewer URL in advance, use the Cloudflare
 route.**

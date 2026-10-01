@@ -323,7 +323,11 @@ def main() -> int:
                 print(f"[{stamp}] delivery    could not start delivering:")
                 print(st["error"])
             elif st["state"] == "off":
-                print(f"[{stamp}] delivery    stopped. The viewer URL is dead.")
+                if st.get("kind") == "tailscale" and st.get("exposed"):
+                    print(f"[{stamp}] delivery    stopped. The viewer URL now "
+                          "shows the waiting page.")
+                else:
+                    print(f"[{stamp}] delivery    stopped. The viewer URL is dead.")
 
         web.tunnel.on_change = announce
         try:

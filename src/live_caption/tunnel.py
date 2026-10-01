@@ -454,6 +454,17 @@ class Funnel:
 
     **The URL is known before delivery starts.** `tailscale_host()` returns
     the host name.
+
+    **The Funnel stays up. "Stop" does not take it down** (2026-10-01).
+    Measured on a probe node: after `tailscale funnel --bg`, the public
+    ingress answered only after 90-110 s the first time, and after 16-30 s
+    when it was turned on again. Before the first time, public DNS answered
+    NXDOMAIN, and resolvers kept that answer for 300 s. **Turning the Funnel
+    on at the start of every meeting put this gap exactly where the
+    participants open the URL.** So the Funnel is opened once (`expose()`)
+    and left open. `state` is only whether we are delivering. **What the
+    public sees while we are not delivering is decided by the viewer server**
+    (`web.py`, `funnel_request`), not by the network.
     """
 
     def __init__(self, port: int, command: str | None = None) -> None:
@@ -463,6 +474,7 @@ class Funnel:
         self._state = "off"
         self._url = ""
         self._error = ""
+        self._exposed = False
         self.on_change = None
 
     # --- State --------------------------------------------------------------
@@ -485,7 +497,14 @@ class Funnel:
             "error": error,
             "available": bool(host),
             "base_url": f"https://{host}" if host else "",
+            "exposed": self.exposed,
         }
+
+    @property
+    def exposed(self) -> bool:
+        """Whether the Funnel itself is up (not whether we are delivering)."""
+        with self._lock:
+            return self._exposed
 
     @property
     def url(self) -> str:
@@ -494,22 +513,15 @@ class Funnel:
 
     # --- Start and stop -----------------------------------------------------
 
-    def start(self) -> dict:
-        """Start delivery. **Unlike `Tunnel`, the connection is already up
-        when this returns.**"""
+    def _open(self) -> str:
+        """Run `tailscale funnel --bg`. Return "" on success, else the reason.
+
+        **Running it again while it is up changes nothing** (it writes the
+        same settings). So `start()` may call it every time.
+        """
         exe = find_tailscale(self.command)
         if exe is None:
-            with self._lock:
-                self._state, self._error, self._url = "error", FUNNEL_HINT, ""
-            return self.status()
-        host, why = tailscale_host(self.command)
-        if not host:
-            with self._lock:
-                self._state, self._error, self._url = "error", why, ""
-            return self.status()
-
-        with self._lock:
-            self._state, self._error = "starting", ""
+            return FUNNEL_HINT
         try:
             out = subprocess.run(
                 # **Do not add `--yes`.** With it, the tailnet settings (the
@@ -527,11 +539,7 @@ class Funnel:
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except (OSError, subprocess.SubprocessError) as exc:
-            with self._lock:
-                self._state, self._error, self._url = "error", str(exc), ""
-            self._changed()
-            return self.status()
-
+            return str(exc)
         if out.returncode != 0:
             # **The most common failure is that it is not enabled yet.**
             # In that case, print the steps.
@@ -540,46 +548,82 @@ class Funnel:
             hint = FUNNEL_SETUP_HINT if ("funnel" in low and
                                          ("enable" in low or "not allowed" in low or
                                           "attribute" in low or "https" in low)) else ""
+            return f"{hint}\n\n{text}".strip() if hint else (text or "tailscale funnel failed")
+        with self._lock:
+            self._exposed = True
+        return ""
+
+    def expose(self) -> str:
+        """Open the Funnel without delivering. Return "" on success.
+
+        The public then reaches the viewer server, which shows the waiting
+        page (or 404) until `start()`. **Call this well before the meeting**,
+        so that the ingress and public DNS are ready when people open the URL.
+        """
+        host, why = tailscale_host(self.command)
+        if not host:
+            return why
+        return self._open()
+
+    def start(self) -> dict:
+        """Start delivery. **Unlike `Tunnel`, the connection is already up
+        when this returns.**"""
+        host, why = tailscale_host(self.command)
+        if find_tailscale(self.command) is None:
+            why, host = FUNNEL_HINT, ""
+        if not host:
             with self._lock:
-                self._state = "error"
-                self._url = ""
-                self._error = f"{hint}\n\n{text}".strip() if hint else text
-            self._changed()
+                self._state, self._error, self._url = "error", why, ""
             return self.status()
 
         with self._lock:
-            self._state, self._url, self._error = "on", f"https://{host}", ""
+            self._state, self._error = "starting", ""
+        why = self._open()
+        with self._lock:
+            if why:
+                self._state, self._url, self._error = "error", "", why
+            else:
+                self._state, self._url, self._error = "on", f"https://{host}", ""
         self._changed()
         return self.status()
 
     def stop(self) -> dict:
-        """Take delivery down. **The settings are removed with it.** The URL
-        dies on the spot."""
-        exe = find_tailscale(self.command)
+        """Stop delivering. **The Funnel itself stays up** (see the class
+        docstring). From this moment the viewer server shows the public the
+        waiting page instead of the captions."""
         with self._lock:
             was = self._state
             self._state, self._url, self._error = "off", "", ""
-        if exe is not None and was != "off":
-            try:
-                subprocess.run(
-                    [exe, "funnel", f"--https={config.FUNNEL_PUBLIC_PORT}", "off"],
-                    stdin=subprocess.DEVNULL,
-                    capture_output=True, text=True, encoding="utf-8", errors="replace",
-                    timeout=15,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                )
-            except (OSError, subprocess.SubprocessError) as exc:
-                with self._lock:
-                    # **Do not suggest `reset`.** It would clear the `serve`
-                    # settings too. If the control page is exposed on the
-                    # tailnet, the path to it would be taken down as well.
-                    self._error = (
-                        "It could not be stopped. Run this by hand: "
-                        f"tailscale funnel --https={config.FUNNEL_PUBLIC_PORT} off"
-                        f" ({exc})")
         if was != "off":
             self._changed()
         return self.status()
+
+    def withdraw(self) -> str:
+        """Take the Funnel itself down. Return "" on success.
+
+        Used only when no meeting uses the Tailscale route any more. **Do
+        not use `reset`.** It would clear the `serve` settings too, and with
+        them the https path to the control page.
+        """
+        self.stop()
+        exe = find_tailscale(self.command)
+        with self._lock:
+            was = self._exposed
+            self._exposed = False
+        if exe is None or not was:
+            return ""
+        try:
+            subprocess.run(
+                [exe, "funnel", f"--https={config.FUNNEL_PUBLIC_PORT}", "off"],
+                stdin=subprocess.DEVNULL,
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=15,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return ("It could not be taken down. Run this by hand: "
+                    f"tailscale funnel --https={config.FUNNEL_PUBLIC_PORT} off ({exc})")
+        return ""
 
     def _changed(self) -> None:
         if self.on_change is not None:

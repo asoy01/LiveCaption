@@ -1537,7 +1537,8 @@ __FEED_JS__
       const al = st.also || {};
       say(on ? "字幕の生成を開始した。"
              : (al.tunnel && al.zoom) ? "字幕の生成・配信・Zoom字幕を止めた。"
-             : al.tunnel ? "字幕の生成と配信を止めた。閲覧URLは死んだ。"
+             : al.tunnel ? (waits(st) ? "字幕の生成と配信を止めた。閲覧URLには待ちの画面が出る。"
+                                      : "字幕の生成と配信を止めた。閲覧URLは死んだ。")
              : al.zoom ? "字幕の生成とZoom字幕を止めた。"
              : "字幕の生成を停止した。", true);
     } catch (e) { say(String(e.message), false); b.disabled = false; }
@@ -2004,6 +2005,10 @@ __FEED_JS__
   });
 
   // --- Delivery -----------------------------------------------------------
+  // **With Tailscale the URL does not die when delivery stops.** The Funnel
+  // stays up and the public sees the waiting page (`tunnel.Funnel`).
+  const waits = (st) => !!(st && st.tunnel && st.tunnel.kind === "tailscale"
+                           && st.tunnel.exposed);
   tstart.addEventListener("click", async () => {
     tstart.disabled = true;
     try {
@@ -2012,7 +2017,12 @@ __FEED_JS__
     } catch (e) { say(String(e.message), false); }
   });
   tstop.addEventListener("click", async () => {
-    try { showStatus(await post("/api/tunnel", { on: false })); say("配信を止めた。閲覧URLは死んだ。", true); }
+    try {
+      const st = await post("/api/tunnel", { on: false });
+      showStatus(st);
+      say(waits(st) ? "配信を止めた。閲覧URLには待ちの画面が出る。"
+                    : "配信を止めた。閲覧URLは死んだ。", true);
+    }
     catch (e) { say(String(e.message), false); }
   });
   // **Choosing alone does not put anything outside.** After switching the
@@ -2335,6 +2345,8 @@ class WebCaptions:
         # The delivery route (Cloudflare / Tailscale). `tunnel.Delivery` holds
         # both.
         self.tunnel: tunnel_mod.Delivery | None = None
+        # True while `_open_funnel` is retrying, so only one runs.
+        self._funnel_opening = False
         # The meeting record (transcript.Transcript). It stays None with
         # --no-save.
         # **Only the control page can see it.** It is not exposed on the
@@ -2466,6 +2478,73 @@ class WebCaptions:
             self.tunnel.select(route)
             print(f"[{time.strftime('%H:%M:%S')}] delivery    route: {route} "
                   "(the setting of the selected meeting)")
+        self.keep_funnel()
+
+    # --- The Funnel stays up --------------------------------------------------
+    # **The Funnel is not opened per meeting** (see `tunnel.Funnel`). It is
+    # up whenever some meeting uses the Tailscale route, and the viewer server
+    # decides what a request through it may see (`funnel_request`).
+
+    def funnel_wanted(self) -> bool:
+        return any(m.route == "tailscale" for m in self.meetings.items())
+
+    def keep_funnel(self) -> None:
+        """Open the Funnel if some meeting needs it, take it down if none
+        does. **Does not wait.** Opening runs in the background and retries
+        until Tailscale is up (right after a reboot it may not be)."""
+        if self.tunnel is None:
+            return
+        funnel = self.tunnel.tailscale
+        if self.funnel_wanted():
+            if not funnel.exposed and not self._funnel_opening:
+                self._funnel_opening = True
+                threading.Thread(target=self._open_funnel, daemon=True).start()
+        elif funnel.exposed:
+            why = funnel.withdraw()
+            print(f"[{time.strftime('%H:%M:%S')}] delivery    no meeting uses "
+                  "Tailscale. The Funnel was taken down."
+                  + (f" {why}" if why else ""))
+
+    def _open_funnel(self) -> None:
+        try:
+            said = ""
+            while not self._stopping and self.funnel_wanted():
+                why = self.tunnel.tailscale.expose()
+                if not why:
+                    print(f"[{time.strftime('%H:%M:%S')}] delivery    the Funnel is "
+                          "up and stays up. Until delivery starts, the public sees "
+                          "the waiting page.")
+                    return
+                if why != said:
+                    print(f"[{time.strftime('%H:%M:%S')}] delivery    the Funnel "
+                          f"could not be opened yet ({why[:160]}). Retrying.")
+                    said = why
+                time.sleep(config.CONTROL_BIND_RETRY_SEC)
+        finally:
+            self._funnel_opening = False
+
+    def funnel_delivering(self) -> bool:
+        """Whether the public may see captions through the Funnel now."""
+        return (self.tunnel is not None
+                and self.tunnel.kind == "tailscale"
+                and self.tunnel.tailscale.status()["state"] == "on")
+
+    @staticmethod
+    def funnel_request(headers, funnel_host: str) -> bool:  # noqa: ANN001
+        """Whether a request reached the viewer server through the Funnel.
+
+        tailscaled adds `Tailscale-Funnel-Request: ?1` to every request that
+        came in through the public ingress (measured 2026-10-01; requests
+        from inside the tailnet do not carry it). **The Host is checked as
+        well**, so that a future tailscaled dropping the header does not
+        silently make the captions public: only the Funnel and `tailscale
+        serve` use the bare tailnet name without a port.
+        """
+        if headers.get("Tailscale-Funnel-Request"):
+            return True
+        host = (headers.get("Host") or "").strip().lower()
+        return bool(funnel_host) and host in (funnel_host.lower(),
+                                              f"{funnel_host.lower()}:443")
 
     # --- Called from the main app -------------------------------------------
 
@@ -2681,6 +2760,7 @@ class WebCaptions:
         # why it does not connect.
         self.control_extra = tuple(bound)
         self.serve_control_https()
+        self.keep_funnel()
         if self.control_retry:
             threading.Thread(target=self._retry_control_bind, daemon=True).start()
 
@@ -3130,6 +3210,34 @@ def _viewer_page(web: WebCaptions) -> bytes:
     ).encode("utf-8")
 
 
+WAITING_RELOAD_SEC = 10
+
+WAITING_BODY = """</style>
+<meta http-equiv="refresh" content="__RELOAD__">
+</head>
+<body>
+<main style="margin:auto; max-width:36em; padding:2em 1em; text-align:center;">
+  <p style="font-size:1.6em;">Captions are not being delivered right now.</p>
+  <p>This page reloads itself. The captions appear here when the meeting starts.</p>
+  <p style="color:var(--muted);">いまは字幕を配信していません。このページは自動で読み直します。
+  会議が始まると、ここに字幕が出ます。</p>
+</main>
+</body>
+</html>
+"""
+
+
+def _waiting_page(web: WebCaptions) -> bytes:
+    """What the public sees through the Funnel while we are not delivering.
+
+    **Nothing about the meeting is on it** (no name, no time). Someone who
+    opens the QR code early waits here, and lands on the captions by
+    themselves once delivery starts.
+    """
+    return (_head("Live Captions", web.lines)
+            + WAITING_BODY.replace("__RELOAD__", str(WAITING_RELOAD_SEC))).encode("utf-8")
+
+
 def _viewer_handler(web: WebCaptions):
     """The viewer server. **This is what goes outside.**
 
@@ -3153,8 +3261,39 @@ def _viewer_handler(web: WebCaptions):
                 return parts[1], parts[2]
             return None
 
+        def _funnel_gate(self, path: str) -> bool:
+            """Answer a request that came through the Funnel while it may not
+            see captions. Return True when it has been answered.
+
+            **The Funnel stays up even when we are not delivering**
+            (`tunnel.Funnel`). This is what keeps the captions closed then:
+
+                /v/<a Tailscale meeting>   the waiting page (reloads itself)
+                anything else under /v/    404
+                /h/...                     unchanged (`host_window_open`)
+            """
+            host, _ = tunnel_mod.tailscale_host()
+            if not web.funnel_request(self.headers, host):
+                return False
+            parts = path.strip("/").split("/")
+            if parts[0] == "h":
+                return False
+            if (web.funnel_delivering()
+                    and (path == web.viewer_path
+                         or path == web.viewer_path + "/lines")):
+                return False
+            if (len(parts) == 2 and parts[0] == "v"
+                    and any(m.id == parts[1] and m.route == "tailscale"
+                            for m in web.meetings.items())):
+                self._send_bytes(200, "text/html; charset=utf-8", _waiting_page(web))
+                return True
+            self.send_error(404)
+            return True
+
         def do_GET(self) -> None:  # noqa: N802
             u = urlparse(self.path)
+            if self._funnel_gate(u.path):
+                return
             if u.path == web.viewer_path:
                 self._send_bytes(200, "text/html; charset=utf-8", _viewer_page(web))
                 return
