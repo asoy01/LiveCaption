@@ -404,6 +404,15 @@ EN: dict[str, str] = {
     " 文を記録した（終了時に読める形も書く）":
         " sentences recorded (a readable file is written at exit)",
 
+    # --- Reconnecting transcription (2026-10-07) ---
+    "文字起こしを繋ぎ直す": "Reconnect transcription",
+    "配信とZoom字幕は止めない": "Delivery and the Zoom captions keep running",
+    "自動で繋ぎ直した回数: ": "reconnected automatically: ",
+    "文字起こしを繋ぎ直した。配信とZoom字幕はそのまま。":
+        "Transcription reconnected. Delivery and the Zoom captions keep running.",
+    "字幕の生成が止まっている。先に開始する。":
+        "Caption generation is stopped. Start it first.",
+
     # --- Results of an action ---
     "字幕の生成を開始した。": "Caption generation started.",
     "字幕の生成を停止した。": "Caption generation stopped.",

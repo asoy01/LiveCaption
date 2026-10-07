@@ -140,12 +140,29 @@ class EngineControl:
         self.app = app
 
     def status(self) -> dict:
-        return {"generating": self.app.generating}
+        return {"generating": self.app.generating,
+                "asr_stalls": self.app.asr.stalls}
 
     def set_running(self, on: bool) -> dict:
         self.app.set_generating(on)
         print(f"[{now()}] engine      caption generation "
               f"{'started' if on else 'stopped'}")
+        return self.status()
+
+    def reconnect(self) -> dict:
+        """Reconnect speech recognition only. **Delivery, the Zoom captions
+        and the audio device stay as they are.**
+
+        For when the captions stop although audio is coming in. Stop and
+        Start also fix it, but Stop closes the outputs too, and the viewers'
+        URLs go to the waiting page. The watchdog in asr.py does the same
+        thing on its own; this is the manual way.
+        """
+        if not self.app.generating:
+            raise ValueError("字幕の生成が止まっている。先に開始する。")
+        print(f"[{now()}] engine      reconnecting transcription "
+              "(asked for from the control page)")
+        self.app.reconnect_asr()
         return self.status()
 
 
@@ -752,6 +769,19 @@ class App:
         else:
             loop.call_soon_threadsafe(self._restart.set)
 
+    def reconnect_asr(self) -> None:
+        """Reconnect the recognition WebSocket only. **Called from another
+        thread.**
+
+        Unlike `request_restart`, the audio device stays open and the
+        throwaway captions are not sent to Zoom again.
+        """
+        loop = self.zoom.loop
+        if loop is None:
+            self.asr.kick()
+        else:
+            loop.call_soon_threadsafe(self.asr.kick)
+
     def _flip(self, on: bool) -> None:
         if on:
             self._gen_off.clear()
@@ -1242,7 +1272,8 @@ class App:
                   f"({fired - used} thrown away)")
         print(f"Lines sent to Zoom: {self.sender.sent} "
               f"({self.sender.failed} failed)")
-        print(f"Transcription reconnects: {self.asr.reconnects}")
+        print(f"Transcription reconnects: {self.asr.reconnects}"
+              f" (went silent since the last start: {self.asr.stalls})")
         if capture is not None:
             print(f"Dropped audio blocks: {getattr(capture, 'dropped', 0)}")
         if self.web is not None:

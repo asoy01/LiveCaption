@@ -38,6 +38,17 @@ ASR_MODEL = "gpt-live-transcribe"
 ASR_DELAY = "low"
 # The language can change in the middle of a meeting. Do not fix it.
 ASR_LANGUAGES = ("ja", "en")
+# **The recognition connection can go silent without dropping** (seen on
+# 2026-10-01 and 2026-10-07; see asr.py). When somebody is speaking (a voice
+# within the last ASR_STALL_VOICE_SEC) and no delta has arrived for
+# ASR_STALL_SEC, reconnect. While people speak, deltas arrive about every
+# 0.01 seconds, so 15 seconds without one is far outside normal. 0 turns the
+# watchdog off.
+ASR_STALL_SEC = 15.0
+ASR_STALL_VOICE_SEC = 3.0
+# A reconnect that brings no delta either was probably set off by noise, not a
+# voice. Each one doubles the wait, up to this.
+ASR_STALL_MAX_SEC = 120.0
 
 # The field the meeting is about. **This goes into both the transcription
 # prompt and the translation prompt.**

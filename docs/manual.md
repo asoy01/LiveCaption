@@ -879,6 +879,7 @@ is reported at start-up and ignored, and the default is used.
 | An AI Companion dialog appears on joining | **Leave it alone.** The captions work even if nobody answers it. Zoom has no setting to stop it |
 | No transcript lines appear | `OPENAI_API_KEY` in `.env`. **Is `.env` in the same folder as `compose.yml`? Is it called `.env.txt`?** After a fix, `docker compose up -d` |
 | Transcript appears but no captions | The translation error is shown on the page |
+| Captions stop in the middle of a meeting, but the level meter moves | The transcription connection sometimes goes silent without closing. **LiveCaption reconnects it by itself after about 15 seconds.** If you cannot wait, press **Reconnect transcription** under Right now. **Do not press Stop** (it also stops delivery and the Zoom captions) |
 | Nothing in the Zoom caption area | **Are you looking at the host's screen?** (the host never sees them). Did the reader turn manual captions on? Is the token from this meeting? Check the failure count in the top right |
 | A different set of captions appears | **Zoom's automatic captions are running.** Ask the host to turn them off |
 | Start delivering fails (Cloudflare) | If it says `cloudflared was not found`, the image is old. Rebuild the image (Appendix C.1) |

@@ -869,6 +869,7 @@ CONTROL_BODY = r"""
     <div class="row2">
       <button id="gstart" class="primary">開始</button>
       <button id="gstop" class="danger" title="配信とZoom字幕も一緒に止まる">停止</button>
+      <button id="greconn" title="配信とZoom字幕は止めない">文字起こしを繋ぎ直す</button>
       <span id="genState"></span>
     </div>
     <!-- **The level meter belongs here, not in the input device section.**
@@ -1149,7 +1150,7 @@ __FEED_JS__
   // Show the filter box only when there are more tables than this. With a few
   // tables it only gets in the way.
   const GLOSS_FILTER_FROM = 8;
-  const gstart = $("gstart"), gstop = $("gstop");
+  const gstart = $("gstart"), gstop = $("gstop"), greconn = $("greconn");
   const gpill = $("genPill"), genState = $("genState");
   const devices = $("devices"), devReload = $("devReload");
   const meter = $("meter"), meterBar = $("meterBar"), audioState = $("audioState");
@@ -1313,6 +1314,12 @@ __FEED_JS__
       : "止まっている。音は取り込んでいない";
     gstart.disabled = !!s.generating;
     gstop.disabled = !s.generating;
+    greconn.disabled = !s.generating;
+    // **Say when the watchdog had to reconnect.** It means the captions
+    // stopped for about 15 seconds, and we want to know how often.
+    if (s.generating && s.asr_stalls) {
+      genState.textContent += " (自動で繋ぎ直した回数: " + s.asr_stalls + ")";
+    }
     // Once it runs, hide the note about how to start. Keep the page clear.
     $("genHint").style.display = s.generating ? "none" : "";
 
@@ -1545,6 +1552,16 @@ __FEED_JS__
   }
   gstart.addEventListener("click", () => setGen(true));
   gstop.addEventListener("click", () => setGen(false));
+  // **Delivery and the Zoom captions keep running.** For when the captions
+  // stop although the meter moves. The watchdog does the same after about
+  // 15 seconds; this is for not waiting.
+  greconn.addEventListener("click", async () => {
+    greconn.disabled = true;
+    try {
+      showStatus(await post("/api/engine/reconnect", {}));
+      say("文字起こしを繋ぎ直した。配信とZoom字幕はそのまま。", true);
+    } catch (e) { say(String(e.message), false); greconn.disabled = false; }
+  });
 
   // --- Audio input --------------------------------------------------------
   async function loadDevices() {
@@ -2241,7 +2258,7 @@ __COPY_JS__
     gpill.textContent = "生成: 停止"; gpill.className = "pill off";
     genState.textContent = "";
     for (const b of [save, start, stop, quit, tstart, tstop, gstart, gstop,
-                     devReload]) { b.disabled = true; }
+                     greconn, devReload]) { b.disabled = true; }
     devices.disabled = true; meterBar.style.width = "0";
     say(back ? "再起動している。十数秒したら、この画面を開き直すこと。"
              : "終了した。この画面を閉じる。", true);
@@ -2690,6 +2707,7 @@ class WebCaptions:
             "silence_left_sec": -1.0, "max_left_sec": -1.0,
             "upcoming": self._upcoming()}
         st["generating"] = bool(self.engine.status()["generating"]) if self.engine else True
+        st["asr_stalls"] = self.engine.status().get("asr_stalls", 0) if self.engine else 0
         st["audio"] = self.audio.status() if self.audio else {
             "selectable": False, "name": "—", "index": None,
             "level": 0.0, "dropped": 0, "error": ""}
@@ -3570,7 +3588,8 @@ def _control_handler(web: WebCaptions):
                 self._shutdown()
                 return
             if path not in ("/api/token", "/api/zoom", "/api/tunnel",
-                            "/api/engine", "/api/device", "/api/glossary",
+                            "/api/engine", "/api/engine/reconnect",
+                            "/api/device", "/api/glossary",
                             "/api/glossary/upload", "/api/glossary/delete",
                             "/api/vnc",
                             "/api/tuning", "/api/tuning/save", "/api/direction",
@@ -3723,6 +3742,18 @@ def _control_handler(web: WebCaptions):
                     self._send_json(500, {"error": f".env could not be written: {exc}"})
                     return
                 self._send_json(200, st)
+                return
+
+            if path == "/api/engine/reconnect":
+                if web.engine is None:
+                    self._send_json(503, {"error": "生成の受け口が用意できていない。"})
+                    return
+                try:
+                    web.engine.reconnect()
+                except ValueError as exc:
+                    self._send_json(400, {"error": str(exc)})
+                    return
+                self._send_json(200, web.status())
                 return
 
             if path == "/api/engine":
