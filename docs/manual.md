@@ -407,6 +407,10 @@ participants (the viewer URL), and the sending to the Zoom captions. It closes
 all three so that you never believe you stopped while the captions keep going.
 The viewer URL stops working, so Stop is not a button to press at every break.
 
+**If the captions stop but the level meter still moves, press Reconnect
+transcription.** Delivery and the Zoom captions keep running. If you do not
+press it, LiveCaption reconnects by itself after about 15 seconds (section 8).
+
 ### 3.4 How to show the captions
 
 There are three ways, and you can use all three at the same time.
@@ -583,7 +587,7 @@ Weekly is the only kind of repeat.
 
 ```
 Right now
-[Start] [Stop]  Stopped
+[Start] [Stop] [Reconnect transcription]  Stopped
 Waiting
 2026-09-25 10:00  Morning meeting    in 23 min
 2026-09-27 13:00  Collaborators      in 2 d 3 h
