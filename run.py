@@ -99,8 +99,16 @@ def parse_args() -> argparse.Namespace:
                    choices=["minimal", "low", "medium", "high", "xhigh"],
                    help="trade transcription delay against accuracy "
                         "(default: low)")
-    p.add_argument("--model", default=config.TRANSLATE_MODEL,
-                   help="the translation model")
+    # **The default is None, not config.translate_model().** parse_args() runs
+    # before load_env(), so reading it here would ignore `.env`.
+    p.add_argument("--model", default=None,
+                   help="the translation model (default: "
+                        "LIVECAPTION_TRANSLATE_MODEL in .env, else "
+                        f"{config.TRANSLATE_MODEL})")
+    p.add_argument("--reasoning", default=None,
+                   help="reasoning_effort for translation, e.g. none "
+                        "(default: LIVECAPTION_TRANSLATE_REASONING in .env, "
+                        "else not sent)")
     p.add_argument("--direction", choices=list(config.DIRECTIONS), default=None,
                    help="caption direction. ja2en puts English captions on a "
                         "Japanese meeting, en2ja puts Japanese captions on an "
@@ -265,7 +273,8 @@ def main() -> int:
         caption_url=args.token or "",
         device=args.device,
         delay=args.delay,
-        translate_model=args.model,
+        translate_model=args.model or config.translate_model(),
+        translate_reasoning=args.reasoning or config.translate_reasoning(),
         dry_run=args.dry_run,
         save=not args.no_save,
         transcript_dir=save_dir,

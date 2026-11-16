@@ -745,6 +745,8 @@ LiveCaption が Zoom へ字幕を送り始めます。
 | `LIVECAPTION_VNC` | 起動した時点から VNC を動かすか | 付録C.3 |
 | `LIVECAPTION_SAVE_DIR` | 会議の記録の置き場 | 付録C.4 |
 | `LIVECAPTION_GLOSSARY_DIR` | 用語対訳表の置き場 | 付録E.4 |
+| `LIVECAPTION_TRANSLATE_MODEL` | 翻訳のモデル | 付録E.4 |
+| `LIVECAPTION_TRANSLATE_REASONING` | 翻訳の `reasoning_effort` | 付録E.4 |
 | `LIVECAPTION_IDLE_FLUSH_SEC` ほか4つ | 遅延の調整 | 付録E.4 |
 
 ### 会議の分野の指定
@@ -1531,7 +1533,8 @@ pixi run python scripts/cable_loopback.py        # VB-CABLE の経路を試す
 | `--from-file <wav>` | デバイスの代わりに WAV を実時間で流します。24 kHz モノラル |
 | `--loop` | `--from-file` のファイルを繰り返します |
 | `--delay <段階>` | 文字起こしの遅延と精度。`minimal`・`low`・`medium`・`high`・`xhigh`。既定 `low` |
-| `--model <名前>` | 翻訳のモデル。既定 `gpt-4.1-mini` |
+| `--model <名前>` | 翻訳のモデル。既定は `.env` の `LIVECAPTION_TRANSLATE_MODEL`、無ければ `gpt-4.1-mini` |
+| `--reasoning <値>` | 翻訳の `reasoning_effort`。既定は `.env` の `LIVECAPTION_TRANSLATE_REASONING`、無ければ送りません |
 | `--check-audio [秒]` | 音量を表示して終わります。API を呼びません |
 | `--list-devices` | 入力デバイスの一覧を出します |
 | `--cloudflared <パス>` | `cloudflared` の場所。PATH か `local/bin` にあれば要りません |
@@ -1704,6 +1707,34 @@ QRコードが弾かれますが、URLは先に届いています。
   （`${名前:-既定}`）を保ってください
 - `LIVECAPTION_GLOSSARY_DIR` は用語対訳表の置き場です。Docker では `compose.yml` が
   ボリュームの中を指しているので、触りません
+
+#### 翻訳モデルの切り替え
+
+**既定の `gpt-4.1-mini` は、2027年1月14日に OpenAI が提供を終えます。** 新しいモデルは
+`.env` で切り替えられます。
+
+```
+LIVECAPTION_TRANSLATE_MODEL=gpt-5.6-luna
+LIVECAPTION_TRANSLATE_REASONING=none
+```
+
+**新しいモデルでは、2行目を必ず書いてください。** 書かないと推論が動き、1文に4秒以上
+かかります。字幕には使えません。`gpt-4.1-mini` に戻すときは、2行とも消します。
+`gpt-4.1-mini` はこの値を受け付けません。
+
+**受け付ける値はモデルで違います**（`none` か `minimal`）。合わない値を書くと、全ての文の
+翻訳が失敗します。画面に出るサーバの応答に、使える値が並んでいます。
+
+起動画面の `Translation:` の行と、会議の記録の見出しに、使ったモデルと値が出ます。
+
+2026-10-15 の測定です（朝礼の6文×4回、両方の向き）:
+
+| モデル | 中央値 | 用語 |
+|---|---|---|
+| `gpt-4.1-mini` | 0.8秒 | 全て正しい |
+| `gpt-5.6-luna` `none` | 1.3秒 | 全て正しい |
+| `gpt-6-luna` `none` | 1.6秒 | 全て正しい。ただし最大12秒かかった |
+| `gpt-5.4-mini` `none` | 0.8秒 | 用語表による置換を一部落とす |
 
 ### E.5 会議の記録の中身
 

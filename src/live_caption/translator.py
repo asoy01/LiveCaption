@@ -108,9 +108,24 @@ USER = """\
 
 ---
 
-次の1文だけを英語の字幕にすること:
+次の1文だけを{language}の字幕にすること:
 {target}
 """
+
+# The caption language named in USER. **It must follow the direction.** When
+# USER said 英語 in both directions, gpt-4.1-mini still obeyed the system
+# prompt, but newer models obeyed USER and turned Japanese input into English
+# in en2ja (measured 2026-10-15).
+USER_LANGUAGE = {"ja2en": "英語", "en2ja": "日本語"}
+
+
+def build_user(context: str, target: str, direction: str | None = None) -> str:
+    """Build the user message. If `direction` is None, the caption direction
+    that is selected now (`config.DIRECTION`) is used, read on every call."""
+    name = config.DIRECTION if direction is None else direction
+    return USER.format(
+        context=context, target=target, language=USER_LANGUAGE.get(name, "英語")
+    )
 
 
 def build_system(
@@ -144,8 +159,18 @@ def build_system(
     )
 
 
-def chat(model: str, system: str, user: str, timeout: float = 180.0) -> tuple[str, float]:
-    """Make one request. Return (body, seconds taken). Synchronous."""
+def chat(
+    model: str,
+    system: str,
+    user: str,
+    timeout: float = 180.0,
+    reasoning: str | None = None,
+) -> tuple[str, float]:
+    """Make one request. Return (body, seconds taken). Synchronous.
+
+    `reasoning` is sent as `reasoning_effort`. None sends nothing, which is
+    what gpt-4.1-mini needs.
+    """
     body = {
         "model": model,
         "messages": [
@@ -153,6 +178,8 @@ def chat(model: str, system: str, user: str, timeout: float = 180.0) -> tuple[st
             {"role": "user", "content": user},
         ],
     }
+    if reasoning is not None:
+        body["reasoning_effort"] = reasoning
     req = urllib.request.Request(
         config.TRANSLATE_URL,
         data=json.dumps(body).encode("utf-8"),
@@ -168,15 +195,25 @@ def chat(model: str, system: str, user: str, timeout: float = 180.0) -> tuple[st
 
 
 class Translator:
-    def __init__(self, entries: list[glossary.Entry], model: str = config.TRANSLATE_MODEL) -> None:
+    def __init__(
+        self,
+        entries: list[glossary.Entry],
+        model: str = config.TRANSLATE_MODEL,
+        reasoning: str | None = None,
+    ) -> None:
         self.model = model
+        self.reasoning = reasoning
         self.system = build_system(entries)
         self.history: list[str] = []
 
     def _request(self, target: str) -> tuple[str, float]:
         context = "\n".join(self.history[-config.CONTEXT_SENTENCES:]) or "(なし)"
         return chat(
-            self.model, self.system, USER.format(context=context, target=target), timeout=60.0
+            self.model,
+            self.system,
+            build_user(context, target),
+            timeout=60.0,
+            reasoning=self.reasoning,
         )
 
     def remember(self, target: str) -> None:

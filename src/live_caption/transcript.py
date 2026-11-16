@@ -305,7 +305,9 @@ def render(meta: dict, records: list[dict], ended: str = "", final: bool = True)
             f" (delay={meta.get('delay', '?')}, languages={meta.get('languages', '?')})"
         )
     if meta.get("translate"):
-        lines.append(f"- Translation: {meta['translate']}")
+        reasoning = meta.get("translate_reasoning")
+        lines.append(f"- Translation: {meta['translate']}"
+                     + (f" (reasoning_effort={reasoning})" if reasoning else ""))
     # The direction is recorded per sentence, because it can be switched in
     # the middle of a meeting.
     used = [d for d in dict.fromkeys(str(r.get("dir", "")) for r in records) if d]

@@ -493,7 +493,9 @@ class App:
             languages=settings.languages,
         )
         self.segmenter = segmenter_mod.Segmenter()
-        self.translator = translator_mod.Translator(entries, settings.translate_model)
+        self.translator = translator_mod.Translator(
+            entries, settings.translate_model, settings.translate_reasoning
+        )
         self.sender = captions_mod.CaptionSender(
             settings.caption_url or None, dry_run=settings.dry_run
         )
@@ -619,6 +621,7 @@ class App:
             "delay": self.settings.delay,
             "languages": ",".join(self.settings.languages),
             "translate": self.settings.translate_model,
+            "translate_reasoning": self.settings.translate_reasoning,
             # The direction we started with. **It can change part way
             # through, so we also record it for each sentence.**
             "direction": self.direction.name,
@@ -1104,7 +1107,9 @@ class App:
             print("  Raise config.ASR_KEYWORD_LIMIT.")
         print(f"Recognition:  {config.ASR_MODEL}  delay={self.settings.delay}"
               f"  languages={list(self.settings.languages)}")
-        print(f"Translation:  {self.settings.translate_model}")
+        reasoning = self.settings.translate_reasoning
+        print(f"Translation:  {self.settings.translate_model}"
+              + (f"  reasoning_effort={reasoning}" if reasoning else ""))
         print(f"Audio input:  {self.audio.status()['name']}")
         if self.settings.dry_run:
             print("**--dry-run: nothing is sent to Zoom.**")

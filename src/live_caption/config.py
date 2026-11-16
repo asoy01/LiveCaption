@@ -98,6 +98,32 @@ ASR_KEYWORD_LIMIT = 200
 # too slow to use. Both were measured on real meeting audio.
 TRANSLATE_MODEL = "gpt-4.1-mini"
 TRANSLATE_URL = "https://api.openai.com/v1/chat/completions"
+# **gpt-4.1-mini is retired on 2027-01-14.** To try a successor, set the model
+# in `.env`. A newer model has reasoning on by default and takes 4 s or more
+# per sentence, so turn reasoning off with the second variable:
+#
+#   LIVECAPTION_TRANSLATE_MODEL=gpt-5.6-luna
+#   LIVECAPTION_TRANSLATE_REASONING=none
+#
+# Empty reasoning means the parameter is not sent. gpt-4.1-mini rejects it.
+# The accepted values differ by model generation (`none` or `minimal`); a
+# wrong one fails every sentence, and the server's reply lists the right ones.
+TRANSLATE_MODEL_ENV = "LIVECAPTION_TRANSLATE_MODEL"
+TRANSLATE_REASONING_ENV = "LIVECAPTION_TRANSLATE_REASONING"
+
+
+def translate_model() -> str:
+    """The translation model. `.env` wins over the default.
+
+    **Read the environment variable on every call**, for the same reason as
+    `glossary_dir()`: `load_env()` runs after the import.
+    """
+    return os.environ.get(TRANSLATE_MODEL_ENV, "").strip() or TRANSLATE_MODEL
+
+
+def translate_reasoning() -> str | None:
+    """`reasoning_effort` for the translation request. None = do not send it."""
+    return os.environ.get(TRANSLATE_REASONING_ENV, "").strip() or None
 # Translating a single sentence on its own breaks words like "it" and "that".
 # We pass the sentences just before it as context.
 CONTEXT_SENTENCES = 3
@@ -644,6 +670,8 @@ class Settings:
     direction: str | None = None
     delay: str = ASR_DELAY
     translate_model: str = TRANSLATE_MODEL
+    # `reasoning_effort` for translation. None = not sent.
+    translate_reasoning: str | None = None
     dry_run: bool = False
     languages: tuple[str, ...] = field(default_factory=lambda: ASR_LANGUAGES)
     save: bool = True

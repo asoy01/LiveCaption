@@ -829,6 +829,8 @@ the delay tuning are all in that one file. The sample with the explanations is
 | `LIVECAPTION_VNC` | Whether VNC runs from start-up | Appendix C.3 |
 | `LIVECAPTION_SAVE_DIR` | Where the meeting record is written | Appendix C.4 |
 | `LIVECAPTION_GLOSSARY_DIR` | Where the glossary tables are kept | Appendix E.4 |
+| `LIVECAPTION_TRANSLATE_MODEL` | The translation model | Appendix E.4 |
+| `LIVECAPTION_TRANSLATE_REASONING` | `reasoning_effort` for translation | Appendix E.4 |
 | `LIVECAPTION_IDLE_FLUSH_SEC` and three more | Delay tuning | Appendix E.4 |
 
 ### Telling it what your meetings are about
@@ -1657,7 +1659,8 @@ pixi run python scripts/cable_loopback.py        # test the VB-CABLE path
 | `--from-file <wav>` | Play a WAV in real time instead of using a device. 24 kHz mono |
 | `--loop` | Repeat the `--from-file` file |
 | `--delay <level>` | Transcription delay and accuracy. `minimal`, `low`, `medium`, `high`, `xhigh`. Default `low` |
-| `--model <name>` | The translation model. Default `gpt-4.1-mini` |
+| `--model <name>` | The translation model. Default: `LIVECAPTION_TRANSLATE_MODEL` in `.env`, else `gpt-4.1-mini` |
+| `--reasoning <value>` | `reasoning_effort` for translation. Default: `LIVECAPTION_TRANSLATE_REASONING` in `.env`, else not sent |
 | `--check-audio [seconds]` | Show the level and exit. Calls no API |
 | `--list-devices` | List the input devices |
 | `--cloudflared <path>` | Where `cloudflared` is. Not needed if it is on PATH or in `local/bin` |
@@ -1842,6 +1845,38 @@ Three more things about `.env`:
   form so that `.env` still works
 - `LIVECAPTION_GLOSSARY_DIR` is where the glossary tables are kept. Under Docker
   `compose.yml` points it inside a volume, so leave it alone
+
+#### Changing the translation model
+
+**OpenAI retires the default model, `gpt-4.1-mini`, on 14 January 2027.** You
+can change the model in `.env`:
+
+```
+LIVECAPTION_TRANSLATE_MODEL=gpt-5.6-luna
+LIVECAPTION_TRANSLATE_REASONING=none
+```
+
+**For a newer model, always write the second line.** Without it the model
+reasons, and each sentence takes 4 seconds or more. That is too slow for
+captions. To go back to `gpt-4.1-mini`, remove both lines. `gpt-4.1-mini` does
+not accept this value.
+
+**The accepted values differ by model** (`none` or `minimal`). With a wrong
+value, every translation fails. The server's reply on the screen lists the
+values you can use.
+
+The model and the value are shown on the `Translation:` line at start-up and in
+the header of the meeting record.
+
+Measured on 2026-10-15 (6 sentences from a morning meeting, 4 times each, both
+directions):
+
+| Model | Median | Terms |
+|---|---|---|
+| `gpt-4.1-mini` | 0.8 s | All correct |
+| `gpt-5.6-luna` `none` | 1.3 s | All correct |
+| `gpt-6-luna` `none` | 1.6 s | All correct, but one sentence took 12 s |
+| `gpt-5.4-mini` `none` | 0.8 s | Misses some glossary replacements |
 
 ### E.5 What is in the meeting record
 
