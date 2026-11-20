@@ -7,8 +7,25 @@ the work step by step.
                            (join Zoom)
     start time             switch the record to this meeting -> start captions
     a few seconds later    **check that captions really started**
-    after a long silence   stop captions -> leave Zoom -> stop the delivery ->
+    when the meeting ends  stop captions -> leave Zoom -> stop the delivery ->
                            close the record
+
+**When the meeting has ended** (the end conditions). In the container, any one of
+these shuts the meeting down. The Windows native version is frozen and has only
+3 and 5, with every sentence counted in 3.
+
+    1. put out of the meeting   Zoom is no longer in the meeting (the host ended it)
+    2. alone                    the participant count has read 1 for 2 minutes,
+                                with no meaningful speech in that time
+    3. silence                  no meaningful speech for `silence_min`
+                                (a longer wait before the first one)
+    4. closing words            meaningful speech stopped for 2 minutes, and an
+                                LLM reads the last words as closing the meeting
+    5. limit                    `max_min`, or 60 minutes after the planned end
+
+"Meaningful speech" leaves out fillers, made-up text and lone glossary words
+(`speech.py`). **When in doubt, stay.** Leaving early loses part of the meeting
+for good; staying late only costs recognition time.
 
 **This never returns, and it never lets an exception out.**
 `app.App.run()` waits with `asyncio.wait(..., FIRST_COMPLETED)`, so the whole
@@ -54,6 +71,10 @@ if os.name == "nt":
 else:
     from . import zoom_join_linux as zoom_join
 
+# **End conditions 1, 2 and 4 and the meaningful-speech filter run in the
+# container only.** The Windows native version is frozen.
+CONTAINER = os.name != "nt"
+
 # States. The control page shows these same names.
 IDLE = "idle"
 JOINING = "joining"
@@ -87,6 +108,9 @@ UI_STRINGS = (
     "始まらなかったので片付けた",
     "安全上限で止めた",
     "無音が続いたので止めた",
+    "会議から出された（ホストが終了した）",
+    "参加者が自分だけになった",
+    "締めの言葉のあと発話が止まった",
     "飛ばす予定が無い。",
     "次の予定を飛ばした。",
     "生成が始まらない。",
@@ -151,6 +175,29 @@ class Scheduler:
         self._chat_todo: list[datetime] = []
         self._chat_total = 0
         self._chat_next = 0.0
+        # The planned length of the meeting that is running (0: unknown).
+        self._duration_min = 0
+        self._reset_end_watch()
+
+    def _reset_end_watch(self) -> None:
+        """The state of end conditions 1, 2 and 4 for one meeting."""
+        # `last_speech_at` at the start of this occurrence (the same idea as
+        # `_sentence_mark`, for meaningful speech only).
+        # `getattr`: the scheduler is made before the app sets this.
+        self._speech_mark = getattr(self.app, "last_speech_at", 0.0)
+        # 1: Zoom was seen in the meeting at least once, and how many checks
+        # in a row it has been seen out of it since.
+        self._seen_in = False
+        self._out_ticks = 0
+        # 2: the last participant count read, when to read next, and since
+        # when the count has been 1 (`time.monotonic`).
+        self.people: int | None = None
+        self._people_next = 0.0
+        self._alone_since: float | None = None
+        # 4: the `last_speech_at` that the LLM was last asked about, and its
+        # last answer (for the log and the page).
+        self._judged_at: float | None = None
+        self.closing: dict = {}
 
     # --- What goes back to the control page ---------------------------------
 
@@ -175,6 +222,7 @@ class Scheduler:
             "silence_left_sec": round(left_silence, 1),
             "max_left_sec": round(left_max, 1),
             "upcoming": self._upcoming(),
+            "people": self.people,
         }
 
     def _upcoming(self) -> list[dict]:
@@ -355,6 +403,7 @@ class Scheduler:
         self.occurrence = occurrence
         self._silence_min = meeting.silence_min
         self._max_min = meeting.max_min
+        self._duration_min = meeting.duration_min
         self._we_started_tunnel = False
         self._joined_zoom = bool(meeting.zoom)
         self._saw_audio = False
@@ -402,6 +451,7 @@ class Scheduler:
         self.app.engine.set_running(True)
         self.started_at = time.monotonic()
         self._sentence_mark = self.app.last_sentence_at
+        self._reset_end_watch()
         why = await self._arm()
         if why:
             self._fail(why)
@@ -636,18 +686,27 @@ class Scheduler:
         nobody speaks, so the app does not sit in an empty meeting for hours.
         """
         now = time.monotonic()
-        if self.app.last_sentence_at != self._sentence_mark:
+        # **In the container, only meaningful speech counts** (`speech.py`).
+        # Fillers and made-up text must not keep a finished meeting alive.
+        last, mark = self.app.last_sentence_at, self._sentence_mark
+        if CONTAINER:
+            last, mark = self.app.last_speech_at, self._speech_mark
+        if last != mark:
             # Somebody spoke at least once. From here on, look at the time
             # since speech stopped.
-            return now - self.app.last_sentence_at, self._silence_limit(), \
-                "無音が続いたので止めた"
+            return now - last, self._silence_limit(), "無音が続いたので止めた"
         # Not a single sentence yet. Look at the time since joining.
         # **If the per-meeting setting is longer, use that one.**
         limit = max(self._silence_limit(), config.SCHEDULE_OPENING_SEC)
         return now - self.started_at, limit, "会議が始まらないので止めた"
 
     def _max_limit(self) -> float:
-        return self._max_min * 60.0
+        """End condition 5: `max_min`, or `SCHEDULE_OVERRUN_MIN` after the
+        planned end if that comes first."""
+        limit = self._max_min
+        if self._duration_min > 0:
+            limit = min(limit, self._duration_min + config.SCHEDULE_OVERRUN_MIN)
+        return limit * 60.0
 
     async def _watch_running(self) -> None:
         if self.state != RUNNING:
@@ -675,11 +734,87 @@ class Scheduler:
         if elapsed > self._max_limit():
             # **Stop even when it is not silent.** This is the last guard
             # against a bill that never stops.
-            self._teardown("安全上限で止めた", detail=f"{self._max_min} min")
+            self._teardown("安全上限で止めた", detail=f"{self._max_limit() / 60:g} min")
+            return
+        if CONTAINER and await self._ended_in_container():
             return
         quiet, limit, why = self._quiet_state()
         if quiet > limit:
             self._teardown(why, detail=f"{limit / 60:g} min")
+
+    async def _ended_in_container(self) -> bool:
+        """End conditions 1, 2 and 4. True if the meeting was shut down.
+
+        **The slow checks run on another thread.** Reading the windows takes
+        tens of milliseconds and the participant count 1 to 2 s; asking the
+        LLM takes seconds. On the event loop they would stop the audio and
+        the captions for that time.
+        """
+        # 1: put out of the meeting. Only a meeting we joined ourselves: a
+        # meeting a person had open is theirs to end.
+        if self._we_launched_zoom:
+            if await asyncio.to_thread(zoom_join.in_meeting):
+                self._seen_in, self._out_ticks = True, 0
+            elif self._seen_in:
+                self._out_ticks += 1
+                if self._out_ticks >= config.SCHEDULE_OUT_TICKS:
+                    self._teardown("会議から出された（ホストが終了した）")
+                    return True
+        await self._count_people()
+        quiet, _limit, _why = self._quiet_state()
+        # 2: alone. The quiet check guards against a misread number.
+        if (self._alone_since is not None
+                and time.monotonic() - self._alone_since >= config.SCHEDULE_ALONE_SEC
+                and quiet >= config.SCHEDULE_ALONE_SEC):
+            self._teardown("参加者が自分だけになった",
+                           detail=f"{config.SCHEDULE_ALONE_SEC / 60:g} min")
+            return True
+        # 4: closing words. Ask once per pause, only after somebody spoke.
+        last = self.app.last_speech_at
+        if (last != self._speech_mark and quiet >= config.SCHEDULE_CLOSING_PAUSE_SEC
+                and self._judged_at != last):
+            from . import closing
+
+            self._judged_at = last
+            lines = [text for at, text in self.app.recent_speech
+                     if at >= last - closing.WINDOW_SEC]
+            v = await asyncio.to_thread(closing.judge, lines, config.meeting_context())
+            self.closing = {"closing": v.closing, "quote": v.quote,
+                            "reason": v.reason, "error": v.error}
+            print(f"[{now_str()}] schedule    closing words after {quiet:.0f} s quiet: "
+                  f"{v.closing} {v.reason} {v.error}".rstrip())
+            if v.closing:
+                self._teardown("締めの言葉のあと発話が止まった", detail=v.quote)
+                return True
+        return False
+
+    async def _count_people(self) -> None:
+        """End condition 2: read the participant count now and then.
+
+        Only after Zoom was seen in the meeting. When the number cannot be
+        read, nothing changes.
+        """
+        if not self._seen_in or time.monotonic() < self._people_next:
+            return
+        self._people_next = time.monotonic() + config.SCHEDULE_PEOPLE_EVERY_SEC
+        from . import zoom_people_linux
+
+        try:
+            n = await asyncio.to_thread(zoom_people_linux.count)
+        except Exception as exc:  # noqa: BLE001  (tesseract missing, a timeout...)
+            print(f"[{now_str()}] schedule    cannot read the participant count: "
+                  f"{type(exc).__name__}: {exc}")
+            return
+        if n is None:
+            return
+        if n != self.people:
+            print(f"[{now_str()}] schedule    participants: {n}")
+        self.people = n
+        if n == 1:
+            if self._alone_since is None:
+                self._alone_since = time.monotonic()
+        else:
+            self._alone_since = None
 
     # --- Cleaning up --------------------------------------------------------
 
@@ -721,6 +856,8 @@ class Scheduler:
         self._we_started_tunnel = False
         self._joined_zoom = False
         self._saw_audio = False
+        self._duration_min = 0
+        self._reset_end_watch()
         # The chat posts that were still due. **They are dropped on teardown.**
         self._chat_todo = []
         self._chat_total = 0

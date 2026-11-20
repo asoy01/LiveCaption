@@ -573,6 +573,7 @@ Fill in the meeting row on the **Manage meetings** tab.
 | Minutes before | Start delivering and join Zoom this many minutes early. Default 2 |
 | Stop after silence | If no transcript appears for this many minutes, the meeting is treated as over. Default 10 |
 | Hard cap | Stop after this many minutes even if sound continues. Default 180 |
+| Planned length | How long the meeting is planned to be, in minutes. When set, it always stops 60 minutes after the planned end (or at the hard cap, if that comes first). Default 0: unknown |
 | Start this meeting automatically | **Only meetings with this ticked run on their own** |
 
 **Automatic is off by default.** Running it automatically sends captions out
@@ -596,6 +597,33 @@ Waiting
 
 While a meeting runs, it shows the time left before the silence timeout and
 before the hard cap.
+
+**It decides that the meeting is over** on any one of these five conditions.
+Then it stops the captions, leaves Zoom and stops the delivery. **Right now**
+shows which condition it was.
+
+| Condition | What it means | When it stops |
+|---|---|---|
+| 1. Put out of the meeting | The host pressed "End meeting for all", or removed it | about 10 s |
+| 2. Alone | The participant count at the bottom of the Zoom window has read 1 for 2 minutes, with no meaningful speech in that time | 2 min |
+| 3. Silence | No meaningful speech for the "Stop after silence" minutes. Before the first speech, it waits 15 minutes | default 10 min |
+| 4. Closing words | Speech has stopped for 2 minutes, and an AI model reads the last words as closing the meeting | 2 min |
+| 5. Limit | The hard cap, or 60 minutes after the planned end | as set |
+
+- **Conditions 1, 2 and 4 work only when it runs in Docker.** Windows native
+  (Appendix D) has only 3 and 5
+- Condition 1 applies only to a meeting LiveCaption joined by itself. A meeting
+  a person had open is never stopped
+- **Not counted as meaningful speech:** fillers alone ("はい", "yeah"), text
+  that speech recognition often makes up ("ご視聴ありがとうございました"), a
+  single glossary term alone, and the same sentence again. Windows native counts
+  every sentence
+- Condition 4 uses `gpt-5.6-luna`. It is called only a few times per meeting.
+  To use another model, set `LIVECAPTION_CLOSING_MODEL` in `.env`
+- **When the next meeting goes on in the same Zoom, the captions go on too.**
+  If someone speaks soon after the closing words of the first meeting,
+  condition 4 is not checked
+- When in doubt, it stays. If it leaves early, the captions after that are lost
 
 - **A failure stays on screen until you dismiss it.** With nobody watching, a
   failure that disappears by itself is a failure nobody sees. Read it, then
@@ -896,7 +924,8 @@ is reported at start-up and ignored, and the default is used.
 | A term in the table is still translated wrongly | Are the words past the limit (section 5)? Is that subject's table ticked? |
 | The captions go by too fast to read | Ask people to make the caption area taller. Lower `LIVECAPTION_FORCE_CUT_CHARS` (Appendix E.4) |
 | A scheduled meeting does not start | **Is "Start this meeting automatically" ticked?** It is off by default. Check that the schedule is listed under Right now |
-| It does not leave when the meeting ends | Check the silence timeout. The hard cap always stops it |
+| It does not leave when the meeting ends | Did the host leave the meeting open, with people still talking? Check the silence timeout too. The hard cap always stops it (the conditions in 4.2) |
+| It left in the middle of the meeting | Read the reason under **Right now** (the conditions in 4.2). Check that the planned length is not too short |
 | It keeps running after an early finish | An open microphone means there is no silence. Press Stop now |
 | Restart does not stop it | That is resident mode (`unless-stopped`). To really stop it, `docker compose stop` (Appendix C.5) |
 | The glossary is empty | The ZIP has no tables (2.7). Upload yours from the control page |

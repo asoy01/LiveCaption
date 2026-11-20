@@ -108,6 +108,11 @@ EN: dict[str, str] = {
     "安全上限で止めた": "Stopped at the hard cap",
     "無音が続いたので止めた": "Stopped after a long silence",
     "会議が始まらないので止めた": "Stopped because the meeting never started",
+    "会議から出された（ホストが終了した）":
+        "Put out of the meeting (the host ended it)",
+    "参加者が自分だけになった": "Nobody else was left in the meeting",
+    "締めの言葉のあと発話が止まった":
+        "The speech stopped after the closing words",
     "音声の入力を開けない: ": "Cannot open the audio input: ",
     "生成が始まらない。": "Caption generation does not start.",
     "会議を選べない: ": "Cannot select the meeting: ",
@@ -126,6 +131,7 @@ EN: dict[str, str] = {
     "何分前から": "Minutes before",
     "無音で終了（分）": "Stop after silence (min)",
     "安全上限（分）": "Hard cap (min)",
+    "予定の長さ（分、0は不明）": "Planned length (min, 0: unknown)",
     "Zoomのチャットに投げる": "Post to the Zoom chat",
     "投げている…": "Posting…",
     "URLとQRを投げた": "Posted the URL and the QR code",

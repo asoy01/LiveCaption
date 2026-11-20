@@ -301,6 +301,7 @@ BODY = """</style>
     const lead = num("何分前から", it.lead_min, 0, 60);
     const silence = num("無音で終了（分）", it.silence_min, 0.5, 240, "0.5");
     const cap = num("安全上限（分）", it.max_min, 5, 1440);
+    const dur = num("予定の長さ（分、0は不明）", it.duration_min || 0, 0, 1440);
     body.appendChild(nums);
 
     const autorow = document.createElement("label");
@@ -421,6 +422,7 @@ BODY = """</style>
           lead_min: Number(lead.value),
           silence_min: Number(silence.value),
           max_min: Number(cap.value),
+          duration_min: Number(dur.value),
           auto: auto.checked,
           chat: chat.checked,
           route: route.value,

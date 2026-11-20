@@ -355,9 +355,9 @@ def join(text: str, name: str = "") -> str:
         pass
 
     try:
-        subprocess.Popen(
+        _launched.append(subprocess.Popen(
             [exe, url], stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
     except OSError as exc:
         raise JoinError(f"Cannot start Zoom: {exc}") from exc
 
@@ -424,9 +424,12 @@ def leave() -> bool:
     **There is no way to leave a meeting.** Quitting is the only option.
     **Call this only when we were the one who joined the meeting**
     (`schedule.py` remembers that).
+
+    **Zoom is quit even when the meeting is already gone** (the host ended it
+    for all, end condition 1). Zoom then sits on its home window, and the one
+    we started stays as a zombie child once it is killed. Every scheduled
+    meeting starts with a fresh Zoom (seen in real Zoom meetings, 2026-11-20).
     """
-    if not in_meeting():
-        return False
     pids = _pids()
     if not pids:
         return False
@@ -438,4 +441,19 @@ def leave() -> bool:
         time.sleep(_POLL_SEC)
     if _pids():
         _run(["pkill", "-KILL", "-f", "/opt/zoom/zoom"], timeout=15)
+    _reap()
     return True
+
+
+# The Zoom processes `join()` started. LiveCaption is their parent, so a Zoom
+# that was killed stays as a zombie (`[zoom] <defunct>`) until it is waited for.
+_launched: list[subprocess.Popen] = []
+
+
+def _reap() -> None:
+    for p in list(_launched):
+        try:
+            p.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            continue
+        _launched.remove(p)

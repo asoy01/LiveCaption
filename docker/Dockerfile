@@ -115,6 +115,12 @@ RUN curl -fsSL -o /tmp/zoom.deb https://zoom.us/client/latest/zoom_amd64.deb \
  && (dpkg -i /tmp/zoom.deb || (apt-get update && apt-get -y -f install)) \
  && rm -f /tmp/zoom.deb && rm -rf /var/lib/apt/lists/*
 
+# tesseract reads the participant count on Zoom's toolbar
+# (zoom_people_linux.py, end condition 2 in schedule.py). A layer of its own,
+# after Zoom, so that adding it did not download Zoom again.
+RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr \
+ && rm -rf /var/lib/apt/lists/*
+
 # **Keep the Zoom settings and sign-in on a volume.** If they are lost, you
 # have to sign in again.
 ENV HOME=/home/livecaption

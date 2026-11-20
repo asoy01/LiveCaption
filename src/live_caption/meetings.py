@@ -71,6 +71,9 @@ class Meeting:
     silence_min: float = 10.0  # Stop after this much silence
     max_min: int = 180         # Safety limit. It always stops here, even
                                # without silence
+    duration_min: int = 0      # The planned length. 0: unknown. When set, it
+                               # stops 60 minutes after the planned end at the
+                               # latest (`schedule.py`, end condition 5)
     # **The flag for running automatically. The dataclass default is off.** This
     # field was added to meetings that were already saved, so when it is not
     # written, it is read as off. **`create` turns it on for a meeting you added
@@ -94,7 +97,8 @@ class Meeting:
             "id": self.id, "name": self.name, "created": self.created,
             "start": self.start, "repeat": self.repeat, "zoom": self.zoom,
             "lead_min": self.lead_min, "silence_min": self.silence_min,
-            "max_min": self.max_min, "auto": self.auto, "chat": self.chat,
+            "max_min": self.max_min, "duration_min": self.duration_min,
+            "auto": self.auto, "chat": self.chat,
             "last_fired": self.last_fired, "host_id": self.host_id,
             "route": self.route,
         }
@@ -157,6 +161,7 @@ def _meeting_from(m: dict) -> Meeting:
         lead_min=int(_num(m.get("lead_min"), 0, 60, 2)),
         silence_min=_num(m.get("silence_min"), 0.5, 240, 10.0),
         max_min=int(_num(m.get("max_min"), 5, 24 * 60, 180)),
+        duration_min=int(_num(m.get("duration_min"), 0, 24 * 60, 0)),
         auto=bool(m.get("auto", False)),
         chat=bool(m.get("chat", False)),
         last_fired=str(m.get("last_fired", "")),
@@ -379,6 +384,11 @@ class Store:
             if value < 0:
                 raise ValueError("The hard cap must be 5 to 1440 minutes.")
             clean["max_min"] = value
+        if "duration_min" in fields:
+            value = int(_num(fields["duration_min"], 0, 24 * 60, -1))
+            if value < 0:
+                raise ValueError("The planned length must be 0 to 1440 minutes.")
+            clean["duration_min"] = value
         if "auto" in fields:
             clean["auto"] = bool(fields["auto"])
         if "chat" in fields:

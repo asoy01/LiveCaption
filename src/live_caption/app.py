@@ -38,6 +38,7 @@ import asyncio
 import os
 import signal
 import time
+from collections import deque
 from pathlib import Path
 
 from . import asr as asr_mod
@@ -46,6 +47,7 @@ from . import captions as captions_mod
 from . import config, glossary
 from . import schedule as schedule_mod
 from . import segmenter as segmenter_mod
+from . import speech
 from . import transcript as transcript_mod
 from . import translator as translator_mod
 from . import vnc as vnc_mod
@@ -521,6 +523,13 @@ class App:
         # **We look at sentences, not at the volume.** The reason is in
         # `_dispatch`.
         self.last_sentence_at = time.monotonic()
+        # The same, but only for sentences that count as speech
+        # (`speech.meaningful`), and those sentences with their time
+        # (`time.monotonic`, "[HH:MM:SS] text"). The scheduler in the
+        # container uses them to judge the end of a meeting.
+        self.last_speech_at = self.last_sentence_at
+        self.recent_speech: deque[tuple[float, str]] = deque(maxlen=300)
+        self._previous_sentence = ""
         # Whether caption generation (recording, recognition, translation)
         # is running.
         # **With a control page, we begin in the stopped state.** That lets
@@ -682,6 +691,9 @@ class App:
             # The starting point for the silence watchdog. Do not count the
             # time while it was stopped.
             self.last_sentence_at = time.monotonic()
+            self.last_speech_at = self.last_sentence_at
+            self.recent_speech.clear()
+            self._previous_sentence = ""
         self.generating = on
         loop = self.zoom.loop
         if loop is None:
@@ -1009,6 +1021,15 @@ class App:
             # silence from the amplitude would never stop, even connected to
             # an empty room.
             self.last_sentence_at = time.monotonic()
+            # **The container's scheduler measures from meaningful speech
+            # only** (`speech.py`): fillers, made-up text and lone glossary
+            # words do not keep a finished meeting alive.
+            if speech.meaningful(cut.text, self._previous_sentence,
+                                 speech.keyword_set(self.keywords)):
+                self.last_speech_at = self.last_sentence_at
+                self.recent_speech.append(
+                    (self.last_sentence_at, f"[{now()}] {cut.text}"))
+            self._previous_sentence = cut.text
             self.stats["sentences"] += 1
             self.stats[f"cut_{cut.reason}"] = self.stats.get(f"cut_{cut.reason}", 0) + 1
             print(f"[{now()}] transcript  {cut.text}")

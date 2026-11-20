@@ -445,6 +445,27 @@ SCHEDULE_JOIN_AUDIO_SEC = 300.0
 # not let it sit in an empty meeting for hours.
 SCHEDULE_OPENING_SEC = 900.0
 
+# **The end conditions below work in the container only.** The Windows native
+# version is frozen, and keeps the silence timer and the hard cap alone.
+#
+# End condition 1: put out of the meeting (the host ended it for all). Zoom
+# must be seen out of the meeting this many checks in a row
+# (`SCHEDULE_TICK_SEC` apart), so that one odd reading does not end it.
+SCHEDULE_OUT_TICKS = 2
+# End condition 2: alone in the meeting. Read the participant count this
+# often (one reading takes 1 to 2 s of OCR), and shut down after the count has
+# been 1 for this long **with no meaningful speech in that time either**. The
+# speech check guards against a misread number.
+SCHEDULE_PEOPLE_EVERY_SEC = 15.0
+SCHEDULE_ALONE_SEC = 120.0
+# End condition 4: after meaningful speech has stopped for this long, ask the
+# LLM whether the last words closed the meeting (`closing.py`). Asked once per
+# pause.
+SCHEDULE_CLOSING_PAUSE_SEC = 120.0
+# End condition 5: with a planned length, shut down this long after the
+# planned end at the latest (or at `max_min`, whichever comes first).
+SCHEDULE_OVERRUN_MIN = 60
+
 # When we post to the Zoom chat. **We post after the scheduled start time.**
 #
 # **The Zoom chat does not show messages sent before you joined.** Posting
